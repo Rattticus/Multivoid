@@ -423,6 +423,7 @@ set(VOTVCOOP_SOURCES
     src/coop/interactables/signal_wire.cpp
     src/coop/interactables/meadow_db_sync.cpp
     src/coop/interactables/meadow_db_join.cpp
+    src/coop/interactables/meadow_db_park.cpp
     src/coop/interactables/meadow_db_hash.cpp
     src/coop/interactables/signal_sync.cpp
     src/coop/interactables/comp_sync.cpp

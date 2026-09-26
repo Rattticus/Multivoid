@@ -11,6 +11,7 @@
 #include "coop/net/session.h"
 #include "coop/interactables/meadow_db_hash.h"
 #include "coop/interactables/meadow_db_internal.h"
+#include "coop/interactables/meadow_db_park.h"
 #include "coop/interactables/signal_wire.h"
 #include "coop/session/net_pump.h"
 
@@ -40,12 +41,6 @@ std::atomic<coop::net::Session*> g_session{nullptr};
 
 constexpr auto kRetryInterval = std::chrono::milliseconds(1000);
 constexpr auto kAssemblyTTL   = std::chrono::seconds(20);
-constexpr auto kTombstoneTTL  = std::chrono::seconds(20);
-// The absolute size bound on the tombstone vector (see OnDelete for why the unmatched case is
-// the inserting case). Legitimate tombstones are bounded by the deletes racing an append that
-// has not landed yet, a handful within one TTL; 256 is far above that and caps the vector at
-// about 4 KB.
-constexpr size_t kTombstoneCap = 256;
 
 // The database's writers, from the bytecode of every asset that names it: ui_laptop_C's addSignal (an
 // Add), removeSignal (a Remove) and sortSignal (a move, a Remove then an Insert), and the rename window,
@@ -93,10 +88,6 @@ coop::blob_chunks::Assembler g_orderAsm;
 // Pending: authored lines whose send failed, and a pre-ready client's organic lines.
 using internal::Pending;
 std::vector<Pending> g_pending;
-
-// Tombstones: outstanding unresolved deletes, one entry per count.
-struct Tomb { uint64_t hash; Clock::time_point until; };
-std::vector<Tomb> g_tombs;
 
 bool g_orderPending = false;  // an order change detected but not yet sent/broadcast
 
@@ -189,11 +180,11 @@ bool EnsurePrimed() {
     if (!db) return false;
     if (g_primed) {
         UE_LOGI("meadow_db: a new database -- the shadow and %zu waiting line(s) dropped",
-                g_pending.size() + g_tombs.size());
+                g_pending.size() + meadow_db_park::HeldDeletes());
         g_primed = false;
         g_shadow.clear();
         g_pending.clear();
-        g_tombs.clear();
+        meadow_db_park::Clear();
         g_orderBase.clear();
         g_orderPending = false;
         g_owedAll = false;
@@ -450,16 +441,13 @@ void ApplyAppendBlob(const std::vector<uint8_t>& blob, uint8_t senderSlot) {
                 "(world transition?)", static_cast<unsigned>(senderSlot));
         return;
     }
-    // Tombstone consume: an outstanding delete beats the append, the race cover.
-    for (auto it = g_tombs.begin(); it != g_tombs.end(); ++it) {
-        if (it->hash == hash) {
-            g_tombs.erase(it);
-            ++g_cTombConsumed;
-            UE_LOGI("meadow_db: append from slot %u consumed by an outstanding delete "
-                    "(hash %016llx)", static_cast<unsigned>(senderSlot),
-                    static_cast<unsigned long long>(hash));
-            return;
-        }
+    // An outstanding delete beats the append, the race cover.
+    if (meadow_db_park::ConsumeDelete(hash)) {
+        ++g_cTombConsumed;
+        UE_LOGI("meadow_db: append from slot %u consumed by an outstanding delete "
+                "(hash %016llx)", static_cast<unsigned>(senderSlot),
+                static_cast<unsigned long long>(hash));
+        return;
     }
     bool added;
     {
@@ -613,7 +601,7 @@ void LogTotals(Clock::time_point now) {
             static_cast<unsigned long long>(g_cCanonicalSent),
             static_cast<unsigned long long>(g_cTombConsumed),
             static_cast<unsigned long long>(g_cSeedLines),
-            g_pending.size(), g_tombs.size());
+            g_pending.size(), meadow_db_park::HeldDeletes());
 }
 
 }  // namespace
@@ -639,25 +627,16 @@ void Tick() {
     // The retries -- a line whose send failed or waits for this client's world-ready, a delete that
     // came before its row, an order held behind them, a row's chunks in flight -- once a second, and
     // only while one of them waits.
-    if (g_pending.empty() && g_tombs.empty() && !g_orderPending && !g_owedAll && !g_owedSlots &&
+    if (g_pending.empty() && meadow_db_park::HeldDeletes() == 0 && !g_orderPending && !g_owedAll && !g_owedSlots &&
         g_assembler.Idle() && g_orderAsm.Idle())
         return;
     if (now < g_nextRetry) return;
     g_nextRetry = now + kRetryInterval;
     g_assembler.Sweep(now, kAssemblyTTL);
     g_orderAsm.Sweep(now, kAssemblyTTL);
-    for (auto it = g_tombs.begin(); it != g_tombs.end();) {
-        if (now >= it->until) {
-            UE_LOGW("meadow_db: delete for hash %016llx expired unmatched",
-                    static_cast<unsigned long long>(it->hash));
-            it = g_tombs.erase(it);
-        } else ++it;
-    }
+    meadow_db_park::ExpireDeletes(now);
     if (!EnsurePrimed()) return;
-    for (auto it = g_tombs.begin(); it != g_tombs.end();) {
-        if (ApplyDeleteByHash(it->hash)) it = g_tombs.erase(it);
-        else ++it;
-    }
+    meadow_db_park::RetryDeletes(&ApplyDeleteByHash);
     RetryPending(s);
     if ((g_orderPending || g_owedAll || g_owedSlots) && g_pending.empty()) {
         std::map<uint64_t, int32_t> cur;
@@ -679,21 +658,8 @@ void OnAppendChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) {
 void OnDelete(const coop::net::ContentHashPayload& p, uint8_t senderSlot) {
     if (senderSlot >= coop::net::kMaxPeers) return;
     if (p.contentHash == 0) return;
-    if (!ApplyDeleteByHash(p.contentHash)) {
-        // A tombstone is recorded exactly when the delete did not match: the unmatched case is the
-        // inserting case, so a stream of attacker-chosen hashes grows this vector at line rate, and
-        // the TTL bounds it in time but not in rate. Refuse past the bound rather than evict:
-        // eviction would let a flood push out the legitimate not-yet-arrived-row tombstone this
-        // exists to hold.
-        if (g_tombs.size() >= kTombstoneCap) {
-            UE_LOGW("meadow_db: tombstone REFUSED (hash=%016llx, from slot %u) -- at the "
-                    "%zu-entry bound",
-                    static_cast<unsigned long long>(p.contentHash),
-                    static_cast<unsigned>(senderSlot), kTombstoneCap);
-            return;
-        }
-        g_tombs.push_back({p.contentHash, Clock::now() + kTombstoneTTL});
-    }
+    // A delete that found no row waits in the pen for its row's append (the pen says a refusal).
+    if (!ApplyDeleteByHash(p.contentHash)) meadow_db_park::HoldDelete(p.contentHash, senderSlot, Clock::now());
 }
 
 void OnOrderChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) {
@@ -724,7 +690,7 @@ void OnDisconnect() {
     g_orderAsm.Clear();
     g_shadow.clear();
     g_pending.clear();
-    g_tombs.clear();
+    meadow_db_park::Clear();
     g_orderBase.clear();
     g_orderPending = false;
     g_owedAll = false;
