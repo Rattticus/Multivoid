@@ -5,6 +5,9 @@
 
 #pragma once
 
+#include <cstdint>
+#include <string>
+
 namespace ue_wrap::votv_lib {
 
 // Dispatch lib_C::step(Character, ...) -- THE shared footstep verb every VOTV
@@ -22,5 +25,10 @@ namespace ue_wrap::votv_lib {
 // `stepped`, which mainPlayer_C implements as an empty event. Returns false
 // until lib_C resolves. Game thread (ProcessEvent).
 bool CharacterStep(void* character, float volume);
+
+// Dispatch lib_C::addGloss(name, level, worldContext): the signal glossary of the machine's own profile gains
+// `name` at `level`, or raises it (lib.cpp:4143-4175, its save_main through getMainSave). False until lib_C
+// resolves, or when the name does not convert. Game thread (ProcessEvent).
+bool AddGloss(const std::wstring& name, int32_t level, void* worldContext);
 
 }  // namespace ue_wrap::votv_lib
