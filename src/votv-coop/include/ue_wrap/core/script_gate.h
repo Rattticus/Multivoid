@@ -63,6 +63,14 @@ bool Patch();
 bool Install();
 bool IsInstalled();
 
+// The VM's exec-handler table (GNatives), 256 entries, one per opcode, each evaluating one expression
+// of the bytecode stream into its result as FFrame::Step calls it: (context, FFrame&, result). Set by
+// Install, the arm step, once the table is filled (script_loop::TableFilled), and kept when a later check
+// refuses the loop; null before.
+// ue_wrap/core/ufunction_hook steps a native call's parameters through it. Any thread.
+using ExecHandler = void(__fastcall*)(void* context, void* stack, void* result);
+const ExecHandler* ExecHandlers();
+
 // Watch one UFunction. Either callback may be null. Idempotent per (function, tag, pre, post).
 // False for a null function, a native function (it never runs through the loop), a full table,
 // or a gate that did not install (logged once). Any thread.

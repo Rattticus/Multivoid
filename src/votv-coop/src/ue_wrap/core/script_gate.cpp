@@ -38,6 +38,7 @@ using LoopFn = std::uintptr_t(__fastcall*)(void* ctx, void* stack, void* result)
 LoopFn g_trampoline = nullptr;
 void*  g_target = nullptr;         // the patched loop, set by Patch
 std::atomic<bool> g_installed{false};   // armed: the patched loop is the one the handlers name
+std::atomic<const ExecHandler*> g_execHandlers{nullptr};  // set at the arm step once the table is filled
 std::atomic<bool> g_enabled{false};
 std::atomic<bool> g_countOn{false};
 
@@ -328,6 +329,7 @@ bool Install() {
                 static_cast<void*>(gnatives));
         return false;
     }
+    g_execHandlers.store(reinterpret_cast<const ExecHandler*>(gnatives), std::memory_order_release);
     std::uintptr_t virt = 0, fin = 0;
     const std::uintptr_t loop = script_loop::ByHandlers(gnatives, virt, fin);
     if (loop != reinterpret_cast<std::uintptr_t>(g_target)) {
@@ -346,6 +348,8 @@ bool Install() {
 }
 
 bool IsInstalled() { return g_installed.load(std::memory_order_acquire); }
+
+const ExecHandler* ExecHandlers() { return g_execHandlers.load(std::memory_order_acquire); }
 
 namespace {
 

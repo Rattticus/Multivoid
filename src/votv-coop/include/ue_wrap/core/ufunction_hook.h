@@ -15,6 +15,8 @@
 
 #pragma once
 
+#include "ue_wrap/core/script_gate.h"
+
 #include <cstdint>
 
 namespace ue_wrap::ufunction_hook {
@@ -33,13 +35,13 @@ namespace ue_wrap::ufunction_hook {
 // observers have.
 using PostNativeCallback = void(*)(void* context, void* sourceObject, void* spawnedResult);
 
-// The frame the call a post callback is reporting executed in: for a call from bytecode that is
-// the calling Blueprint function (`function`) and its storage (`locals`), where each of its locals
-// and parameters sits at its Offset_Internal (reflection::FindPropertyOffset on the function); for
-// a call through ProcessEvent it is the called function and its parameters, so check `function`
-// before reading. An ubergraph's locals are the actor's persistent frame, which is how a spawn
-// issued inside a Blueprint loop names the loop's current element. Both null outside any callback;
-// code a callback runs sees that callback's frame. Game thread.
+// The frame the call a callback (post or pre) is reporting executes in: for a call from bytecode
+// that is the calling Blueprint function (`function`) and its storage (`locals`), where each of its
+// locals and parameters sits at its Offset_Internal (reflection::FindPropertyOffset on the
+// function); for a call through ProcessEvent it is the called function and its parameters, so check
+// `function` before reading. An ubergraph's locals are the actor's persistent frame, which is how a
+// spawn issued inside a Blueprint loop names the loop's current element. Both null outside any
+// callback; code a callback runs sees that callback's frame. Game thread.
 struct CallerFrame {
     void*    function;
     uint8_t* locals;
@@ -75,5 +77,30 @@ bool InstallPostHook(void* ufunction, PostNativeCallback cb, bool armed = true);
 // consumer's own runs, on a native every Blueprint calls all the time. False when (ufunction, cb)
 // is not installed. Game thread.
 bool SetArmed(void* ufunction, PostNativeCallback cb, bool armed);
+
+// Pre-native interceptor: the call's parameters, evaluated, before the original Func runs, and a
+// verdict. `parms` holds each parameter at its Offset_Internal (reflection::FindParamOffset on the
+// function); `context` and `sourceObject` are PostNativeCallback's, and CurrentCallerFrame names the
+// calling frame while it runs. Cancel refuses the call: the original never runs, and the call's
+// parameters are consumed from the caller's bytecode as the original's own steps consume them. Same
+// threading and firewall contract as the post callback.
+using PreNativeCallback = script_gate::Verdict (*)(void* context, void* sourceObject, const uint8_t* parms);
+
+// Patch `ufunction`'s native Func with a forwarder that, armed, reads the call's parameters before the
+// original does. A native thunk steps them off the caller's bytecode into its own locals, one expression each
+// through the VM's exec-handler table, so a post forwarder never sees them, and UE4SS's native pre-hook reads
+// the frame's Locals (LuaMod.cpp:128-200), which hold them only on the ProcessEvent path. This one steps them
+// through the same table (script_gate::ExecHandlers) into a frame of its own. Run rewinds the caller's code
+// pointer and forwards, so the original steps them again: the engine's own shape for a native it calls both
+// remotely and locally (UObject::CallFunction). A ProcessEvent call's parameters are read from its frame.
+// Refused at install, logged: a script function, a return value, an out or reference parameter, a parameter
+// the engine must destroy, a frame past this one's, no exec-handler table. Off the game thread it forwards
+// untouched. A pre hook stays the outermost patch on its function in either install order, so a post hook
+// never reports a call its pre hook refused. `armed` defaults to false, the shape being a seam armed only
+// while a call of the consumer's own runs. Idempotent per (ufunction, cb). Game thread.
+bool InstallPreHook(void* ufunction, PreNativeCallback cb, bool armed = false);
+
+// Arm or disarm an installed pre hook, as SetArmed does a post hook. Game thread.
+bool SetArmed(void* ufunction, PreNativeCallback cb, bool armed);
 
 }  // namespace ue_wrap::ufunction_hook

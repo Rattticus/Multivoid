@@ -548,6 +548,7 @@ inline constexpr uint64_t Parm = 0x80;
 inline constexpr uint64_t OutParm = 0x100;
 inline constexpr uint64_t ReturnParm = 0x400;
 inline constexpr uint64_t InstancedReference = 0x80000;  // a Blueprint's component variable carries it
+inline constexpr uint64_t NoDestructor = 0x1000000000;   // the value needs no destroy (UFunction::DestructorLink skips it)
 }  // namespace cpf
 
 // The kerfur AnimBP head-rotation pipeline (AnimBlueprint_kerfurOmega_regular.hpp,
