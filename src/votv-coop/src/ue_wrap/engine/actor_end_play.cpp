@@ -32,13 +32,6 @@ std::atomic<int> g_sinkCount{0};
 std::atomic<unsigned long long> g_seen{0};
 std::atomic<unsigned long long> g_offGameThread{0};
 
-// The engine's own test, the one Install checks the body for: EndPlay does its work only for an actor
-// whose begun-play state reads HasBegunPlay.
-bool HasBegunPlay(const void* actor) {
-    const uint8_t state = *(static_cast<const uint8_t*>(actor) + prof::kActor_BegunPlayByte);
-    return (state & prof::kActor_BegunPlayMask) == prof::kActor_HasBegunPlay;
-}
-
 // A sink that faults loses this end of play, never the engine's: the fault is absorbed here, inside
 // an SEH-only frame (no C++ objects to unwind, so the __try is legal), and said the first few times.
 void RunSinksSEH(void* actor, Reason reason) {
@@ -66,6 +59,13 @@ void __fastcall EndPlayDetour(void* actor, uint32_t reason) {
 }
 
 }  // namespace
+
+// The engine's own test, the one Install checks the body for: EndPlay does its work only for an actor
+// whose begun-play state reads HasBegunPlay.
+bool HasBegunPlay(const void* actor) {
+    const uint8_t state = *(static_cast<const uint8_t*>(actor) + prof::kActor_BegunPlayByte);
+    return (state & prof::kActor_BegunPlayMask) == prof::kActor_HasBegunPlay;
+}
 
 bool Install() {
     if (g_installed.load(std::memory_order_acquire)) return true;

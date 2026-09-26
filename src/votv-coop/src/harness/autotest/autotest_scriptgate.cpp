@@ -1,4 +1,4 @@
-// harness/autotest/autotest_scriptgate.cpp -- the script-body gate drill, solo or host. Two
+// harness/autotest/autotest_scriptgate.cpp -- the script-body gate drill, on each peer that arms it. Two
 // signal servers stand in for "one instance of two": their fix verb is refused on one and runs
 // on the other, then, with fix running on both, the check it calls on itself and the gamemode's
 // calcServerEff it calls through a context switch are refused for one box by instance and by
@@ -7,7 +7,8 @@
 // gate (the break flag, an efficiency sentinel) or, for the two Blueprint-internal routes, the
 // post callback that only a run body reaches. A negative arm shows the same verb running once
 // the watch is gone. A class arm watches the day-night cycle's and the wind's ReceiveTick by class and
-// name over real ticks, beside an unscoped watch on the same name that sees every class's. Armed by
+// name over real ticks, beside an unscoped watch on the same name that sees every class's. The gate's
+// tally is read across the passes alone, since a peer's own lanes refuse bodies of their own. Armed by
 // script_gate_drill=1; the lines are tagged [SCRIPTGATE].
 
 #include "harness/autotest.h"
@@ -19,6 +20,7 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/devices/serverbox.h"
+#include "ue_wrap/engine/actor_end_play.h"
 
 #include <windows.h>
 
@@ -209,6 +211,9 @@ float EfficiencyCalc() {
 bool Resolve() {
     std::vector<void*> boxes;
     if (SB::ReadServers(boxes) < 2 || !SB::EnsureBreakResolved()) return false;
+    // A box that has not begun play would overwrite the drill's state with its own begin-play's.
+    if (!ue_wrap::actor_end_play::HasBegunPlay(boxes[0]) || !ue_wrap::actor_end_play::HasBegunPlay(boxes[1]))
+        return false;
     g_boxA = boxes[0];
     g_boxB = boxes[1];
     void* cls = R::ClassOf(g_boxA);
@@ -239,7 +244,7 @@ void RunScriptGateDrill() {
     if (!SG::IsInstalled()) {
         UE_LOGW("[SCRIPTGATE] the gate is not installed -- nothing to drill (FAIL)");
         UE_LOGI("script_gate_drill: VERDICT FAIL (not installed)");
-        UE_LOGI("script_gate_drill: DONE");
+        UE_LOGI("script_gate_drill: DONE (%s)", IsClientRole() ? "client" : "host");
         return;
     }
     DWORD waited = 0;
@@ -251,10 +256,9 @@ void RunScriptGateDrill() {
     if (!resolved) {
         UE_LOGW("[SCRIPTGATE] INCONCLUSIVE -- no two signal servers with the break group resolved "
                 "within %lu s", static_cast<unsigned long>(kWorldWaitMs / 1000));
-        UE_LOGI("script_gate_drill: DONE");
+        UE_LOGI("script_gate_drill: DONE (%s)", IsClientRole() ? "client" : "host");
         return;
     }
-    ::Sleep(3000);  // the world settles; the boxes' own begin-play has run
     Verdict v;
     SB::Aggregates base{};
 
@@ -263,6 +267,8 @@ void RunScriptGateDrill() {
         SG::Acquire("the script gate drill");
         UE_LOGI("[SCRIPTGATE] boxes A=%p B=%p fix=%p check=%p calc=%p uber=%p (EntryPoint@%d) sendName=%p",
                 g_boxA, g_boxB, g_fnFix, g_fnCheck, g_fnCalc, g_fnUber, g_entryOff, g_fnSendName);
+        // One game-thread task from here to the tally check: only bodies the drill's calls reach run.
+        const unsigned long long cancelledBefore = SG::GetStats().cancelled;
 
         // Pass 1: the ProcessEvent route, refused per instance. Both boxes broken; fix on A is
         // refused, fix on B runs; the break flag is the observable.
@@ -353,7 +359,7 @@ void RunScriptGateDrill() {
         Check(v, g_fix.preA == fixPreBefore, "negative: the retired watch did not fire");
 
         const SG::Stats st = SG::GetStats();
-        Check(v, st.cancelled == 4, "four refusals counted in the gate's own tally");
+        Check(v, st.cancelled - cancelledBefore == 4, "the gate's own tally counted the passes' four refusals");
         UE_LOGI("[SCRIPTGATE] other-box traffic through the watched functions: fix=%d check=%d calc=%d "
                 "ubergraph(other entries)=%d -- all ran", g_fix.other, g_check.other, g_calc.other, g_uber.other);
         Check(v, st.offGameThread == 0, "no watched body was reached off the game thread");
@@ -437,7 +443,7 @@ void RunScriptGateDrill() {
 
     UE_LOGI("script_gate_drill: VERDICT %s (%d checks passed, %d failed)",
             v.fail == 0 ? "PASS" : "FAIL", v.pass, v.fail);
-    UE_LOGI("script_gate_drill: DONE");
+    UE_LOGI("script_gate_drill: DONE (%s)", IsClientRole() ? "client" : "host");
 }
 
 DWORD WINAPI ScriptGateDrillThread(LPVOID) {

@@ -35,6 +35,10 @@ enum class Reason : uint8_t {
 // transition calls it for every actor of the world. A fault in a sink is absorbed and said.
 using Sink = void (*)(void* actor, Reason reason);
 
+// Whether `actor` (live) has begun play: the engine's own begun-play state, the test EndPlay does its
+// work on. A field read; any thread that holds the actor live.
+bool HasBegunPlay(const void* actor);
+
 // Resolve AActor::EndPlay from Actor's vtable, check its body, and detour it. Idempotent; false
 // (logged) when Default__Actor is not found, the slot does not lead to EndPlay's body on this build,
 // or the detour does not install. Boot, after the health checks.
