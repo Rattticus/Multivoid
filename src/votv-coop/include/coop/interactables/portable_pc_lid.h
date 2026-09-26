@@ -10,7 +10,8 @@
 // `open` inside the lane's own scope, which sends nothing. A line for a PC this peer has not enrolled
 // yet waits, keyed by its eid, for its birth to land, and does not age while this peer's join is still
 // streaming the world in; an edge on a PC no element names yet waits by the actor until the element
-// lane names it. A joiner gets every open lid at its world-ready. Game thread throughout.
+// lane names it, or until a line for that PC lands first, which sends the edge at once and is neither
+// applied nor passed on. A joiner gets every open lid at its world-ready. Game thread throughout.
 
 #pragma once
 

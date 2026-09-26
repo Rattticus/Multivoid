@@ -17,6 +17,7 @@
 #include "ue_wrap/devices/portable_pc.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/engine_pawn.h"
+#include "ue_wrap/engine/world_identity.h"
 #include "ue_wrap/world/world_instances.h"
 
 #include <chrono>
@@ -46,6 +47,7 @@ ClientStep g_client = ClientStep::Ready;
 Clock::time_point g_stepAt{};
 int   g_readyTicks = 0;
 ue_wrap::CachedObjRef g_pc;  // the host's drill PC, slot-validated each tick
+uint32_t g_pcWorld = 0;       // the world generation the PC was spawned in
 
 bool Enabled() {
     static const bool s = coop::config::ResolveFlag(::coop::config_registry::rows::lid_drill);
@@ -109,6 +111,7 @@ void HostTick(coop::net::Session& s) {
     }
     case HostStep::Spawn:
         g_pc.Set(SpawnInFrontOfPlayer());
+        g_pcWorld = ue_wrap::world_identity::Generation();
         if (!g_pc.Get()) {
             UE_LOGW("[lid_drill] ABANDONED: the portable PC could not be loaded or spawned");
             Enter(HostStep::Done);
@@ -191,10 +194,11 @@ void HostTick(coop::net::Session& s) {
     case HostStep::JoinerClose: {
         // A new session: the lane's counts began again at the last one's end. The hold cannot tell its
         // client leaving from this host's own session ending; after the latter the PC went with its world,
-        // and the drill starts over.
+        // and the drill starts over. A PC gone in the world it was spawned in is the loss this step exists to
+        // catch, and fails below.
         void* pc = g_pc.Get();
         bool opened = true;
-        if (!pc && g_pc.Raw()) {
+        if (!pc && g_pc.Raw() && g_pcWorld != ue_wrap::world_identity::Generation()) {
             UE_LOGI("[lid_drill] host: the held PC went with its world -- starting over");
             g_pc.Reset();
             g_readyTicks = 0;

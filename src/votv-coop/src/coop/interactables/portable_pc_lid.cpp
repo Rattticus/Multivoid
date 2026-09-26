@@ -46,7 +46,8 @@ std::map<uint32_t, PendingLid> g_pending;
 
 // A local edge on a PC no element names yet: a client's placed PC is named only when the host's echo of
 // its spawn comes back. Held by the actor and sent, with the lid as it is then, once the element lane
-// names it; dropped with its PC, or after kPendingTtlMs. A handful at most, since a placed PC is named
+// names it -- or at once when a line for that PC lands before that, since the line is older than the
+// held edge; dropped with its PC, or after kPendingTtlMs. A handful at most, since a placed PC is named
 // within a round trip.
 constexpr size_t kHeldCap = 16;
 struct HeldEdge { ue_wrap::CachedObjRef pc; uint64_t deadline; };
