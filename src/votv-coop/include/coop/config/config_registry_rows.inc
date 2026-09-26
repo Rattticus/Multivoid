@@ -573,6 +573,10 @@ CFG_FLAG(drone_call_drill, "drone_call_drill", "dev", false, "VOTVCOOP_DRONE_CAL
     "presses its console for the client. A sack the first press brought is followed by a second press, and "
     "the client's DONE line says whether the drone flew on its copy; the host logs its drone's changes. "
     "Lines tagged [DRONE-CALL-DRILL].")
+CFG_STRING(server_upgrade_drill, "server_upgrade_drill", "dev", "", "VOTVCOOP_SERVER_UPGRADE_DRILL", false,
+    "Drill (BOTH peers): a client installs an upgrade into a server box and takes one out. apply: the host "
+    "applies both; refuse: the host refuses both, as if each had lost its race, and the client sees its install "
+    "refunded and its take-out's upgrade go. Lines tagged [SRV-UPG-DRILL].")
 CFG_STRING(toggle_drill, "toggle_drill", "dev", "", "VOTVCOOP_TOGGLE_DRILL", false,
     "Drill (BOTH peers), by kind: garage, tap (a faucet or a sink), locker or lid. The device of that kind "
     "with the lowest key in its lane, toggled through its own verb by the client and toggled back by "
