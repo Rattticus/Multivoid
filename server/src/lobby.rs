@@ -2,17 +2,14 @@
 //! `/v1/host`, `/v1/heartbeat`, `/v1/leave`, `/v1/visibility` and `/v1/join`, plus the browse
 //! snapshot and the sweeper that reaps what stopped heartbeating.
 
-use crate::common::{
-    clamp_str, ct_eq, identity_shape_ok, ip_bucket, log, token_hex, token_urlsafe, turn_creds,
-};
-use crate::master_config::CFG;
+use crate::common::{clamp_str, ct_eq, identity_shape_ok, ip_bucket, log, token_hex, token_urlsafe};
+use crate::ice::ice_block;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::{LazyLock, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
-pub const TURN_TTL: u64 = 120;
 // 90s = 3 missed 30s heartbeats before a lobby is reaped. Was 300s (ghost-lobby bug:
 // a TASK-KILLED host sends no /v1/leave, so its dead entry lingered up to the TTL; a
 // dead host was seen at 237s/297s age). Lowered 2026-07-16 per the user's go.
@@ -223,23 +220,6 @@ pub fn rate_ok(state: &mut MasterState, ip: &str, cls: &str, window: Duration, l
     true
 }
 
-/// The connectivity block every host/join response carries. `turn_label` is the
-/// coarse per-client identity the TURN username is bound to (audit M2). NOTE: coturn's
-/// REST username is "<exp>:<label>" with a per-mint expiry, so coturn cannot aggregate
-/// `user-quota` on the label — the EFFECTIVE per-source bound on cred minting is the
-/// master's per-/64 rate limit on /v1/join (RL_JOIN) plus coturn's global total-quota
-/// + per-session max-bps + aggregate bps-capacity. Binding the label to the IP bucket
-/// (vs a fresh-random per-mint identity) removes the "unique identity per mint" faucet
-/// framing and gives coherent per-source attribution; it is not the quota enforcer.
-pub fn ice_block(turn_label: &str) -> serde_json::Map<String, Value> {
-    let mut m = serde_json::Map::new();
-    m.insert("signalingUrl".into(), json!(CFG.signaling_url));
-    m.insert("signalingToken".into(), json!(CFG.signaling_token));
-    m.insert("stun".into(), json!(CFG.stun_uri));
-    let turn = turn_creds(&CFG.turn_uri, &CFG.turn_secret, turn_label, TURN_TTL).unwrap_or_else(|| json!({}));
-    m.insert("turn".into(), turn);
-    m
-}
 
 pub fn drop_lobby(state: &mut MasterState, session_id: &str, lobby_id: &str) {
     state.lobbies.remove(session_id);

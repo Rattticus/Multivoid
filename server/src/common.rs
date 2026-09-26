@@ -1,17 +1,13 @@
 //! Shared helpers for the coop master + signaling binaries.
 //!
-//! RULE 3: this is VPS infra, it never ships in the mod. The byte-exact spots (the
-//! TURN HMAC and the identity-string shapes) are called out inline; a mismatch there
-//! breaks coturn auth or the signaling rendezvous silently.
+//! RULE 3: this is VPS infra, it never ships in the mod. The byte-exact spot here, the
+//! identity-string shape, is called out inline (the TURN HMAC's is in ice.rs); a mismatch
+//! there breaks the signaling rendezvous silently.
 
-use base64::engine::general_purpose::{STANDARD as B64, URL_SAFE_NO_PAD as B64URL};
+use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64URL;
 use base64::Engine;
-use hmac::{Hmac, Mac};
-use sha1::Sha1;
 use std::net::Ipv6Addr;
 use std::time::{SystemTime, UNIX_EPOCH};
-
-type HmacSha1 = Hmac<Sha1>;
 
 /// stdout line log with an explicit flush (systemd journal picks it up). Mirrors
 /// the Python `log()`.
@@ -183,56 +179,9 @@ pub fn ct_eq(a: &[u8], b: &[u8]) -> bool {
     diff == 0
 }
 
-/// A coturn REST time-limited credential (design 7), byte-for-byte identical to the
-/// Python `turn_creds()`:
-///   username = "<unixExpiry>:<label>"
-///   password = base64( HMAC-SHA1( TURN_SECRET, username ) )
-/// coturn validates it via `use-auth-secret` / `static-auth-secret=TURN_SECRET`.
-/// **Byte-exact spot:** the HMAC digest, the base64 alphabet (STANDARD, with `=`
-/// padding), and the `"exp:label"` username format must all match or coturn auth
-/// fails. Returns `None` (→ omitted from the JSON, same as the Python empty dict)
-/// when TURN is not configured.
-/// The base64(HMAC-SHA1(secret, username)) coturn password. Split out so the
-/// byte-exact spot is unit-testable against the Python reference independent of the
-/// time-based expiry.
-pub fn turn_password(turn_secret: &str, username: &str) -> String {
-    let mut mac = HmacSha1::new_from_slice(turn_secret.as_bytes()).expect("HMAC accepts any key length");
-    mac.update(username.as_bytes());
-    B64.encode(mac.finalize().into_bytes())
-}
-
-pub fn turn_creds(turn_uri: &str, turn_secret: &str, label: &str, ttl: u64) -> Option<serde_json::Value> {
-    if turn_uri.is_empty() || turn_secret.is_empty() {
-        return None;
-    }
-    let exp = now_unix() + ttl;
-    let username = format!("{exp}:{label}");
-    let password = turn_password(turn_secret, &username);
-    let uris = vec![
-        format!("{turn_uri}?transport=udp"),
-        format!("{turn_uri}?transport=tcp"),
-    ];
-    Some(serde_json::json!({
-        "user": username,
-        "pass": password,
-        "ttl": ttl,
-        "uris": uris,
-    }))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn turn_password_matches_python_reference() {
-        // Reference produced by the Python turn_creds() HMAC path:
-        //   python -c "import hmac,hashlib,base64; u='1700000000:h0011223344556677';
-        //   print(base64.b64encode(hmac.new(b'testsecret_abc123', u.encode(),
-        //   hashlib.sha1).digest()).decode())"  -> c7pJt+2pR4aVy8LJIi6NtjympwM=
-        let pw = turn_password("testsecret_abc123", "1700000000:h0011223344556677");
-        assert_eq!(pw, "c7pJt+2pR4aVy8LJIi6NtjympwM=");
-    }
 
     #[test]
     fn token_hex_shape() {

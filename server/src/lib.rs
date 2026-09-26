@@ -2,6 +2,7 @@
 pub mod admission;
 pub mod common;
 pub mod http_transport;
+pub mod ice;
 pub mod lobby;
 pub mod master_config;
 pub mod registration;
