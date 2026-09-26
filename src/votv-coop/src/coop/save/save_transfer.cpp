@@ -95,6 +95,7 @@ constexpr uint64_t kStablePollMs = 300;
 struct HostStream {
     // The joiner asked while the host's world was still coming in: TickHost captures it once it is in.
     bool     waitWorld = false;
+    int      probeTicks = 0;  // [dev] save_wait_probe: the ticks the wait is held after the world is in
     bool     active = false;
     bool     blobReady = false;
     // The pump owns Begin's delivery: a fire-and-forget send under backpressure was silently
@@ -527,12 +528,18 @@ void OnRequest(int peerSlot) {
     // A joiner that asks while the host's world is still coming in -- a world is current, but not yet the
     // gamemode that owns its save, the seconds after a load that a quick rejoin lands in -- waits for it
     // rather than taking the canonical slot: the live capture carries what the host changed since its
-    // save, and the lanes' join snapshots are taken in the same breath, so their seeds run. The wait is
-    // the CapturingWorld beacon, which renews the joiner's own.
-    if (HostWorldComingIn_()) {
+    // save, and the lanes' join snapshots are taken in the same breath, so their seeds run. The joiner
+    // hears it as the host capturing its world; its own wait renews at that first note only, so a world
+    // that never comes in ends the join as the host never preparing it.
+    // [dev] save_wait_probe holds every request on this path a second longer, so a drill reaches it without
+    // racing a rehost's load.
+    static const bool s_waitProbe =
+        coop::config::ResolveFlag(::coop::config_registry::rows::save_wait_probe);
+    if (HostWorldComingIn_() || s_waitProbe) {
         hs.waitWorld = true;
-        UE_LOGI("save_transfer: slot %d -- the host's world is still coming in; the transfer waits for it",
-                peerSlot);
+        hs.probeTicks = s_waitProbe ? 60 : 0;
+        UE_LOGI("save_transfer: slot %d -- the host's world is still coming in%s; the transfer waits for it",
+                peerSlot, s_waitProbe ? " (or the wait probe holds it)" : "");
         return;
     }
     CaptureAndBegin_(peerSlot, hs);
@@ -540,11 +547,13 @@ void OnRequest(int peerSlot) {
 
 void TickHost() {
     if (!g_session) return;
+    bool captured = false;  // one waiting capture a tick: each is a whole save written and read
     for (int slot = 1; slot < coop::net::kMaxPeers; ++slot) {
         HostStream& hs = g_host[slot];
         if (hs.waitWorld) {
             coop::join_beacon::NotePhase(slot, coop::net::HostJoinPhase::CapturingWorld, 0, 0);
-            if (HostWorldComingIn_()) continue;
+            if (captured || hs.probeTicks-- > 0 || HostWorldComingIn_()) continue;
+            captured = true;
             hs.waitWorld = false;
             UE_LOGI("save_transfer: slot %d -- the host's world is in; capturing it", slot);
             CaptureAndBegin_(slot, hs);
@@ -639,6 +648,8 @@ void CancelForSlot(int peerSlot) {
     if (peerSlot < 1 || peerSlot >= coop::net::kMaxPeers) return;
     if (g_host[peerSlot].active)
         UE_LOGI("save_transfer: slot %d left mid-stream -- cancelled", peerSlot);
+    else if (g_host[peerSlot].waitWorld)
+        UE_LOGI("save_transfer: slot %d left while its transfer waited for the host's world", peerSlot);
     g_host[peerSlot] = HostStream{};
     g_worldTaken[peerSlot] = false;
     coop::meadow_db_sync::CancelJoinSnapshot(peerSlot);  // drop the seed baseline and the pending masks

@@ -349,7 +349,7 @@ void RebindLocalElementActor(coop::element::ElementId eid, void* newActor) {
 }
 
 // The save-time position of every live tracked trash actor of one form, by host eid: read right
-// after the scratch save was serialised (save_transfer::OnRequest, the same game-thread tick), so
+// after the scratch save was serialised (save_transfer's capture, the same game-thread tick), so
 // the value equals what the joining client loads its native at. Keyless only (a keyed Aprop_C is
 // covered by the key diff). A live one with no eid is not yet re-minted, not absent: the
 // world-change re-seed can still be deferred at the connect instant, and VOTV's one persistent

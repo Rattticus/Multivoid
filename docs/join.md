@@ -74,9 +74,10 @@ writes a save in place, with no rename, so the file is trusted only when its siz
 hold across two polls and two full reads agree. A joiner that asks while the host is still loading its
 world -- a quick rejoin after a rehost lands seconds after the host is up -- waits for that world, the
 host saying it is capturing, and then gets the live capture, with the join snapshots the seeds diff
-against. If the live capture cannot run at all, the host streams its slot file as it is on disk (the
-stale fallback; the reconcile in step 6 owns the difference, and the meadow, signal and email seeds are
-skipped).
+against; a host world that never comes in ends that join as the host never preparing it. If the live
+capture cannot run otherwise, at the menu or with the world identity unreadable, the host streams its
+slot file as it is on disk (the stale fallback; the reconcile in step 6 owns the difference, and the
+meadow, signal and email seeds are skipped).
 If the host has no save at all, the header says so and the joiner boots a fresh world.
 
 Prepended to the blob, under the same checksum, is the identity sidecar: the map from the save's
@@ -406,7 +407,7 @@ not raise the game's own active-event counter, whose save and pause blocks the m
 | Keyless save-loaded objects are matched by position; the index-to-id sidecar is built and transferred, and its bind is off by default, behind the `save_identity_bind` developer flag | `[V]` `coop/config/config_registry_rows.inc`, `coop/props/save_identity_bind` |
 | A host change inside the window that post-dates the snapshot (a kerfur turned off) materialises at quiescence, after the curtain has lifted, as a visible pop-in | `[V]` `coop/element/mirror_defer` holds it until quiescence |
 | A local save-loaded actor repositioned after the curtain lifts is visible: the curtain lifts at the end marker, before quiescence, a short curtain being chosen over a blank screen | `[V]` `ui/join_curtain` |
-| The stale fallback streams the on-disk slot, which may be older than the live world, and the meadow, signal and email seeds are skipped for that join; it is taken only when a capture cannot run at all, never while the host's world is still loading | `[V]` `coop/save/save_transfer` logs it |
+| The stale fallback streams the on-disk slot, which may be older than the live world, and the meadow, signal and email seeds are skipped for that join; it is not taken while the host is loading its world, which the joiner waits for instead | `[V]` `coop/save/save_transfer` logs it |
 | NOTHING stands behind the phase tokens. The whole-join failsafe is deleted (WP-B2): a join ends when a phase's token stops or the transport dies, never because a sum of independent durations crossed a number | `[V]` `coop/session/join_progress` |
 | The tokens are driven from `harness::TickPumpWatchdogs`, on the timeline thread, NOT from the render: an overlay that fails to install is non-fatal and the game boots on without it, which would otherwise leave every join budget dead for that session | `[V]` `harness/session_runtime.cpp`, `harness.cpp` logs the non-fatal install failure |
 | The divergence sweep aborts at its half-of-the-world valve and leaves the joiner's excess keyed props in place, unbound | `[V]` `coop/props/join_membership_sweep` |

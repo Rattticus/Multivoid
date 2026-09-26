@@ -370,6 +370,8 @@ CFG_FLAG(roster_token_selftest, "roster_token_selftest", "dev", false, nullptr,
 CFG_FLAG(roster_drop_empty_rows, "roster_drop_empty_rows", "dev", false, nullptr,
     "Fault injection (CLIENT): discard every inbound roster row that says a slot is EMPTY, so a "
     "departure can only be learned from the successor's row. Proves absence is never needed.")
+CFG_FLAG(save_wait_probe, "save_wait_probe", "dev", false, "VOTVCOOP_SAVE_WAIT_PROBE",
+    "Probe: the host holds each save request as if its world were still loading, for a second after it is in.")
 CFG_FLAG(pile_delta_probe, "pile_delta_probe", "dev", false, nullptr,
     "Diagnostic probe: trash pile delta events.")
 CFG_FLAG(garbage_pickup_probe, "garbage_pickup_probe", "dev", false, nullptr,

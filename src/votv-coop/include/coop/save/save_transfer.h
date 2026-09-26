@@ -51,15 +51,17 @@ const std::wstring& HostSlot();
 // another has taken its place. Game thread.
 uint32_t HostSlotSerial();
 
-// A client asked for the save. Arms the slot's stream; the file read happens in TickHost under
-// the torn-read guard (the game writes saves non-atomically in place, so the file is trusted
-// only when its size and mtime are stable across consecutive polls and two full reads are
-// CRC-identical). A missing file sends a zero-byte begin: the fresh-world fallback.
+// A client asked for the save. The host's live world is captured at once, or, while the host is still
+// loading its world, once it is in (TickHost). A capture that cannot run arms the canonical slot's
+// stream; the file read happens in TickHost under the torn-read guard (the game writes saves
+// non-atomically in place, so the file is trusted only when its size and mtime are stable across
+// consecutive polls and two full reads are CRC-identical). A missing file sends a zero-byte begin: the
+// fresh-world fallback.
 void OnRequest(int peerSlot);
 
-// The host pump: per active slot, the stable-read attempt until the blob is captured, then
-// chunk sends paced by send-buffer backpressure (a failed send stops the pass; retried next
-// tick). From the net pump's tick on the host.
+// The host pump: per waiting slot, the capture once the host's world is in (one a tick); per active
+// slot, the stable-read attempt until the blob is captured, then chunk sends paced by send-buffer
+// backpressure (a failed send stops the pass; retried next tick). From the net pump's tick on the host.
 void TickHost();
 
 // A peer left mid-stream: drop its pump state (the disconnect edge).
