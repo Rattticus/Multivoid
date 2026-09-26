@@ -91,7 +91,7 @@ replayed on every peer (`coop/interactables/signal_catch_sync`); the unprimed ch
 authority, because a claim-gated detector lost a live catch to the hold's own release. The dish
 theater is host-only: the client's dish simulation is parked, the host replays the slew and
 streams the poses of all twenty-four dishes, the armed download's polarity is host-authored, and
-calibration is a symmetric per-dish batch (`coop/interactables/dish_sync`).
+calibration is a symmetric per-dish batch (`coop/interactables/dish_calib_sync`).
 
 ### The deck list, playback, the refiner
 
@@ -225,7 +225,7 @@ is discarded with it, its command stopping there. The upgrade levels arrive with
 |---|---|
 | occupancy | `coop/interactables/device_occupancy` |
 | the desk | `coop/interactables/desk_input_sync`, `coop/interactables/desk_sim_sync`, `coop/interactables/desk_cursor_sync`, `coop/interactables/desk_snd_fx`, `coop/interactables/console_state_sync` |
-| signals, the catch, the dishes | `coop/interactables/signal_sync`, `coop/interactables/signal_wire`, `coop/interactables/signal_catch_sync`, `coop/interactables/dish_sync` |
+| signals, the catch, the dishes | `coop/interactables/signal_sync`, `coop/interactables/signal_wire`, `coop/interactables/signal_catch_sync`, `coop/interactables/dish_sync`, `coop/interactables/dish_calib_sync` |
 | the deck and the refiner | `coop/interactables/deck_play_sync`, `coop/interactables/comp_sync` |
 | drives, racks, modules, tapes | `coop/interactables/drive_sync`, `coop/interactables/drive_rack_sync`, `coop/interactables/physmods_sync`, `coop/interactables/tape_caddy_sync` |
 | the laptop, the crate, the database, the servers | `coop/interactables/laptop_sync`, `coop/interactables/laptop_buffer_sync`, `coop/interactables/floppybox_sync`, `coop/interactables/meadow_db_sync`, `coop/interactables/serverbox_sync` |

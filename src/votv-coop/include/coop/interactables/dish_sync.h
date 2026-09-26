@@ -11,8 +11,8 @@
 // interpolation window, so the stream's rate is not visible as stepping. That applier serves
 // the stream rows and the join seed alike, and skips a dish whose own local loop is still
 // live. ARM: the host's raw poll is the only author, and a client applies the host's polarity
-// rather than rolling its own. CALIBRATION is symmetric instead, having no RNG to diverge on:
-// every peer diff-polls, broadcasts absolute values, and the host relay gives them one order.
+// rather than rolling its own. CALIBRATION is a lane of its own (coop/interactables/
+// dish_calib_sync), polled from this lane's slow tick and seeded by its join snapshot.
 
 #pragma once
 
@@ -29,13 +29,12 @@ void Install(coop::net::Session* session);
 // Game thread, per pump tick. HOST: the 4 Hz pose sweep (+ settle tail) + the
 // 4 Hz arm poll. CLIENT: drain + apply DishPose batches and drive the LerpWindow
 // mirror interp; the 1 Hz park latch (tickers + the cue reconciler). ALL peers:
-// the 1 Hz calibration diff-poll.
+// the 1 Hz calibration poll (dish_calib_sync).
 void Tick();
 
 // Reliable appliers (event_dispatch_state).
 void OnDishArm(const coop::net::DishArmPayload& p, uint8_t senderSlot);
 void OnDishSnapshot(const coop::net::DishSnapshotPayload& p, uint8_t senderSlot);
-void OnDishCalib(const coop::net::DishCalibPayload& p, uint8_t senderSlot);
 
 // HOST: the joiner's connect-replay rows -- DishSnapshot (poses/calibration/
 // activeDishes) and, when the host machine is armed, a DishArm row (AFTER the

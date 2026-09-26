@@ -12,6 +12,7 @@
 #include "coop/interactables/deck_play_sync.h"    // PlayDeckEvent
 #include "coop/interactables/desk_input_sync.h"
 #include "coop/interactables/desk_snd_fx.h"
+#include "coop/interactables/dish_calib_sync.h"
 #include "coop/interactables/dish_hashcode_sync.h"
 #include "coop/interactables/dish_sync.h"
 #include "coop/interactables/laptop_sync.h"      // LaptopState, LaptopBlob
@@ -369,7 +370,7 @@ bool HandleSignalEvent(net::Session& /*session*/,
             (msg.senderPeerSlot >= 0 && msg.senderPeerSlot < net::kMaxPeers)
                 ? static_cast<uint8_t>(msg.senderPeerSlot)
                 : static_cast<uint8_t>(0xFF);
-        coop::dish_sync::OnDishCalib(cp2, c2slot);
+        coop::dish_calib_sync::OnDishCalib(cp2, c2slot);
         break;
     }
     case net::ReliableKind::ReelSlot: {

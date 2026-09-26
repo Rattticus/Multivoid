@@ -4,6 +4,7 @@
 
 #include "coop/config/config.h"
 #include "coop/element/lerp_window.h"
+#include "coop/interactables/dish_calib_sync.h"
 #include "coop/net/session.h"
 
 #include "ue_wrap/desk/console_desk.h"
@@ -104,11 +105,6 @@ struct DishInterp {
 };
 DishInterp g_dishInterp[coop::net::kMaxDishes] = {};
 
-// Shared: the calibration diff-poll baseline (all peers; primed by snapshot and wire
-// applies).
-float g_prevCalib[coop::net::kMaxDishes] = {};
-bool g_haveCalibBaseline = false;
-
 void ResetModuleState() {
     g_havePrevMovingHost = false;
     g_settleLeft = 0;
@@ -121,7 +117,7 @@ void ResetModuleState() {
     g_cueWatch = 0;
     g_parkedDisher = nullptr;
     g_parkedUncalib = nullptr;
-    g_haveCalibBaseline = false;
+    coop::dish_calib_sync::Reset();
     for (int32_t i = 0; i < coop::net::kMaxDishes; ++i) {
         g_dishInterp[i] = DishInterp{};
     }
@@ -135,13 +131,6 @@ bool CheckGeneration() {
     ResetModuleState();
     return true;
 }
-
-uint16_t QuantCalib(float v) {
-    if (v < 0.f) v = 0.f;
-    if (v > 1.f) v = 1.f;
-    return static_cast<uint16_t>(v * 65535.f + 0.5f);
-}
-float DequantCalib(uint16_t q) { return static_cast<float>(q) / 65535.f; }
 
 // Advance a single dish's interpolation window to `now`. Applies the fractional error (the
 // MTA linear form); on arrival snaps current to target exactly; pushes to the engine if dirty.
@@ -385,34 +374,6 @@ void HostArmPoll(coop::net::Session* s) {
     g_prevPolarity = polarity;
 }
 
-// All peers: the symmetric calibration diff poll.
-void CalibPoll(coop::net::Session* s) {
-    D::DishRow rows[coop::net::kMaxDishes];
-    const int32_t n = D::ReadAllRows(rows, coop::net::kMaxDishes);
-    if (n <= 0) return;
-    if (!g_haveCalibBaseline) {
-        for (int32_t i = 0; i < n; ++i)
-            if (rows[i].index >= 0 && rows[i].index < coop::net::kMaxDishes)
-                g_prevCalib[rows[i].index] = rows[i].calibration;
-        g_haveCalibBaseline = true;
-        return;
-    }
-    coop::net::DishCalibPayload p{};
-    for (int32_t i = 0; i < n; ++i) {
-        const auto& r = rows[i];
-        if (r.index < 0 || r.index >= coop::net::kMaxDishes) continue;
-        if (r.calibration != g_prevCalib[r.index] && p.count < coop::net::kMaxDishes) {
-            auto& e = p.entries[p.count++];
-            e.index = static_cast<uint8_t>(r.index);
-            e.valueQ = QuantCalib(r.calibration);
-            g_prevCalib[r.index] = r.calibration;
-        }
-    }
-    if (p.count > 0) {
-        s->SendReliable(coop::net::ReliableKind::DishCalib, &p, sizeof(p));
-    }
-}
-
 // The client: the park latch and the cue reconciler.
 void ClientParkLatch() {
     if (void* disher = D::DisherInstance()) {
@@ -519,7 +480,7 @@ void Tick() {
     if (now >= g_nextSlow) {
         g_nextSlow = now + kSlowInterval;
         if (!host) ClientParkLatch();
-        if (s->connected()) CalibPoll(s);
+        if (s->connected()) coop::dish_calib_sync::Poll(s);
     }
 }
 
@@ -612,34 +573,9 @@ void OnDishSnapshot(const coop::net::DishSnapshotPayload& p, uint8_t senderSlot)
         // The snapshot's active dishes may differ from the moving flag mid-transition on the host;
         // trust the explicit mask over the row-apply default.
         D::WriteActiveDish(i, r.activeDish != 0);
-        const float calib = DequantCalib(r.calibQ);
-        D::WriteCalibration(i, calib);
-        g_prevCalib[i] = calib;  // prime -- a wire apply must never re-diff
     }
-    g_haveCalibBaseline = true;
+    coop::dish_calib_sync::ApplySnapshot(p, n);
     UE_LOGI("dish_sync: snapshot applied (%d dishes)", n);
-}
-
-void OnDishCalib(const coop::net::DishCalibPayload& p, uint8_t senderSlot) {
-    auto* s = g_session.load(std::memory_order_acquire);
-    if (!s) return;
-    if (!D::EnsureResolved()) return;
-    const int32_t n = p.count <= coop::net::kMaxDishes ? p.count : coop::net::kMaxDishes;
-    for (int32_t i = 0; i < n; ++i) {
-        const auto& e = p.entries[i];
-        if (e.index >= coop::net::kMaxDishes) continue;
-        const float v = DequantCalib(e.valueQ);
-        D::WriteCalibration(e.index, v);
-        g_prevCalib[e.index] = v;  // apply + prime, GT-atomic (echo-proof)
-    }
-    if (s->role() == coop::net::Role::Host) {
-        // Relay in arrival order, the lane's total order.
-        for (int slot = 1; slot < static_cast<int>(coop::net::kMaxPeers); ++slot) {
-            if (slot == senderSlot || !s->IsSlotReady(slot)) continue;
-            s->SendReliableToSlot(slot, coop::net::ReliableKind::DishCalib, &p, sizeof(p),
-                                  senderSlot > 0 ? senderSlot : 0);
-        }
-    }
 }
 
 void QueueConnectBroadcastForSlot(int peerSlot) {
@@ -661,7 +597,7 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
             auto& w = p.rows[r.index];
             w.yawCdeg = coop::net::QuantDeg(r.yawZ);
             w.rollCdeg = coop::net::QuantDeg(r.rollY);
-            w.calibQ = QuantCalib(r.calibration);
+            w.calibQ = coop::net::QuantCalib(r.calibration);
             w.isMoving = r.isMoving ? 1 : 0;
             bool active = false;
             D::ReadActiveDish(r.index, active);

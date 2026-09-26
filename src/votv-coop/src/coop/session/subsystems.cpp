@@ -19,6 +19,7 @@
 #include "coop/interactables/meadow_db_sync.h"  // meadow signal-DB mirror (multiset shadow + join seed)
 #include "coop/interactables/desk_snd_fx.h"
 #include "coop/interactables/desk_sim_sync.h"
+#include "coop/interactables/dish_calib_sync.h"
 #include "coop/interactables/dish_hashcode_sync.h"
 #include "coop/interactables/dish_sync.h"
 #include "coop/interactables/sat_console_sync.h"  // the SAT console's shared commands run on the host
@@ -227,7 +228,8 @@ void Install(coop::net::Session& session) {
     coop::drive_sync::Install(&session);  // drive-chain lanes (verb dirty-marks + sweeps; owns ALL chain verb watches)
     coop::drive_rack_sync::Install(&session);  // rack storage lane (marks forwarded from drive_sync)
     coop::desk_sim_sync::Install(&session);  // download-SIM host-authoritative output stream (decoded/needle/rate/frData/poData/offsets; client overwrites)
-    coop::dish_sync::Install(&session);  // host-auth dish pose mirror + host-polarity ARM edge + symmetric calibration lane (client sim parked)
+    coop::dish_sync::Install(&session);  // host-auth dish pose mirror + host-polarity ARM edge (client sim parked)
+    coop::dish_calib_sync::Install(&session);  // the dishes' calibration: every peer's 1 Hz diff poll, relayed by the host
     coop::dish_hashcode_sync::Install(&session);  // the dishes' hash codes: the host's rollover sends them, a client refuses its own
     coop::sat_console_sync::Install(&session);  // the SAT console: a client's shared commands run on a terminal the host keeps for it
     coop::tape_caddy_sync::Install(&session);  // caddy reel slots (presser edges) + host accrual corrector (client accrual NOT parked -- corrector-bounded)

@@ -2767,6 +2767,12 @@ inline uint16_t QuantDeg(float deg) {
     return static_cast<uint16_t>(n * 100.f + 0.5f);
 }
 inline float DequantDeg(uint16_t q) { return static_cast<float>(q) * 0.01f; }
+inline uint16_t QuantCalib(float v) {
+    if (v < 0.f) v = 0.f;
+    if (v > 1.f) v = 1.f;
+    return static_cast<uint16_t>(v * 65535.f + 0.5f);
+}
+inline float DequantCalib(uint16_t q) { return static_cast<float>(q) / 65535.f; }
 
 struct DishPoseRow {
     uint8_t  index;      // 1 -- gamemode.dishs index
