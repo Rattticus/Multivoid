@@ -515,6 +515,12 @@ CFG_FLAG(kerfus_drill, "kerfus_drill", "dev", false, "VOTVCOOP_KERFUS_DRILL",
     "then the host possesses it, the client walks back once the haunting's energy pin shows, and the Kerfus "
     "must go off away from where it settled. The rig client joins at the base. '[KERFUS-DRILL] client DONE "
     "PASS|FAIL' ends it; '[KERFUS-DRILL] INVALID' is a step that could not run.")
+CFG_FLAG(kerfus_throw_drill, "kerfus_throw_drill", "dev", false, "VOTVCOOP_KERFUS_THROW_DRILL",
+    "Drill (BOTH peers): the host grabs the plain kerfur (the Kerfus) and lets it go or throws it, three times "
+    "off and three on, and grabs it once more; then the client grabs it twice. Each peer says whether its Kerfus "
+    "stayed one body: the copy where the host's hand has it, its centre of mass on the body, its welded "
+    "navigation pawn where the body carries it. The rig client joins at the base. '[KERFUS-THROW] host DONE "
+    "PASS|FAIL' ends it; '[KERFUS-THROW] INVALID' is a step that could not run.")
 CFG_FLAG(kerfur_serve_drill, "kerfur_serve_drill", "dev", false, "VOTVCOOP_KERFUR_SERVE_DRILL",
     "Drill (BOTH peers): the host spawns a kerfur Omega, takes a red disc in hand and stays put; the client's "
     "first command is get_reports, and the host's disc must stay in its hand with the Omega holding none, back "
