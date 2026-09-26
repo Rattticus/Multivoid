@@ -13,6 +13,9 @@
 
 #pragma once
 
+#include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/types.h"
+
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -75,11 +78,54 @@ bool ApplyBreak(void* box, bool broken);
 bool ReadAggregates(Aggregates& out);
 bool WriteAggregates(const Aggregates& in);
 
-// ---- server upgrades, read-only, for instruments -----------------------------------------------
+// ---- server upgrades ------------------------------------------------------------------------------
+
+// A box takes up to three physical upgrades. Its install is playerUsedOn with a held prop_serverUpg_C:
+// below the cap it raises `upgrades`, destroys the held prop and runs updUpgrades (the upg1..3 meshes).
+// Its take-out is actionOptionIndex with action 4 while the player looks at the take-out box: above 0
+// it lowers `upgrades`, spawns a serverUpg_1 at the player and hands it over, then updUpgrades. The
+// count is the box's own, saved in its data, and canBreak weights the break roll by it.
+inline constexpr const wchar_t* kBoxClass    = L"serverBox_C";
+inline constexpr const wchar_t* kInstallVerb = L"playerUsedOn";
+inline constexpr const wchar_t* kTakeOutVerb = L"actionOptionIndex";
+inline constexpr int32_t kMaxUpgrades = 3;
 
 // The box's upgrade level, serverBox_C.upgrades, which initialServerUpgradeSpawn_C rolls at a new
 // game (clamped 0..3). False for a null box or an unresolved member.
 bool ReadUpgrades(void* box, int32_t& out);
+
+// Write the level and run the box's updUpgrades, the one painter its install and take-out run. False for
+// a null box or an unresolved member or verb.
+bool WriteUpgrades(void* box, int32_t level);
+
+// The box's index in the gamemode's server list, the identity every server lane uses; -1 when absent.
+int32_t IndexOf(void* box);
+
+// Whether `cls` is an upgrade prop's class: prop_serverUpg_C or one under it. The game makes
+// prop_serverUpg_1_C, the class its serverUpg_1 row names, for the store, the take-out and the hand.
+bool IsUpgradeClass(void* cls);
+
+// Every live upgrade prop, of any class under prop_serverUpg_C (the index lists instances by their exact
+// class). Game thread.
+using UpgradeFn = void (*)(void* ctx, void* upgrade);
+void ForEachUpgrade(UpgradeFn fn, void* ctx);
+
+// An upgrade as the box's take-out spawns one: the class its serverUpg_1 row names (prop_serverUpg_1_C, whose
+// defaults carry the row's name), at `at`. The row reads no name, so nothing is written after the spawn.
+// Null while the class is not loaded or the spawn fails.
+void* SpawnUpgradeProp(const FVector& at);
+
+// The box's take-out component (takeUpgrade), and whether the box reads the player's look on it
+// (lookatUpgrades): its getActionOptions sets it when the player's look reaches the box, from whether the
+// look is on that component, and it holds until the look changes. Null/false when unresolved.
+void* TakeOutComponent(void* box);
+bool ReadLooksAtTakeOut(void* box, bool& out);
+
+// The box's install and take-out, called as the player's use and E-press call them: playerUsedOn with the
+// player (the body reads the upgrade from the player's hand, `holding_actor`), a hit on the box and the
+// held actor and its name; actionOptionIndex with action 4 and a hit on the take-out component. [dev]
+bool CallInstall(void* box, void* player, void* held, const reflection::FName& heldName);
+bool CallTakeOut(void* box, void* player);
 
 // How many initialServerUpgradeSpawn_C are alive: the one-shot actor that rolls those levels at
 // the gamemode's begin-play and then destroys itself. Counted from the object index; the class

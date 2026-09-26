@@ -10,6 +10,9 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/world/world_singleton.h"
 #include "ue_wrap/core/sdk_profile_names.h"
+#include "ue_wrap/engine/engine.h"
+#include "ue_wrap/engine/engine_component.h"  // GetComponentLocation
+#include "ue_wrap/engine/hit_result.h"
 #include "ue_wrap/engine/world_identity.h"
 
 #include <chrono>
@@ -219,6 +222,10 @@ namespace {
 int32_t  g_offUpgrades = -1;        // serverBox_C.upgrades (int)
 bool     g_upgradesMissing = false; // the class loaded without the member: never retried
 CachedObjRef g_spawnerCls;          // initialServerUpgradeSpawn_C
+CachedObjRef g_upgPropCls;          // prop_serverUpg_C, found again in each world that loads it
+int32_t  g_offTakeUpgrade = -1;     // serverBox_C.takeUpgrade (UBoxComponent*)
+int32_t  g_lookByte = -1;           // serverBox_C.lookatUpgrades, its byte and bit
+uint8_t  g_lookMask = 0;
 bool     g_spawnerMissed = false;   // the last lookup missed, in world generation g_spawnerMissGen
 uint32_t g_spawnerMissGen = 0;
 }  // namespace
@@ -237,6 +244,94 @@ bool ReadUpgrades(void* box, int32_t& out) {
     }
     out = *reinterpret_cast<const int32_t*>(reinterpret_cast<const uint8_t*>(box) + g_offUpgrades);
     return true;
+}
+
+bool WriteUpgrades(void* box, int32_t level) {
+    int32_t cur = 0;
+    if (!ReadUpgrades(box, cur)) return false;  // resolves the member
+    // Looked up on the box's own class at each call, through the lookup memoised by slot and serial: a
+    // placed box's class is the level's, and never kept by pointer across worlds.
+    void* fn = R::FindDispatchFunctionCached(R::ClassOf(box), L"updUpgrades");
+    if (!fn) return false;
+    *reinterpret_cast<int32_t*>(reinterpret_cast<uint8_t*>(box) + g_offUpgrades) = level;
+    ParamFrame f(fn);
+    return f.valid() && Call(box, f);
+}
+
+int32_t IndexOf(void* box) {
+    if (!box) return -1;
+    std::vector<void*> servers;
+    ReadServers(servers);
+    for (size_t i = 0; i < servers.size(); ++i)
+        if (servers[i] == box) return static_cast<int32_t>(i);
+    return -1;
+}
+
+bool IsUpgradeClass(void* cls) {
+    if (!cls) return false;
+    if (!g_upgPropCls.Alive()) {
+        void* found = object_index::ClassByName(L"prop_serverUpg_C");
+        if (!found) return false;
+        g_upgPropCls.Set(found);
+    }
+    void* base = g_upgPropCls.Raw();
+    return R::IsDescendantOfAny(cls, &base, 1, 8);
+}
+
+void ForEachUpgrade(UpgradeFn fn, void* ctx) {
+    struct Visit { UpgradeFn fn; void* ctx; } v{fn, ctx};
+    object_index::ForEachClass([](void* c, void* cls, void*) {
+        if (!IsUpgradeClass(cls)) return;
+        object_index::ForEachInstance(cls, [](void* c2, void* obj, int32_t index) {
+            // An index member may still be loading, under construction or dying; the slot's flags say so.
+            if (!obj || (R::SlotFlags(index) & (R::slot_flags::Dying | R::slot_flags::NotYetReadable))) return;
+            if (!R::IsLive(obj) || R::NameStartsWith(R::NameOf(obj), L"Default__")) return;
+            auto* vv = static_cast<Visit*>(c2);
+            vv->fn(vv->ctx, obj);
+        }, c);
+    }, &v);
+}
+
+void* SpawnUpgradeProp(const FVector& at) {
+    void* cls = object_index::ClassByName(L"prop_serverUpg_1_C");
+    return cls ? engine::SpawnActor(cls, at) : nullptr;
+}
+
+void* TakeOutComponent(void* box) {
+    if (!box) return nullptr;
+    if (g_offTakeUpgrade < 0) g_offTakeUpgrade = R::FindPropertyOffset(R::ClassOf(box), L"takeUpgrade");
+    if (g_offTakeUpgrade < 0) return nullptr;
+    void* comp = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(box) + g_offTakeUpgrade);
+    return (comp && R::IsLive(comp)) ? comp : nullptr;
+}
+
+bool ReadLooksAtTakeOut(void* box, bool& out) {
+    if (!box) return false;
+    if (g_lookByte < 0 && !R::FindBoolProperty(R::ClassOf(box), L"lookatUpgrades", g_lookByte, g_lookMask))
+        return false;
+    out = (*(reinterpret_cast<const uint8_t*>(box) + g_lookByte) & g_lookMask) != 0;
+    return true;
+}
+
+bool CallInstall(void* box, void* player, void* held, const R::FName& heldName) {
+    void* fn = box ? R::FindDispatchFunctionCached(R::ClassOf(box), kInstallVerb) : nullptr;
+    void* comp = TakeOutComponent(box);  // a component of the box for the hit, which the install never reads
+    if (!fn || !comp || !player || !held) return false;
+    const FVector at = engine::GetComponentLocation(comp);
+    ParamFrame f(fn);
+    return f.valid() && f.Set<void*>(L"player", player) && hit_result::Write(f, L"hit", box, comp, at) &&
+           f.Set<void*>(L"lookAtComponent", comp) && f.Set<void*>(L"holdObject", held) &&
+           f.Set<R::FName>(L"holdPropName", heldName) && Call(box, f);
+}
+
+bool CallTakeOut(void* box, void* player) {
+    void* fn = box ? R::FindDispatchFunctionCached(R::ClassOf(box), kTakeOutVerb) : nullptr;
+    void* comp = TakeOutComponent(box);
+    if (!fn || !comp || !player) return false;
+    const FVector at = engine::GetComponentLocation(comp);
+    ParamFrame f(fn);
+    return f.valid() && f.Set<void*>(L"player", player) && hit_result::Write(f, L"hit", box, comp, at) &&
+           f.Set<uint8_t>(L"action", 4) && f.Set<void*>(L"lookAtComponent", comp) && Call(box, f);
 }
 
 int32_t CountUpgradeSpawners() {
