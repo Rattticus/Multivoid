@@ -22,6 +22,7 @@
 #include "coop/save/join_window_baseline.h"  // the capture instant's baselines and their flush
 #include "coop/save/save_guard.h"
 #include "coop/save/save_indicator_suppress.h"  // detect the SAVED HUD across the join scratch save
+#include "coop/save/slot_file_read.h"  // the torn-read guard and the stream's CRC
 #include "ue_wrap/engine/engine.h"      // the host's current prop position
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/actors/prop.h"        // IsChipPile: a grabbed clump belongs to the convert stream
@@ -53,44 +54,10 @@ namespace {
 
 coop::net::Session* g_session = nullptr;  // set once at Install (boot), read thereafter
 
-// CRC-32 (IEEE, table-driven); both sides of the wire use it.
-uint32_t Crc32(const uint8_t* data, size_t len) {
-    static uint32_t table[256];
-    static std::atomic<bool> init{false};
-    if (!init.load(std::memory_order_acquire)) {
-        for (uint32_t i = 0; i < 256; ++i) {
-            uint32_t c = i;
-            for (int k = 0; k < 8; ++k) c = (c & 1) ? (0xEDB88320u ^ (c >> 1)) : (c >> 1);
-            table[i] = c;
-        }
-        init.store(true, std::memory_order_release);
-    }
-    uint32_t crc = 0xFFFFFFFFu;
-    for (size_t i = 0; i < len; ++i) crc = table[(crc ^ data[i]) & 0xFF] ^ (crc >> 8);
-    return crc ^ 0xFFFFFFFFu;
-}
-
-bool ReadWholeFile(const fs::path& p, std::vector<uint8_t>& out) {
-    std::ifstream f(p, std::ios::binary);
-    if (!f) return false;
-    f.seekg(0, std::ios::end);
-    const std::streamoff n = f.tellg();
-    if (n <= 0) return false;
-    out.resize(static_cast<size_t>(n));
-    f.seekg(0, std::ios::beg);
-    f.read(reinterpret_cast<char*>(out.data()), n);
-    return f.good() || f.eof();
-}
-
 // The host side, game thread only: OnRequest, TickHost, CancelForSlot.
 
 std::wstring g_hostSlot;  // the slot the host's world was loaded from
 std::atomic<uint32_t> g_hostSlotSerial{0};  // one per SetHostSlot, i.e. per world loaded to host (the boot load names it off the game thread)
-
-// The torn-read guard: VOTV's saveToSlot writes the .sav in place, so a join landing mid-write
-// would read a torn blob. The file is trusted only when its size and mtime are stable across two
-// polls this far apart and two consecutive full reads are CRC-identical.
-constexpr uint64_t kStablePollMs = 300;
 
 struct HostStream {
     // The joiner asked while the host's world was still coming in: TickHost captures it once it is in.
@@ -105,14 +72,7 @@ struct HostStream {
     coop::net::SaveTransferBeginPayload beginPayload{};
     uint32_t nextChunk = 0;
     uint32_t chunkCount = 0;
-    // The stable-read probe state.
-    uint64_t  lastSize = 0;
-    int64_t   lastMtime = 0;
-    uint64_t  lastProbeTick = 0;   // GetTickCount64 of the last probe
-    int       stableCount = 0;
-    uint32_t  firstReadCrc = 0;
-    bool      haveFirstRead = false;
-    int       readAttempts = 0;
+    coop::slot_file_read::StableRead read;  // the canonical slot's read under the torn-read guard
     bool      stallSaid = false;   // [dev] stall_world_stream_at_pct said its piece once
     std::vector<uint8_t> blob;     // captured stable blob (per-slot copy; 17MB,
                                    // freed on completion -- joins are rare)
@@ -181,51 +141,19 @@ void BeginStreamFromBlob_(int slot, HostStream& hs, std::vector<uint8_t>&& bytes
 
 // One stable-read attempt for a slot still capturing; true once the blob is captured.
 bool TryCaptureBlob_(int slot, HostStream& hs) {
-    const uint64_t now = ::GetTickCount64();
-    if (now - hs.lastProbeTick < kStablePollMs) return false;  // wait out the poll gap
-    hs.lastProbeTick = now;
-
+    namespace SR = coop::slot_file_read;
     const fs::path file = coop::save_guard::SaveGamesDir() / (g_hostSlot + L".sav");
-    std::error_code ec;
-    const uint64_t size = fs::file_size(file, ec);
-    if (ec) {
-        if (++hs.readAttempts >= 4) { ArmBeginNoSave_(slot); }  // R-4b: retried by the pump
-        return false;
-    }
-    const auto mtime = fs::last_write_time(file, ec).time_since_epoch().count();
-    if (ec) return false;
-
-    if (size != hs.lastSize || mtime != hs.lastMtime) {
-        // Changed since the last probe (the game may be mid-save): the stability count restarts,
-        // which also covers the first probe.
-        hs.lastSize = size;
-        hs.lastMtime = mtime;
-        hs.stableCount = 1;
-        hs.haveFirstRead = false;
-        return false;
-    }
-    if (++hs.stableCount < 3) return false;  // need 2 stable gaps (3 identical probes)
-
     std::vector<uint8_t> bytes;
-    if (!ReadWholeFile(file, bytes) || bytes.empty()) {
-        if (++hs.readAttempts >= 4) { ArmBeginNoSave_(slot); }  // R-4b: retried by the pump
+    uint32_t crc = 0;
+    switch (SR::PollStable(hs.read, file, slot, bytes, crc)) {
+    case SR::Poll::Waiting:
         return false;
-    }
-    const uint32_t crc = Crc32(bytes.data(), bytes.size());
-    if (!hs.haveFirstRead) {
-        // The first full read keeps its CRC and the next read must match: the double read closes
-        // the in-place-write window.
-        hs.haveFirstRead = true;
-        hs.firstReadCrc = crc;
+    case SR::Poll::Unreadable:
+        ArmBeginNoSave_(slot);  // R-4b: retried by the pump
         return false;
+    case SR::Poll::Ready:
+        break;
     }
-    if (crc != hs.firstReadCrc) {
-        UE_LOGW("save_transfer: slot %d double-read CRC mismatch (file changing) -- re-probing", slot);
-        hs.haveFirstRead = false;
-        hs.stableCount = 0;
-        return false;
-    }
-
     BeginStreamFromBlob_(slot, hs, std::move(bytes), crc);
     UE_LOGI("save_transfer: slot %d streaming CANONICAL slot '%ls' (stale fallback; %u bytes, "
             "%u chunks, crc=0x%08X)",
@@ -265,7 +193,7 @@ void MaybeFinishLocked_() {
         g_cliState = ClientState::Failed;
         return;
     }
-    const uint32_t crc = Crc32(g_cliBuf.data(), g_cliBuf.size());  // over the WHOLE framed stream (sidecar+blob)
+    const uint32_t crc = coop::slot_file_read::Crc32(g_cliBuf.data(), g_cliBuf.size());  // over the WHOLE framed stream (sidecar+blob)
     if (crc != g_cliCrc) {
         UE_LOGE("save_transfer: blob CRC mismatch (got 0x%08X want 0x%08X) -- failing",
                 crc, g_cliCrc);
@@ -433,7 +361,7 @@ void CaptureAndBegin_(int peerSlot, HostStream& hs) {
         const fs::path scratchFile =
             coop::save_guard::SaveGamesDir() / (std::wstring(kHostXferSlot) + L".sav");
         std::vector<uint8_t> bytes;
-        bool got = ReadWholeFile(scratchFile, bytes) && !bytes.empty();
+        bool got = coop::slot_file_read::ReadWholeFile(scratchFile, bytes) && !bytes.empty();
         // A second opinion, not the primary check, which is the producer's: save_capture refuses a
         // capture whose objectsData came back empty. This size ratio discriminates only a big
         // canonical against a small capture; a stale gamemode's full container serialises a
@@ -476,7 +404,7 @@ void CaptureAndBegin_(int peerSlot, HostStream& hs) {
                 framed.insert(framed.end(), bytes.begin(), bytes.end());
                 bytes.swap(framed);  // bytes := [sidecar][.sav blob]
             }
-            const uint32_t crc = Crc32(bytes.data(), bytes.size());  // CRC over the FRAMED stream
+            const uint32_t crc = coop::slot_file_read::Crc32(bytes.data(), bytes.size());  // CRC over the FRAMED stream
             BeginStreamFromBlob_(peerSlot, hs, std::move(bytes), crc, sidecarBytes);
             UE_LOGI("save_transfer: slot %d streaming LIVE host world (%u bytes, %u chunks, "
                     "crc=0x%08X, sidecar=%u B)",
