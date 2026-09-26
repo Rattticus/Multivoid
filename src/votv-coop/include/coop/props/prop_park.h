@@ -1,6 +1,6 @@
 // coop/props/prop_park.h -- a prop a receiver parks: while another peer's hand or the host's drive moves it,
 // its body stops simulating, and the receiver gives it back simulating. A Character welded onto a prop -- the
-// Kerfus's navigation pawn, the murder kerfur's -- moves only while the prop's body does not simulate: its
+// Kerfus's navigation pawn is the one measured -- moves only while the prop's body does not simulate: its
 // movement skips a tick whose capsule simulates, and a welded capsule answers with its weld parent's state. So a
 // park wakes it. The Kerfus's pawn then falls, its capsule blocking nothing, and each step re-welds it lower: the
 // prop's centre of mass falls with it, at 44 m/s on a copy, and the spin a throw gives at release swings the prop
