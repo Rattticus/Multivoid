@@ -133,6 +133,9 @@ inline Lane LaneForKind(ReliableKind k) {
     // canonical it was diffed against); pinned. Not relayable: ops are host-terminal, and the
     // canonical is host-authored.
     case ReliableKind::PhysModsState:  return Lane::Normal;
+    // ServerUpgradeState is the same shape for the servers' upgrades: an op must not overtake the
+    // canonical it was diffed against, and a deny precedes its canonical; pinned. Not relayable.
+    case ReliableKind::ServerUpgradeState: return Lane::Normal;
     // The drive-chain trio assumes in-lane order between a slot line, the payload row it references
     // and a rack pair; pinned together.
     case ReliableKind::DriveSlotState: return Lane::Normal;

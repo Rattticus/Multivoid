@@ -28,7 +28,9 @@
 #include "ue_wrap/core/sdk_profile.h"            // profile::name::{GameplayStaticsClass,FinishSpawningActorFn,PropSetKeyFn}
 #include "ue_wrap/desk/tape_caddy.h"            // IsReelClass whitelist + the Progress birth scalar
 #include "ue_wrap/desk/phys_mods.h"             // IsModuleClass whitelist
+#include "ue_wrap/devices/serverbox.h"          // IsUpgradeClass whitelist
 #include "coop/interactables/physmods_sync.h"   // the denied-birth reap
+#include "coop/interactables/server_upgrade_sync.h"  // the refused take-out's reap
 #include "coop/interactables/drive_sync.h"      // the denied rack-take reap
 #include "ue_wrap/desk/drive_chain.h"           // IsDriveClass whitelist
 #include "ue_wrap/core/types.h"
@@ -397,13 +399,17 @@ void Tick(coop::net::Session* session) {
         // author, class-whitelisted at the host. The whitelist widens to desk modules (the unplug
         // births a module into the hand, the same local-only-ghost class), to drives (a rack
         // take on a client births a payload-bearing drive into the hand; the payload rides the
-        // drive payload broadcast at adoption, so no birth scalar is needed) and to floppy discs.
+        // drive payload broadcast at adoption, so no birth scalar is needed), to floppy discs and to the
+        // upgrade a server box's take-out hands the player.
         //
         // The disc is the one that is NOT born into a hand: a device's eject drops it in the world
         // at the slot's mouth. It needs the whitelist because the park below covers only a disc
         // this same client put into that device, and an eject reaches every other case.
         const bool isDiscBirth = ue_wrap::floppy_disc::EnsureResolved() &&
                                  ue_wrap::floppy_disc::IsDiscClass(R::ClassOf(e.actor));
+        // An upgrade's birth that reaches here is a world birth too: one the take-out hands over dies inside the
+        // pickup, so what comes is the one a full hand left at the player, and it falls where it is.
+        const bool isUpgradeBirth = ue_wrap::serverbox::IsUpgradeClass(R::ClassOf(e.actor));
         const bool freshBirth = !parked &&
             (isDiscBirth ||
              (ue_wrap::tape_caddy::EnsureResolved() &&
@@ -411,7 +417,8 @@ void Tick(coop::net::Session* session) {
              (ue_wrap::phys_mods::EnsureResolved() &&
               ue_wrap::phys_mods::IsModuleClass(R::ClassOf(e.actor))) ||
              (ue_wrap::drive_chain::EnsureResolved() &&
-              ue_wrap::drive_chain::IsDriveClass(R::ClassOf(e.actor))));
+              ue_wrap::drive_chain::IsDriveClass(R::ClassOf(e.actor))) ||
+             isUpgradeBirth);
         // A container-extraction birth is admitted too: the client's take materialises the
         // extracted item as a world actor, and without this the fresh-birth whitelist (reel, module
         // and drive only) drops it at drain and the item never reaches the host's world. The host's
@@ -460,7 +467,7 @@ void Tick(coop::net::Session* session) {
             // Not a clearing: the transform block above reads the prop's real physics state, so a
             // disc that has already come to rest during the key wait still crosses asleep, which
             // is where it is.
-            if (!isDiscBirth) p.physFlags |= pf::kSleep;
+            if (!isDiscBirth && !isUpgradeBirth) p.physFlags |= pf::kSleep;
             // A locally born drive carries its payload in its data slot: note the authorship, so
             // the drive sync broadcasts it at adoption (the first eid sight); un-noted first sights
             // stay prime-only.
@@ -545,8 +552,8 @@ void OnReelEjectIntent(coop::net::Session& session, const coop::net::PropDropInt
     UE_ASSERT_GAME_THREAD("prop_drop_intent::OnReelEjectIntent");
     if (session.role() != coop::net::Role::Host) return;
     // The client fresh-birth author, class-whitelisted: reels (the caddy eject), desk modules
-    // (the socket unplug), drives and floppy discs. Not a general client-spawn door; any other
-    // class here is a protocol violation, dropped.
+    // (the socket unplug), drives, floppy discs and server upgrades (a box's take-out). Not a general
+    // client-spawn door; any other class here is a protocol violation, dropped.
     const std::wstring cls = WireToWide(p.className.len, p.className.data, sizeof(p.className.data));
     void* clsObj = R::FindClass(cls.c_str());
     const bool isReel = clsObj && ue_wrap::tape_caddy::EnsureResolved() &&
@@ -557,7 +564,9 @@ void OnReelEjectIntent(coop::net::Session& session, const coop::net::PropDropInt
                          ue_wrap::drive_chain::IsDriveClass(clsObj);
     const bool isDisc = clsObj && ue_wrap::floppy_disc::EnsureResolved() &&
                         ue_wrap::floppy_disc::IsDiscClass(clsObj);
-    if (!isReel && !isModule && !isDrive && !isDisc) {
+    // A server box's take-out hands the player a new upgrade, born into the hand like a module.
+    const bool isServerUpg = clsObj && ue_wrap::serverbox::IsUpgradeClass(clsObj);
+    if (!isReel && !isModule && !isDrive && !isDisc && !isServerUpg) {
         UE_LOGW("[PROP-DROP] HOST birth intent from slot=%u rejected: class '%ls' not whitelisted",
                 senderSlot, cls.c_str());
         return;
@@ -565,6 +574,8 @@ void OnReelEjectIntent(coop::net::Session& session, const coop::net::PropDropInt
     // A module birth matching a fresh unplug deny for this sender is the raced ghost that got
     // dropped before the deny landed; reap it (the physics-mods sync logs).
     if (isModule && coop::physmods_sync::HostShouldReapModuleBirth(senderSlot, clsObj)) return;
+    // The same for an upgrade a refused take-out handed over (the server upgrade sync logs).
+    if (isServerUpg && coop::server_upgrade_sync::HostShouldReapUpgradeBirth(senderSlot)) return;
     // Drive births are authored normally; a denied rack-take ghost is reaped later by its
     // adoption payload's content hash (the drive sync).
     OnPropDropIntent(session, p, senderSlot);  // same author: dup-guard + HostSpawnPlacedProp

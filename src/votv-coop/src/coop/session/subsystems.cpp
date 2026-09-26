@@ -130,6 +130,7 @@
 #include "coop/props/join_membership_sweep.h"  // the join claim and sweep
 #include "coop/world/alarm_sync.h"  // base radar alarm shared-world toggle
 #include "coop/interactables/serverbox_sync.h"  // host-authoritative signal-server sim state
+#include "coop/interactables/server_upgrade_sync.h"  // the servers' physical upgrades
 #include "coop/creatures/roach_sync.h"  // host-authoritative roach-infestation mirror
 #include "coop/creatures/owner_entity_sync.h"
 #include "coop/items/hook_anchor.h"
@@ -189,6 +190,7 @@ void Install(coop::net::Session& session) {
     coop::event_active_sync::Install(&session);  // the host's setEvent watch: begin/end edges; the join snapshot reads the game's registry
     coop::alarm_sync::Install(&session);  // base radar alarm shared-world toggle (a 1 Hz active poll on both roles)
     coop::serverbox_sync::Install(&session);  // signal-server sim state: host polls+broadcasts, client drive-reals + kills its ticker_serverBreaker
+    coop::server_upgrade_sync::Install(&session);  // the servers' upgrades: ops at the box's two verbs + host canonical
     coop::floppy_slot_sync::Install(&session);  // a disc-holding device's slot: host-canonical, a peer claims the outcome of its own insert or eject
     coop::floppy_slot_entry::Install(&session);  // the slot's overlap entry: no device swallows a disc still in transit out of one
     coop::roach_sync::Install(&session);  // roach infestation: host paged snapshots, client ordinal apply + consumption intents
@@ -353,6 +355,7 @@ void ConnectReplayForSlot(int slot) {
     // joiner starts its klaxon on arrival.
     coop::alarm_sync::QueueConnectBroadcastForSlot(slot);
     coop::serverbox_sync::QueueConnectBroadcastForSlot(slot);  // current server state to the joiner
+    coop::server_upgrade_sync::QueueConnectBroadcastForSlot(slot);  // every box's upgrade level
     coop::floppy_slot_sync::QueueConnectBroadcastForSlot(slot);  // every device slot: the joiner's world came from a save frozen before the first insert
     coop::hook_anchor::QueueConnectBroadcastForSlot(slot);  // anchored hooks the joiner's save capture missed; it dedups by key
     coop::roach_sync::QueueConnectBroadcastForSlot(slot);  // current roach population to the joiner
@@ -475,6 +478,7 @@ DisconnectStats DisconnectAll() {
     coop::event_active_sync::OnDisconnect();  // drop the begun-events map and its world stamp
     coop::alarm_sync::OnDisconnect();  // drop the cached trigger + poll baseline
     coop::serverbox_sync::OnDisconnect();  // drop cached gamemode/offsets + baseline + breaker-kill latch
+    coop::server_upgrade_sync::OnDisconnect();  // verb snapshots + parked canonical + deny records
     coop::floppy_slot_sync::OnDisconnect();  // drop the slot shadows, the retry set and the per-sender rate windows
     coop::floppy_slot_entry::OnDisconnect();  // counters, then the transit marks and the interceptors: the line above drops the UFunctions they name
     coop::roach_sync::OnDisconnect();  // drop snapshot assembly + tracked set + baselines
@@ -581,6 +585,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:turbine"}; coop::turbine_sync::Tick(); }  // wind turbines: host ~1 Hz driver-float poll / client deferred-apply retry
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:alarm"}; coop::alarm_sync::Tick(); }  // base radar alarm: 1 Hz active-bit poll BOTH roles (host broadcasts transitions; client forwards local ones)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:server"}; coop::serverbox_sync::Tick(); }  // signal-server sim: HOST 1 Hz state poll -> broadcast on change; CLIENT keeps its ticker_serverBreaker neutralized
+    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:server_upgrade"}; coop::server_upgrade_sync::Tick(); }  // a parked canonical, applied once the servers resolve
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:slot"}; coop::floppy_slot_sync::Tick(); }  // device slots: 1 Hz digest-gated poll -> HOST canonical, CLIENT claim
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:roach"}; coop::roach_sync::Tick(); }  // roach infestation: HOST 1 Hz population poll -> paged broadcast; CLIENT liveness-scan -> consumption intents
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:owner_entity"}; coop::owner_entity_sync::Tick(); }  // owner-entity: 4 Hz own-pose stream + keepalive + death-watch + mirror prune

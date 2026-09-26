@@ -42,9 +42,10 @@ struct Row {
 // which accumulates -- nothing writes that member at runtime, and nothing clamps the balance, so
 // from the second level up the game lets a purchase take it below zero.
 //
-// Three members have no row: downloadFiltSize, serverStability and transofrmer are bought as
-// PHYSICAL upgrades in the world (prop_serverUpg, prop_transformerUpgrade), not on the panel.
-// They still ride the mirror, which is the point of mirroring the struct rather than the purchase.
+// Three members have no row: downloadFiltSize, serverStability and transofrmer. The rows' switch names
+// them but no row carries their index, so in play only the cheat menu and the save's defaults write
+// them; the physical upgrades write a server box's and the transformer's own counts. They still ride
+// the mirror, which mirrors the struct rather than a purchase.
 constexpr Row kRows[kLevelCount] = {
     { L"upg_downloadSpd_",        0, 20,  4, 16 },
     { L"upg_downloadFiltSize_",  -1,  0,  0,  0 },

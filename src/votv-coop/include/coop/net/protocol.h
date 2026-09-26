@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 193;
+inline constexpr uint16_t kProtocolVersion = 194;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -858,6 +858,13 @@ enum class ReliableKind : uint8_t {
     // dish to a joiner at its world-ready (the broadcast skips a world that is not up). A client
     // writes them and never rolls its own. BlobChunkPayload: [u8 rows][u8 index][u32 chars + UTF-16].
     DishHashcodes = 155,
+
+    // The signal servers' physical upgrades. Client to host: my player installed an upgrade into a box
+    // or took one out, the box by its servers[] index, sent from the box's verb as it ran. Host to all:
+    // every box's level, the canonical, after it applied an op or its own verb ran, and at a joiner's
+    // world-ready. Host to one: a refusal of that client's op, which lost a race, before the canonical.
+    // Never relayed. ServerUpgradeStatePayload.
+    ServerUpgradeState = 156,
 };
 
 #pragma pack(push, 1)
@@ -1660,6 +1667,19 @@ struct ServerStatePayload {
     uint64_t isBrokenMask;    // 8  -- bit i = servers[i].IsBroken (up to 64 servers)
 };
 static_assert(sizeof(ServerStatePayload) == 24, "ServerStatePayload must be 24 bytes");
+
+// The server upgrades lane (ServerUpgradeState). Ops 0 (install) and 1 (take-out) name a box by its
+// servers[] index; op 2, the canonical, carries every box's level in servers[] order (a farm past 64
+// boxes logs and caps, as ServerState does); op 3 refuses the author's op `refused` at `box`.
+inline constexpr int kServerUpgradeBoxes = 64;
+struct ServerUpgradeStatePayload {
+    uint8_t op;                              // 1  -- 0 install, 1 take-out, 2 canonical, 3 deny
+    uint8_t box;                             // 1  -- servers[] index (ops 0, 1, 3)
+    uint8_t refused;                         // 1  -- deny: the refused op
+    uint8_t count;                           // 1  -- canonical: servers[].Num at send, capped
+    uint8_t levels[kServerUpgradeBoxes];     // 64 -- canonical: servers[i].upgrades, 0..3
+};
+static_assert(sizeof(ServerUpgradeStatePayload) == 68, "ServerUpgradeStatePayload must be 68 bytes");
 
 // One page of the roach snapshot (RoachState): the full live set in array order, paged; pages of
 // one snapshot share seq. The client assembles the pages and applies by ordinal.

@@ -303,6 +303,17 @@ The box list, the two disc verbs, the label and the break state all resolve in o
 (`ue_wrap/devices/serverbox`); the lane beside it owns only the wire half -- the mask, its width,
 the poll and who may author it (`coop/interactables/serverbox_sync`).
 
+A box also takes up to three physical upgrades, a count of its own that its break dice weigh. A player
+installs one by using a held upgrade on the box, which destroys the upgrade, and takes one out with E at
+the box's upgrade bay, which hands a new upgrade over; both run on the machine of the player who acted.
+The two verbs are watched on the box's class at the script-body gate, and each sends what its body
+changed: a client sends the host an install or a take-out, naming the box by its place in the
+gamemode's list; the host applies it within the game's own limits, re-meshes the box and sends every
+box's count, which every peer adopts. An op that lost a race goes back to its author with the counts --
+a refused install is refunded by an upgrade the host spawns at the box, a refused take-out's upgrade is
+removed from its author's hand -- and a joiner gets every box's count at its world-ready
+(`coop/interactables/server_upgrade_sync`).
+
 A laptop and a signal server hold a disc the same way: inserting one moves its type, its remaining
 writes, its data rows and the JSON of its whole save struct into four fields of the device and
 destroys the actor, and ejecting one spawns the disc back from those fields. The four are one

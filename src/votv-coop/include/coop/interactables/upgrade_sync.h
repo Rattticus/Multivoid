@@ -6,9 +6,9 @@
 // client-local: it debited the CLIENT and raised the CLIENT's level, so the group paid nothing and
 // the host's next balance broadcast handed the money back -- free upgrades for all but the host.
 //
-// The mirror is change-POLLED on the host rather than published at the purchase, because the panel
-// is not the only writer: the server racks and the transformer write the same struct as physical
-// upgrades, and three of its members have no panel row at all.
+// The mirror is change-POLLED on the host rather than published at the purchase, because the panel is
+// not the only writer -- the cheat menu writes the struct too, and three of its members have no panel
+// row. The physical upgrades keep counts of their own (coop/interactables/server_upgrade_sync, the boxes').
 //
 // The purchase is an intent. The client refuses its own button at the script-body gate, so it never
 // debits itself and a refusal needs no correction; the host re-derives price and bounds from its

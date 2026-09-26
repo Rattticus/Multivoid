@@ -10,6 +10,7 @@
 #include "coop/comms/chat_sync.h"
 #include "coop/world/alarm_sync.h"
 #include "coop/interactables/serverbox_sync.h"  // the host-authoritative signal-server state
+#include "coop/interactables/server_upgrade_sync.h"  // the servers' physical upgrades
 #include "coop/creatures/roach_sync.h"           // the host-authoritative roach snapshot
 #include "coop/world/event_active_sync.h"
 #include "coop/world/event_cue_sync.h"
@@ -167,6 +168,23 @@ bool HandleWorldEvent(net::Session& session,
         net::ServerStatePayload sp{};
         std::memcpy(&sp, msg.payload, sizeof(sp));
         coop::serverbox_sync::OnReliable(sp, msg.senderPeerSlot);
+        break;
+    }
+    case net::ReliableKind::ServerUpgradeState: {
+        // A box's upgrade op (client to host), every box's level (host to all) or a refusal (host to
+        // the op's author). Role and trust gates live in server_upgrade_sync::OnState.
+        if (msg.payloadLen < sizeof(net::ServerUpgradeStatePayload)) {
+            UE_LOGW("event_feed: ServerUpgradeState payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::ServerUpgradeStatePayload));
+            break;
+        }
+        net::ServerUpgradeStatePayload up{};
+        std::memcpy(&up, msg.payload, sizeof(up));
+        const uint8_t upslot =
+            (msg.senderPeerSlot >= 0 && msg.senderPeerSlot < net::kMaxPeers)
+                ? static_cast<uint8_t>(msg.senderPeerSlot)
+                : static_cast<uint8_t>(0xFF);
+        coop::server_upgrade_sync::OnState(up, upslot);
         break;
     }
     case net::ReliableKind::RoachState: {

@@ -223,6 +223,7 @@ set(VOTVCOOP_SOURCES
     src/coop/world/event_active_sync.cpp
     src/coop/world/alarm_sync.cpp
     src/coop/interactables/serverbox_sync.cpp
+    src/coop/interactables/server_upgrade_sync.cpp
     src/coop/interactables/window_sync.cpp
     src/coop/interactables/window_stroke_sync.cpp
     src/coop/interactables/grime_sync.cpp
