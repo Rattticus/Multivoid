@@ -240,11 +240,12 @@ DWORD WINAPI BootThread(LPVOID rawTag) {
     return 0;
 }
 
-// The engine code patches, made on the loader's own call before it returns. Under the UE4SS proxy that
-// call runs on the game's main thread from an APC queued in DllMain, before the exe's entry point: no
-// engine code runs yet, and UE4SS's own threads, which resolve and patch ProcessEvent, the script loop
-// and AActor::EndPlay themselves, do not exist yet. Its resolves then always find our jumps and compose
-// on our relays. Made later, from the boot thread, both sides patched the same entries at once, and a
+// The engine code patches, made on the loader's own call before it returns. UE4SS makes that call while
+// it constructs its program, and creates the threads that resolve and patch ProcessEvent, the script
+// loop and AActor::EndPlay themselves only after, on both of its load paths: under its proxy the call
+// runs on the game's main thread from an APC queued in DllMain, before the exe's entry point, and under
+// a manual injection on the injecting thread. Its resolves then always find our jumps and compose on
+// our relays. Made later, from the boot thread, both sides patched the same entries at once, and a
 // patch that landed between our read of an entry and our write left our trampoline returning into it:
 // every Blueprint call faulted. The detours stay inert until the boot thread's health check arms them.
 void PatchEngine() {

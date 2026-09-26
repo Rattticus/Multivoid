@@ -42,8 +42,9 @@ bool Install(void* target, void* detour, void** trampoline, bool followJmpImmune
 // Re-read every entry installed with `followJmpImmune` against what it held right after our patch: our
 // jump, then the function's own next bytes. Another engine that composes with us patches our relay and
 // leaves the entry alone, so a change is a patch that raced ours: a new jump over ours bypasses our
-// detour, and new bytes under ours are what our trampoline returns into. Logs one line naming `when`,
-// and an error per changed entry; false when any changed. Any thread.
+// detour, and new bytes under ours are what our trampoline returns into. A patch no longer than our
+// jump, written between our read and our write, is overwritten whole and leaves nothing to compare.
+// Logs one line naming `when`, and an error per changed entry; false when any changed. Any thread.
 bool VerifyEntries(const char* when);
 
 // ---- Retirement -------------------------------------------------------------
