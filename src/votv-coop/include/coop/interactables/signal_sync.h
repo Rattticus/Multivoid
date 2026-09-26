@@ -48,8 +48,8 @@ void OnDisconnectSlot(int peerSlot);
 // row moves to the tail on the mirrors, which is cosmetic.
 void Tick();
 
-// Wire ingest: one chunk of an appended row. The image PNG (the laptop photo) is not carried yet,
-// so a live-mirrored row arrives with an empty image.
+// Wire ingest: one chunk of an appended row, the laptop photo with it (signal_wire says when it
+// cannot ride).
 void OnAppendChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot);
 
 // Wire ingest: one content-keyed delete.

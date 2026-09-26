@@ -6,8 +6,8 @@
 // FNV-1a hash per non-empty value group, so two log lines taken at two moments compare by eye and
 // a mismatch names the group that moved.
 //
-// What the digest cannot see is what the POD cannot hold: a signal row's `image` bytes are not in
-// ue_wrap::signal_dynamic::Row, so two drives that differ only in their photo hash the same.
+// What the digest cannot see is a signal row's photo: ue_wrap::signal_dynamic::Row reads it only when
+// asked and the records here do not ask, so two drives that differ only in their photo hash the same.
 // Class, key and transform are left out on purpose -- the readout prints the first two beside the
 // digest, and a carried record's transform is where the item stood when it was pocketed.
 

@@ -46,7 +46,7 @@ bool EnsureResolved();
 // Element count (-1 if unresolved / no world).
 int32_t Count();
 
-bool ReadRow(int32_t index, ue_wrap::signal_dynamic::Row& out);
+bool ReadRow(int32_t index, ue_wrap::signal_dynamic::Row& out, bool withImage = false);
 bool ReadRowKey(int32_t index, RowKey& out);
 
 // Reflected gamemode.saveSignal(row, new=false, checkOnly=false,

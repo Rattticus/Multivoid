@@ -229,6 +229,7 @@ int SeedSendAppendToSlot(coop::net::Session* s, int peerSlot, uint64_t hash, int
         SD::Row r;
         if (!UE::ReadRow(i, r)) continue;
         if (HashRow(r) != hash) continue;
+        if (!UE::ReadRow(i, r, /*withImage=*/true)) continue;  // the photo for the row that is sent, not each scanned
         const std::vector<uint8_t> blob = coop::signal_wire::Serialize(r, /*adopt=*/false);
         int sent = 0;
         for (int32_t k = 0; k < count; ++k) {
@@ -428,7 +429,7 @@ void Tick() {
             ShadowRow& srow = g_shadow[i];
             if (srow.sent) continue;
             SD::Row r;
-            if (!UE::ReadRow(static_cast<int32_t>(i), r)) {
+            if (!UE::ReadRow(static_cast<int32_t>(i), r, /*withImage=*/true)) {
                 srow.sent = true;
                 continue;
             }

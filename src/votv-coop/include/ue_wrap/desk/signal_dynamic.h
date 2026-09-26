@@ -17,6 +17,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace ue_wrap::signal_dynamic {
 
@@ -39,7 +40,8 @@ inline constexpr int32_t kOff_objType  = 0x6A;  // enum byte
 inline constexpr int32_t kOff_daq      = 0x6C;  // float downloadedAtQuality
 inline constexpr int32_t kStride       = 0x70;
 
-// Wire-facing view of one row (image deliberately absent).
+// Wire-facing view of one row. The photo is read only when asked (ReadStruct's withImage): the lanes that
+// poll rows at a cadence leave it out, and the rack packs sixteen rows into one blob.
 struct Row {
     std::wstring name;            // display name ("<type> [n]", user-renamable)
     std::wstring id;              // non-unique across copies; nothing looks rows up by it
@@ -55,16 +57,17 @@ struct Row {
     bool    isCopy = false;
     uint8_t frequency = 0, quality = 0, objectType = 0;
     bool    hasData = false;      // comp empty-state marker (size>0 on real rows)
+    std::vector<uint8_t> image;   // the laptop photo's PNG bytes, when read withImage
 
     // Member-wise, so the save-record splice can ask whether a leaf class stored its own row where
-    // the base class stores one. `image` is not a member, so two rows differing only in their photo
-    // compare equal -- the same blind spot the digest has, and for the same reason.
+    // the base class stores one. Rows read without their photos compare equal whatever the photos
+    // hold -- the same blind spot the digest has, and for the same reason.
     bool operator==(const Row&) const = default;
 };
 
 // Raw-read the struct at `base` into `out` (FStrings read directly; FNames
-// via the engine name table). Zero reflected calls.
-bool ReadStruct(const void* base, Row& out);
+// via the engine name table), the photo too when `withImage`. Zero reflected calls.
+bool ReadStruct(const void* base, Row& out, bool withImage = false);
 
 // Write `in` into the LIVE struct at `base`: PODs raw, FStrings ENGINE-MINTED
 // (fstring_utils -- the game later reassigns/destroys these fields with the
@@ -75,9 +78,9 @@ bool ReadStruct(const void* base, Row& out);
 bool WriteStructLive(void* base, const Row& in);
 
 // Build the 0x70 param-frame bytes for a struct PARAMETER (gamemode.saveSignal's
-// `signal`): PODs raw, FStrings pointing AT `in`'s buffers (the callee
-// deep-copies during the call -- `in` must outlive it), FNames interned,
-// image empty. Game thread.
+// `signal`): PODs raw, FStrings and the photo pointing AT `in`'s buffers (the
+// callee deep-copies during the call -- `in` must outlive it), FNames interned.
+// Game thread.
 bool BuildParamBytes(const Row& in, uint8_t out[kStride]);
 
 }  // namespace ue_wrap::signal_dynamic

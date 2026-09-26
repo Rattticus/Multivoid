@@ -38,9 +38,20 @@ bool WriteFNameField(uint8_t* p, const std::wstring& leaf) {
     return true;
 }
 
+// A photo past this is no photo the laptop took (the local saves hold at most 8.7 KB): the array is
+// read as garbage and left out.
+constexpr int32_t kImageSanity = 4 * 1024 * 1024;
+
+// Fstruct_byteImage: its one member, the photo's TArray<uint8>.
+struct ByteArray {
+    uint8_t* data;
+    int32_t  num;
+    int32_t  max;
+};
+
 }  // namespace
 
-bool ReadStruct(const void* base, Row& out) {
+bool ReadStruct(const void* base, Row& out, bool withImage) {
     if (!base) return false;
     const uint8_t* p = static_cast<const uint8_t*>(base);
     out.name   = ReadFString(p + kOff_name);
@@ -60,6 +71,12 @@ bool ReadStruct(const void* base, Row& out) {
     out.objectType = *(p + kOff_objType);
     std::memcpy(&out.downloadedAtQuality, p + kOff_daq, sizeof(float));
     out.hasData = out.size > 0.0f;
+    out.image.clear();
+    if (withImage) {
+        ByteArray img{};
+        std::memcpy(&img, p + kOff_image, sizeof(img));
+        if (img.data && img.num > 0 && img.num <= kImageSanity) out.image.assign(img.data, img.data + img.num);
+    }
     return true;
 }
 
@@ -118,7 +135,13 @@ bool BuildParamBytes(const Row& in, uint8_t out[kStride]) {
     out[kOff_qual] = in.quality;
     out[kOff_objType] = in.objectType;
     std::memcpy(out + kOff_daq, &in.downloadedAtQuality, sizeof(float));
-    // image stays the zeroed empty TArray.
+    if (!in.image.empty()) {
+        ByteArray img{};
+        img.data = const_cast<uint8_t*>(in.image.data());
+        img.num = static_cast<int32_t>(in.image.size());
+        img.max = img.num;
+        std::memcpy(out + kOff_image, &img, sizeof(img));
+    }
     return true;
 }
 

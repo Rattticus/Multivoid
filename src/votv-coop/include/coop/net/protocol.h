@@ -355,8 +355,8 @@ enum class ReliableKind : uint8_t {
     // indexes differ per peer). ContentHashPayload.
     EmailDelete = 57,
 
-    // Any peer, relayed: one saved-signal row appended, as a chunked blob without its image; the
-    // receiver replays the gamemode's saveSignal.
+    // Any peer, relayed: one saved-signal row appended, as a chunked blob with its photo when it
+    // fits; the receiver replays the gamemode's saveSignal.
     SavedSignalAppend = 58,
 
     // Any peer, relayed: a saved signal deleted by content hash. ContentHashPayload.

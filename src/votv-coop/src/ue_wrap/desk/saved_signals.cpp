@@ -65,10 +65,10 @@ int32_t Count() {
     return a->num;
 }
 
-bool ReadRow(int32_t index, SD::Row& out) {
+bool ReadRow(int32_t index, SD::Row& out, bool withImage) {
     TArrayView* a = Rows();
     if (!a || index < 0 || index >= a->num) return false;
-    return SD::ReadStruct(a->data + static_cast<size_t>(index) * SD::kStride, out);
+    return SD::ReadStruct(a->data + static_cast<size_t>(index) * SD::kStride, out, withImage);
 }
 
 bool ReadRowKey(int32_t index, RowKey& out) {

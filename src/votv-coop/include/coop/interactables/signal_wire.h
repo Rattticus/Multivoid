@@ -1,18 +1,18 @@
 // coop/interactables/signal_wire.h -- one Fstruct_signalDataDynamic row on the wire, shared by
 // every lane that ships one: SavedSignalAppend and CompData, the DrivePayload and RackState drive
-// lanes, and the meadow append/order pair. The blob rides BlobChunkPayload chunks; its FNV-1a 64 is
-// the row's cross-peer content identity, which SavedSignalDelete keys on. The image PNG is
-// deliberately absent: it belongs to the bulk lane, which does not carry it yet.
+// lanes, and the meadow append/order pair. The blob rides BlobChunkPayload chunks. The photo rides
+// only in a row read with it (signal_dynamic::ReadStruct's withImage), as SavedSignalAppend's are,
+// and only within blob_chunks::MaxBlobBytes(); past it the row crosses without it, logged.
 //
 // Layout, version byte 1, little-endian:
-//   u8 ver; u8 flags(bit0 hasData, bit1 isCopy, bit2 adopt); u8 frequency; u8 quality;
+//   u8 ver; u8 flags(bit0 hasData, bit1 isCopy, bit2 adopt, bit3 image); u8 frequency; u8 quality;
 //   u8 objectType; u8 nameChars; u8 idChars; u8 objectChars; u8 signalChars; u8 pad[3];
 //   i32 level; i32 polarity; f32 size; f32 decoded; f32 downloadedAtQuality; f32 locX;
-//   f32 locY; i64 date; then name, id, object and signal as UTF-16LE.
+//   f32 locY; i64 date; then name, id, object and signal as UTF-16LE; with bit3, u32 bytes + PNG.
 //
-// `adopt` marks a host connect-snapshot apply, trust-gated to slot 0 by the receiver, and it is
-// EXCLUDED from the content hash so an adopt snapshot and a live append of one row share one
-// identity.
+// `adopt` marks a host connect-snapshot apply, trust-gated to slot 0 by the receiver. A row's
+// cross-peer identity, which SavedSignalDelete keys on, is the FNV-1a 64 of the blob up to the strings'
+// end with the adopt and image bits zeroed: a snapshot and an append of one row share it, photo or not.
 
 #pragma once
 
@@ -31,12 +31,14 @@ inline constexpr size_t kNameCap = 96, kIdCap = 48, kObjectCap = 64, kSignalCap 
 std::vector<uint8_t> Serialize(const ue_wrap::signal_dynamic::Row& r, bool adopt);
 
 // Deserialize; false on malformed/over-cap input. outAdopt receives the
-// adopt flag (already cleared from the row).
+// adopt flag (already cleared from the row). A photo that is not a plausible PNG
+// (its signature, and an IHDR of at most 2048 x 2048: the laptop decodes it whole,
+// ui_laptop.cpp:3836) is left out of the row, logged, and the row kept.
 bool Deserialize(const std::vector<uint8_t>& b, ue_wrap::signal_dynamic::Row& out,
                  bool& outAdopt);
 
-// The content identity: the blob's FNV-1a 64 with the adopt bit zeroed
-// (compute on a serialize with adopt=false, or use this over any blob).
+// The content identity: the FNV-1a 64 of the blob up to its strings' end, the adopt and image
+// bits zeroed (compute on a serialize with adopt=false, or use this over any blob).
 uint64_t ContentHash(const std::vector<uint8_t>& blob);
 
 }  // namespace coop::signal_wire
