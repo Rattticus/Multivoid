@@ -100,6 +100,7 @@ void EnsureOpen() {
         // the game runs; without it the file is locked exclusively and diagnostics cannot be read
         // until the game exits.
         g_file = _wfsopen(path, L"w", _SH_DENYWR);
+        if (g_file) std::fprintf(g_file, "==== Multivoid log ====\n");
         g_opened = true;
     }
     ::LeaveCriticalSection(&g_lock);
@@ -114,16 +115,6 @@ const char* Tag(Level l) {
 }
 
 }  // namespace
-
-void Init() {
-    EnsureOpen();
-    if (!g_file) return;
-    ::EnterCriticalSection(&g_lock);
-    std::fprintf(g_file, "==== Multivoid log ====\n");
-    std::fflush(g_file);
-    g_lastFlushMs = ::GetTickCount64();
-    ::LeaveCriticalSection(&g_lock);
-}
 
 void Flush() {
     EnsureOpen();

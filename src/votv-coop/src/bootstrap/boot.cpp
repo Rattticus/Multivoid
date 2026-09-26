@@ -124,10 +124,6 @@ void StandDownUnsupportedBuild() {
 DWORD WINAPI BootThread(LPVOID rawTag) {
     const char* entryTag = static_cast<const char*>(rawTag);
     WriteMarker(entryTag);
-    // Standalone SDK health check (resolves GUObjectArray / FName::ToString /
-    // ProcessEvent via AOB, then functionally validates them). Logs a PASS/FAIL
-    // report to multivoid.log -- our own SDK access, no UE4SS.
-    ue_wrap::log::Init();
     UE_LOGI("==== %s ====", coop::version::kDisplayLabel);
     // The Paper-pair identity line: game target + build number (= kProtocolVersion).
     UE_LOGI("boot: Multivoid %s b%u", coop::version::kGameTarget,

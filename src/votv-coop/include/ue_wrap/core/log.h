@@ -3,20 +3,18 @@
 // Writes to multivoid.log beside the game exe. The point is fast diagnosis:
 // when the mod is brought up against a new game build and something is wrong,
 // the log says exactly which primitive failed to resolve or validate, instead
-// of a silent crash. Thread-safe; lazy-initialises on first use.
+// of a silent crash. Thread-safe. The process's first write opens the file and
+// puts the header first, whichever thread writes it.
+//
+// There is deliberately no close: nothing sets the FILE* back to null once it is open, so the
+// un-locked null test every Write() and Flush() starts with cannot race a teardown, and the
+// process exit is what closes the handle. The one-second sync below is what makes that safe.
 
 #pragma once
 
 namespace ue_wrap::log {
 
 enum class Level { Info, Warn, Error };
-
-// Open/truncate the log file and write a header. Optional; Write() lazy-inits.
-//
-// There is deliberately no close: nothing sets the FILE* back to null once it is open, so the
-// un-locked null test every Write() and Flush() starts with cannot race a teardown, and the
-// process exit is what closes the handle. The one-second sync below is what makes that safe.
-void Init();
 
 // printf-style (ANSI). Use %ls for wide strings (FName text is wide).
 void Write(Level level, const char* fmt, ...);
