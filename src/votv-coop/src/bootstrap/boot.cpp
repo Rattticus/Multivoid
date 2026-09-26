@@ -37,6 +37,9 @@ volatile LONG g_bootLatch = 0;
 // instance has attempted but never started, and its restart re-entry must
 // not read as a live session.
 volatile LONG g_started = 0;
+// The load moment, taken as the loader's call begins: the boot thread starts only after the engine
+// patches, so its own reading would add their time.
+unsigned long long g_loadMs = 0;
 
 // Milliseconds since THIS process was created (GetProcessTimes creation time),
 // for the load-moment marker: how late UE4SS's mod-scan started us relative to
@@ -136,8 +139,8 @@ DWORD WINAPI BootThread(LPVOID rawTag) {
     // Entry + load-moment marker: which entry point brought us in (start_mod, entry=cppmod, is
     // the only one this binary can print) and how late relative to process creation. UE4SS starts
     // its C++ mods from its constructor, before any scan of its own.
-    UE_LOGI("boot: entry=%s since-process-start=%llums pid=%lu", entryTag,
-            MsSinceProcessStart(), ::GetCurrentProcessId());
+    UE_LOGI("boot: entry=%s since-process-start=%llums pid=%lu", entryTag, g_loadMs,
+            ::GetCurrentProcessId());
     LogUe4ssPresence();
     {
         char exePath[MAX_PATH] = {};
@@ -248,10 +251,22 @@ DWORD WINAPI BootThread(LPVOID rawTag) {
 // our relays. Made later, from the boot thread, both sides patched the same entries at once, and a
 // patch that landed between our read of an entry and our write left our trampoline returning into it:
 // every Blueprint call faulted. The detours stay inert until the boot thread's health check arms them.
+// Under the proxy the game's start waits for this, so the line reports how long it took.
 void PatchEngine() {
+    LARGE_INTEGER freq{}, t0{}, t1{}, t2{}, t3{};
+    ::QueryPerformanceFrequency(&freq);
+    ::QueryPerformanceCounter(&t0);
     ue_wrap::game_thread::Patch();
+    ::QueryPerformanceCounter(&t1);
     ue_wrap::script_gate::Patch();
+    ::QueryPerformanceCounter(&t2);
     ue_wrap::actor_end_play::Patch();
+    ::QueryPerformanceCounter(&t3);
+    const auto ms = [&freq](const LARGE_INTEGER& a, const LARGE_INTEGER& b) {
+        return static_cast<double>(b.QuadPart - a.QuadPart) * 1000.0 / static_cast<double>(freq.QuadPart);
+    };
+    UE_LOGI("boot: the engine patches took %.1f ms on the loader's call (ProcessEvent %.1f, the script "
+            "loop %.1f, EndPlay %.1f)", ms(t0, t3), ms(t0, t1), ms(t1, t2), ms(t2, t3));
 }
 
 }  // namespace
@@ -273,6 +288,7 @@ StartResult StartOnce(const char* entryTag) {
                 entryTag);
         return StartResult::kAlreadyBooted;
     }
+    g_loadMs = MsSinceProcessStart();
 
     // Per-PROCESS duplicate guard: the first boot in this process owns the name, and a
     // SECOND module instance of the mod in the SAME process (two mod-folder copies; a mod
