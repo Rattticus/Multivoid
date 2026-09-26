@@ -413,6 +413,7 @@ set(VOTVCOOP_SOURCES
     src/coop/dev/store_table_probe.cpp
     src/coop/dev/order_selftest.cpp
     src/coop/dev/meadow_selftest.cpp
+    src/coop/dev/meadow_selftest_rows.cpp
     src/coop/dev/order_probe.cpp
     src/ue_wrap/actors/inventory.cpp
     src/ue_wrap/hotbar/icons.cpp
