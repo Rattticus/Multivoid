@@ -364,6 +364,7 @@ set(VOTVCOOP_SOURCES
     src/coop/save/save_transfer.cpp
     src/coop/save/slot_file_read.cpp
     src/coop/save/save_indicator_suppress.cpp
+    src/coop/session/session_join.cpp
     src/coop/session/session_manager.cpp
     src/coop/session/join_beacon.cpp
     src/coop/session/join_progress.cpp
