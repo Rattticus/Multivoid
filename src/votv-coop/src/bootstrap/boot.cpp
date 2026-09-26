@@ -12,6 +12,7 @@
 #include "coop/version.h"
 #include "harness/harness.h"
 #include "ue_wrap/core/game_thread.h"
+#include "ue_wrap/core/hook.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/paths.h"
@@ -245,6 +246,8 @@ DWORD WINAPI BootThread(LPVOID rawTag) {
                     "and every watch will be refused");
         // Every actor's end of play, by any route, from one detour on the engine's own AActor::EndPlay.
         ue_wrap::actor_end_play::Install();  // logs its own failure
+        // The entries UE4SS also patches still hold our jumps over the functions' own bytes.
+        ue_wrap::hook::VerifyEntries("after the installs");
 
         // Autonomous test harness (ported from the UE4SS Lua coopTestHarness):
         // skip the menus into gameplay, screenshot, report -- standalone.

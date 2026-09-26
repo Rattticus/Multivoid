@@ -607,6 +607,8 @@ void Acquire(const char* who) {
     if (g_holds++ == 0) {
         g_enabled.store(true, std::memory_order_release);
         UE_LOGI("script_gate: ENABLED (%s holds it)", who);
+        // Past this point a body runs our full detour: the shared entries must still hold our jumps.
+        hook::VerifyEntries("the gate's first hold");
     }
 }
 

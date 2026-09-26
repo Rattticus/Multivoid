@@ -31,6 +31,54 @@ std::atomic<bool> g_retired{false};
 
 const char* StatusName(MH_STATUS s) { return MH_StatusToString(s); }
 
+// The shared entries as they must stay, for VerifyEntries: our jump, then the bytes the entry held
+// before our patch read it, up to where our trampoline returns into the function and a little past.
+// Written by Install before the count that publishes the slot.
+constexpr int kEntryBytes = 16;
+constexpr int kMaxEntries = 8;
+constexpr int kJumpBytes = 5;
+struct EntryShot {
+    void*   target = nullptr;
+    uint8_t expect[kEntryBytes] = {};
+    int     checked = kJumpBytes;   // how many leading bytes must match `expect`
+};
+EntryShot g_entries[kMaxEntries];
+std::atomic<int> g_entryCount{0};
+
+// Where the trampoline jumps back into `target`: MinHook ends the copied instructions with an absolute
+// jump (FF 25 00000000, then the address). 0 when there is none, the stolen bytes being a jump of
+// another engine's that never returns.
+int ReturnOffset(const void* trampoline, const void* target) {
+    const auto* tr = static_cast<const uint8_t*>(trampoline);
+    const auto t = reinterpret_cast<uintptr_t>(target);
+    for (int off = 0; off + 14 <= 64; ++off) {
+        if (tr[off] != 0xFF || tr[off + 1] != 0x25 || tr[off + 2] || tr[off + 3] || tr[off + 4] || tr[off + 5])
+            continue;
+        uint64_t to = 0;
+        std::memcpy(&to, tr + off + 6, sizeof(to));
+        if (to > t && to < t + kEntryBytes) return static_cast<int>(to - t);
+    }
+    return 0;
+}
+
+// The first changed byte of an entry against its record, or -1 when it holds.
+int FirstChange(const EntryShot& e) {
+    const auto* now = static_cast<const uint8_t*>(e.target);
+    for (int i = 0; i < e.checked; ++i)
+        if (now[i] != e.expect[i]) return i;
+    return -1;
+}
+
+void LogChange(const EntryShot& e, int at, const char* when) {
+    const auto* now = static_cast<const uint8_t*>(e.target);
+    UE_LOGE("hook: the entry at %p changed at +%d (%s) -- %s (expected %02x %02x %02x %02x %02x | %02x %02x %02x %02x "
+            "%02x, holds %02x %02x %02x %02x %02x | %02x %02x %02x %02x %02x)", e.target, at, when,
+            at < kJumpBytes ? "another jump covers ours, and our detour is bypassed"
+                            : "foreign bytes lie under our jump, and our trampoline returns into them",
+            e.expect[0], e.expect[1], e.expect[2], e.expect[3], e.expect[4], e.expect[5], e.expect[6], e.expect[7],
+            e.expect[8], e.expect[9], now[0], now[1], now[2], now[3], now[4], now[5], now[6], now[7], now[8], now[9]);
+}
+
 // The process loader lock, held around every MinHook enable and disable. One that changes a hook
 // freezes the other threads, first enumerating them through Toolhelp, which maps a section per
 // step; holding the lock keeps every freeze out of every DLL's DllMain. The embedded browser's
@@ -165,6 +213,9 @@ bool Install(void* target, void* detour, void** trampoline, bool followJmpImmune
         UE_LOGE("hook: Install called with null target/detour/trampoline");
         return false;
     }
+    // The entry as it stood before our patch read it: what our trampoline expects to return into.
+    uint8_t before[kEntryBytes];
+    std::memcpy(before, target, kEntryBytes);
     MH_STATUS s = MH_CreateHook(target, detour, trampoline);
     if (s != MH_OK) {
         UE_LOGE("hook: MH_CreateHook(%p) failed (%s)", target, StatusName(s));
@@ -197,8 +248,37 @@ bool Install(void* target, void* detour, void** trampoline, bool followJmpImmune
         UE_LOGW("hook: install of %p raced Shutdown -- lifted again (teardown wins)", target);
         return false;
     }
+    if (followJmpImmune) {
+        const int n = g_entryCount.load(std::memory_order_relaxed);
+        if (n < kMaxEntries) {
+            EntryShot& e = g_entries[n];
+            e.target = target;
+            std::memcpy(e.expect, target, kJumpBytes);  // our jump
+            std::memcpy(e.expect + kJumpBytes, before + kJumpBytes, kEntryBytes - kJumpBytes);
+            const int back = ReturnOffset(*trampoline, target);
+            e.checked = back ? (back + 8 < kEntryBytes ? back + 8 : kEntryBytes) : kJumpBytes;
+            // Compare after act: a patch that landed between our read and our write is caught here.
+            const int at = FirstChange(e);
+            if (at >= 0) LogChange(e, at, "at install");
+            g_entryCount.store(n + 1, std::memory_order_release);
+        }
+    }
     UE_LOGI("hook: installed on %p (trampoline %p)", target, *trampoline);
     return true;
+}
+
+bool VerifyEntries(const char* when) {
+    const int n = g_entryCount.load(std::memory_order_acquire);
+    int changed = 0;
+    for (int i = 0; i < n; ++i) {
+        const int at = FirstChange(g_entries[i]);
+        if (at < 0) continue;
+        ++changed;
+        LogChange(g_entries[i], at, when);
+    }
+    if (changed == 0)
+        UE_LOGI("hook: %d shared entr%s hold our patch as we left it (%s)", n, n == 1 ? "y" : "ies", when);
+    return changed == 0;
 }
 
 bool Disable(void* target) {
