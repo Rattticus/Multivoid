@@ -8,6 +8,7 @@
 #include "ue_wrap/core/types.h"
 
 #include <cstdint>
+#include <string>
 
 namespace ue_wrap::engine {
 
@@ -34,5 +35,17 @@ void* SpawnSoundAttenuation(const SoundAttenuationConfig& cfg);
 // `attenuation` may be null (2D). Game thread.
 void PlaySoundAtLocation(void* worldContext, void* sound, const FVector& location,
                          void* attenuation, float volume = 1.f, float pitch = 1.f);
+
+// UGameplayStatics::PlaySound2D: a one-shot sound with no place, heard by this machine's player at one level
+// anywhere. `uiSound` is the native bIsUISound. Game thread.
+void PlaySound2D(void* worldContext, void* sound, float volume, float pitch, float startTime, bool uiSound);
+
+// A sound asset's name across machines, its class, package and own name as the engine's GetFullName writes an
+// asset's ("SoundWave /Game/audio/effects/x.x"). Empty when `sound` is not an asset's (its outer is no package).
+std::wstring SoundName(void* sound);
+
+// The loaded sound asset SoundName names, or null. Walks that class's instances in the object index, never
+// the object array, and remembers each answer while it lives. Game thread.
+void* FindSound(const std::wstring& name);
 
 }  // namespace ue_wrap::engine

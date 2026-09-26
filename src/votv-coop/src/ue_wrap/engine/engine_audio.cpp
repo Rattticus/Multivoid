@@ -8,10 +8,13 @@
 #include "ue_wrap/core/gc_pin.h"
 #include "ue_wrap/engine/engine.h"
 
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/call.h"
+#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
 
+#include <unordered_map>
 #include <vector>
 #include <cstdint>
 
@@ -116,6 +119,70 @@ void PlaySoundAtLocation(void* worldContext, void* sound, const FVector& locatio
     f.Set<void*>(L"ConcurrencySettings", nullptr);
     f.Set<void*>(L"OwningActor", worldContext);
     Call(sGsCdo, f);
+}
+
+void PlaySound2D(void* worldContext, void* sound, float volume, float pitch, float startTime, bool uiSound) {
+    if (!worldContext || !sound) return;
+    static void* sGsCdo = nullptr;
+    static void* sPlayFn = nullptr;
+    if (!sGsCdo) sGsCdo = R::FindClassDefaultObject(P::name::GameplayStaticsClass);
+    if (!sPlayFn && sGsCdo) {
+        if (void* c = R::ClassOf(sGsCdo)) sPlayFn = R::FindFunction(c, L"PlaySound2D");
+    }
+    if (!sGsCdo || !sPlayFn) return;
+    ParamFrame f(sPlayFn);
+    f.Set<void*>(L"WorldContextObject", worldContext);
+    f.Set<void*>(L"Sound", sound);
+    f.Set<float>(L"VolumeMultiplier", volume);
+    f.Set<float>(L"PitchMultiplier", pitch);
+    f.Set<float>(L"StartTime", startTime);
+    f.Set<void*>(L"ConcurrencySettings", nullptr);
+    f.Set<void*>(L"OwningActor", nullptr);
+    f.Set<bool>(L"bIsUISound", uiSound);
+    Call(sGsCdo, f);
+}
+
+std::wstring SoundName(void* sound) {
+    void* cls = sound ? R::ClassOf(sound) : nullptr;
+    void* package = sound ? R::OuterOf(sound) : nullptr;
+    if (!cls || !package || R::OuterOf(package)) return {};
+    return R::ToString(R::NameOf(cls)) + L" " + R::ToString(R::NameOf(package)) + L"." +
+           R::ToString(R::NameOf(sound));
+}
+
+namespace {
+
+struct SoundQuery {
+    const wchar_t* package;
+    const wchar_t* leaf;
+    void*          found;
+};
+
+void MatchSound(void* ctx, void* obj, int32_t) {
+    auto* q = static_cast<SoundQuery*>(ctx);
+    if (q->found || !R::NameEquals(R::NameOf(obj), q->leaf)) return;
+    void* package = R::OuterOf(obj);
+    if (package && !R::OuterOf(package) && R::NameEquals(R::NameOf(package), q->package)) q->found = obj;
+}
+
+}  // namespace
+
+void* FindSound(const std::wstring& name) {
+    static std::unordered_map<std::wstring, CachedObjRef> sKnown;
+    auto it = sKnown.find(name);
+    if (it != sKnown.end() && it->second.Alive()) return it->second.Get();
+    const size_t space = name.find(L' ');
+    const size_t dot = name.rfind(L'.');
+    if (space == std::wstring::npos || dot == std::wstring::npos || dot < space) return nullptr;
+    const std::wstring className = name.substr(0, space);
+    const std::wstring package = name.substr(space + 1, dot - space - 1);
+    const std::wstring leaf = name.substr(dot + 1);
+    void* cls = object_index::ClassByName(className.c_str());
+    if (!cls) return nullptr;
+    SoundQuery q{package.c_str(), leaf.c_str(), nullptr};
+    object_index::ForEachInstance(cls, &MatchSound, &q);
+    if (q.found) sKnown[name].Set(q.found);
+    return q.found;
 }
 
 }  // namespace ue_wrap::engine
