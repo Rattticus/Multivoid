@@ -4,10 +4,9 @@
 
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/desk/console_desk.h"
+#include "ue_wrap/desk/desk_press.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
-#include "ue_wrap/engine/engine_component.h"  // GetComponentLocation
-#include "ue_wrap/engine/hit_result.h"
 
 #include <chrono>
 #include <cstring>
@@ -144,34 +143,12 @@ bool CallPlugInModule(void* desk, void* module, int slot, void* player) {
 }
 
 bool CallPressSlot(void* desk, void* player, int slot) {
-    void* cls = desk ? R::ClassOf(desk) : nullptr;
-    void* lookFn = cls ? R::FindDispatchFunctionCached(cls, L"lookAt") : nullptr;
-    void* pressFn = cls ? R::FindDispatchFunctionCached(cls, L"actionOptionIndex") : nullptr;
     void* comp = SlotComponent(desk, slot);
-    if (!lookFn || !pressFn || !comp || !player) {
-        UE_LOGW("phys_mods: press on slot %d not made (lookAt=%d actionOptionIndex=%d slot component=%d player=%d)",
-                slot, lookFn ? 1 : 0, pressFn ? 1 : 0, comp ? 1 : 0, player ? 1 : 0);
+    if (!comp) {
+        UE_LOGW("phys_mods: press on slot %d not made: the slot's component does not read", slot);
         return false;
     }
-    const ue_wrap::FVector at = ue_wrap::engine::GetComponentLocation(comp);
-    // The look first: it sets lookingAtPanel from the hit, and a press with a panel under the
-    // player's eye goes to that panel instead of the slot.
-    ue_wrap::ParamFrame look(lookFn);
-    if (!look.valid() || !look.Set<void*>(L"player", player) ||
-        !ue_wrap::hit_result::Write(look, L"hit", desk, comp, at) || !ue_wrap::Call(desk, look)) {
-        UE_LOGW("phys_mods: press on slot %d not made: the desk's lookAt with a hit on the slot did not run", slot);
-        return false;
-    }
-    struct { void* data; int32_t num; int32_t max; } text{};
-    if (look.GetRaw(L"text", &text, sizeof(text)) && text.data) R::EngineFree(text.data);  // the engine wrote it
-    ue_wrap::ParamFrame press(pressFn);
-    if (!press.valid() || !press.Set<void*>(L"player", player) ||
-        !ue_wrap::hit_result::Write(press, L"hit", desk, comp, at) ||
-        !press.Set<void*>(L"lookAtComponent", comp) || !ue_wrap::Call(desk, press)) {
-        UE_LOGW("phys_mods: press on slot %d not made: actionOptionIndex with a hit on the slot did not run", slot);
-        return false;
-    }
-    return true;
+    return ue_wrap::desk_press::Press(desk, player, comp);
 }
 
 void* ClassForByte(uint8_t byte) {

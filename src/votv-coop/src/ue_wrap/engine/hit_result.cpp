@@ -21,16 +21,19 @@ void* g_cdo = nullptr;
 void* g_makeFn = nullptr;
 void* g_hitStruct = nullptr;  // FHitResult's UScriptStruct, the return value's type
 
-// Does the built hit's weak pointer `field` resolve to `object`, through the object array, as the
-// engine's own BreakHitResult reads it?
-bool Names(const uint8_t* hit, const wchar_t* field, void* object) {
+// The object a hit's weak pointer `field` resolves to through the object array, as the engine's own
+// BreakHitResult reads it; null when it is stale or the field does not resolve.
+void* Weak(const uint8_t* hit, const wchar_t* field) {
     const int32_t off = R::FindPropertyOffset(g_hitStruct, field);
-    if (off < 0) return false;
+    if (off < 0) return nullptr;
     int32_t idx = 0, serial = 0;
     std::memcpy(&idx, hit + off, sizeof(idx));
     std::memcpy(&serial, hit + off + sizeof(idx), sizeof(serial));
-    return R::ResolveWeakObject(idx, serial) == object;
+    return R::ResolveWeakObject(idx, serial);
 }
+
+// Does the built hit's weak pointer `field` resolve to `object`?
+bool Names(const uint8_t* hit, const wchar_t* field, void* object) { return Weak(hit, field) == object; }
 
 bool Resolve() {
     if (!g_cdo) g_cdo = R::FindClassDefaultObject(L"GameplayStatics");
@@ -98,6 +101,11 @@ bool WriteField(void* object, const wchar_t* field, void* actor, void* component
     if (!Build(actor, component, location, hit.data(), size)) return false;
     std::memcpy(reinterpret_cast<uint8_t*>(object) + off, hit.data(), hit.size());
     return true;
+}
+
+void* Component(const void* hit) {
+    if (!hit || !Resolve()) return nullptr;
+    return Weak(static_cast<const uint8_t*>(hit), L"Component");
 }
 
 }  // namespace ue_wrap::hit_result

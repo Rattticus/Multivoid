@@ -1,6 +1,6 @@
 // ue_wrap/engine/hit_result.h -- an FHitResult the engine builds (GameplayStatics::MakeHitResult),
-// written into a parameter of another call's frame or into an object's property. Principle-7
-// engine-wrapper layer: no network logic, no coop state.
+// written into a parameter of another call's frame or into an object's property, and the component
+// a hit names, read back. Principle-7 engine-wrapper layer: no network logic, no coop state.
 //
 // A hit's actor and component are weak object pointers, a slot and a serial; MakeHitResult assigns them
 // as the game's own Blueprints do (prop_tvremote_C calls it), and building the hit through it keeps
@@ -25,5 +25,9 @@ bool Write(ue_wrap::ParamFrame& frame, const wchar_t* param, void* actor, void* 
 // The same hit, written into `object`'s FHitResult property `field`. False as above, or when the
 // class has no such property or its struct differs in size. Game thread.
 bool WriteField(void* object, const wchar_t* field, void* actor, void* component, const FVector& location);
+
+// The component an FHitResult at `hit` names (its weak `Component`), as BreakHitResult reads it; null when
+// it is stale or the struct does not resolve. Game thread.
+void* Component(const void* hit);
 
 }  // namespace ue_wrap::hit_result
