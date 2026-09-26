@@ -93,10 +93,11 @@ theater is host-only: the client's dish simulation is parked, the host replays t
 streams the poses of all twenty-four dishes, the armed download's polarity is host-authored, and
 so is a dish's precision: the host sends its changed dishes' values and a joiner all of them, and a
 client's copy holds the host's values, whatever moved it off one (a mirrored lightning strike's hit,
-its own ping's slew) put back at its poll and before the gamemode averages the dishes into the rate
-its desk downloads with. A client player's own two verbs are the exception, the toolgun's
-calibration tool and the uncalibrator: they run on its copy and send what they changed to the host,
-which performs it and sends the result to all (`coop/interactables/dish_calib_sync`).
+its own ping's slew) put back at its poll, before the gamemode averages the dishes into the rate
+its desk downloads with, and before a player's verb reads them. A client player's own two verbs are
+the exception, the toolgun's calibration tool and the uncalibrator: they run on its copy and send
+what they changed to the host, which performs what it can and answers with the live dishes named, to
+all once it performed any and to the author alone otherwise (`coop/interactables/dish_calib_sync`).
 
 ### The deck list, playback, the refiner
 
@@ -190,7 +191,7 @@ not built. The ATV's physical modules are on [vehicles.md](vehicles.md).
 | `DeskSimPose` (stream), `DeskCursorPose` (stream) | the host to all; the mover to all | the simulation outputs; the cursor |
 | `DeskSndFx` | the presser, relayed | an audio effect event |
 | `SkySignalState`, `SkySignalCatch`, `DishAimState` | the host; the catcher and the host; the occupant | the signal set; a catch; committed coordinates |
-| `DishArm`, `DishSnapshot`, `DishCalib`, `DishPose` (stream) | the host; the host to a joiner; the host, to all and to a joiner; the host | the armed download; every dish's pose for a joiner; the changed dishes' precision, the dishes an intent named, and every dish's for a joiner; dish poses |
+| `DishArm`, `DishSnapshot`, `DishCalib`, `DishPose` (stream) | the host; the host to a joiner; the host, to all, to an intent's author and to a joiner; the host | the armed download; every dish's pose for a joiner; the changed dishes' precision, the live dishes an intent named (to all once the host performed any of it, to its author alone when it performed none), and every dish's for a joiner; dish poses |
 | `DishCalibIntent` | a client to the host | the dishes whose precision the client's player just set with the toolgun's calibration tool or the uncalibrator |
 | `SavedSignalAppend`, `SavedSignalDelete`, `MeadowAppend`, `MeadowDelete`, `MeadowOrder` | any peer, relayed; order from the host | list rows by content hash; the database's order |
 | `PlayDeckEvent`, `CompState`, `CompData` | the presser; the simulator | playback edges; the refiner's state and its loaded signal |

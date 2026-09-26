@@ -533,8 +533,10 @@ enum class ReliableKind : uint8_t {
     DishSnapshot = 100,
 
     // Host to all: the precision of the dishes whose values changed on the host, all of them when
-    // its baseline primes, and the dishes a client's intent named, as the host then holds them; host
-    // to one joiner: all of them at its world-ready. A client sends none. DishCalibPayload.
+    // its baseline primes, and the live dishes a client's intent named, as the host then holds them,
+    // once it performed any of them; host to one: those dishes to the intent's author when it
+    // performed none, and all of them to a joiner at its world-ready. A client sends none.
+    // DishCalibPayload.
     DishCalib = 101,
 
     // From the presser, relayed: a wall-unit reel slot insert or eject. ReelSlotPayload.
@@ -878,7 +880,8 @@ enum class ReliableKind : uint8_t {
 
     // Client to host: the dishes whose precision this client's player just set with a verb of its
     // own (the toolgun's calibration tool, the uncalibrator), their new values; the host performs
-    // them and sends every named dish's value to all in a DishCalib. Never relayed. DishCalibPayload.
+    // what it can and answers with every live dish named in a DishCalib, to all once it performed
+    // any and to this client alone otherwise. Never relayed. DishCalibPayload.
     DishCalibIntent = 158,
 
     // The base's generators. Host to all: every generator's row (broken, wear, upgrades) by its

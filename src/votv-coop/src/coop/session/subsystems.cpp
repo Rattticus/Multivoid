@@ -421,6 +421,7 @@ void DisconnectSlot(coop::net::Session& session, int slot) {
     coop::pack_trash_intent::OnPeerLeft(static_cast<uint8_t>(slot));  // and so does its pack queue
     coop::verb_lanes::OnPeerLeft(static_cast<uint8_t>(slot));  // and its console presses, door verbs, keypad entries
     coop::kerfus_lanes::OnPeerLeft(static_cast<uint8_t>(slot));  // and its Kerfus verbs
+    coop::dish_calib_sync::OnPeerLeft(static_cast<uint8_t>(slot));  // and its precision-intent budget
     coop::wisp_grab_hold::OnPeerLeft(static_cast<uint8_t>(slot));  // drop the leaver's grab-window puppet hold
     coop::remote_prop::OnDisconnectForSlot(slot);
     coop::item_activate::OnDisconnectForSlot(slot);
@@ -598,7 +599,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:time"}; coop::time_sync::Tick(); }  // the world clock: the host hands the net thread a sample when one is due; the client applies at its cycle's own tick
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:sky"}; coop::sky_sync::Tick(); }  // night-sky: the eye gate's name (both roles), then the host's throttled push
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:power"}; coop::power_panel::Tick(); coop::power_grid::Tick(); }  // the panel's and the grid's gates settle; what came before the panel or the generators resolved is taken
-    coop::dish_calib_sync::Tick();  // settle the two precision verbs' watches
+    coop::dish_calib_sync::Tick();  // settle the precision lane's three watches
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:atv"}; coop::atv_sync::Tick(); }  // ATV: occupant streams its pose / mirror drives the interp (host+client)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:drone"}; coop::drone_sync::Tick(); }  // delivery drone: host streams transform / client suppresses tick + mirrors
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:turbine"}; coop::turbine_sync::Tick(); }  // wind turbines: host ~1 Hz driver-float poll / client deferred-apply retry

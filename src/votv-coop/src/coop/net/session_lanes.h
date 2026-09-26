@@ -199,8 +199,11 @@ inline Lane LaneForKind(ReliableKind k) {
     // waits for the bind, and the host resolves an intent by eid. The default, by decision.
     case ReliableKind::KerfusState:       return Lane::Normal;
     case ReliableKind::KerfusIntent:      return Lane::Normal;
-    // The precision family is ordered against nothing but itself: a joiner's seed and every later
-    // batch are one kind, and an intent is performed by dish index. The default, by decision.
+    // The precision family is ordered against itself and one other kind: a joiner's seed and every
+    // later batch are one kind, an intent is performed by dish index, and the host hears an intent
+    // only from a slot whose ClientWorldReady it has applied (dish_calib_sync), so that announce
+    // rides the intent's lane and a client's verb cannot overtake it. The default, by decision.
+    case ReliableKind::ClientWorldReady:  return Lane::Normal;
     case ReliableKind::DishCalib:         return Lane::Normal;
     case ReliableKind::DishCalibIntent:   return Lane::Normal;
     default:                           return Lane::Normal;

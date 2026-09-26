@@ -3,6 +3,7 @@
 #include "coop/interactables/dish_calib_sync.h"
 
 #include "coop/net/session.h"
+#include "coop/session/net_pump.h"  // IsInAnnouncedWorld
 
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/script_gate.h"
@@ -12,6 +13,7 @@
 
 #include <windows.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstring>
@@ -51,6 +53,7 @@ struct Bucket {
     float    tokens = kIntentBurst;
     uint64_t lastMs = 0;
     uint64_t nextSayMs = 0;
+    int      overBudget = 0, notFinite = 0, noDish = 0;  // refused since the last line said so
 };
 Bucket g_budget[coop::net::kMaxPeers];
 
@@ -64,6 +67,20 @@ bool Same(float a, float b) {
 
 bool IsClient(coop::net::Session* s) {
     return s && s->running() && s->connected() && s->role() != coop::net::Role::Host;
+}
+
+// HOST: the refusals a slot's intents drew since the line last said them, by reason; once per kRefusalSayMs, from the
+// intent that draws one and from the host's poll, so the last of a burst is said too, and at once when `force` is set.
+void SayRefusals(uint8_t slot, uint64_t now, bool force) {
+    Bucket& b = g_budget[slot];
+    const int n = b.overBudget + b.notFinite + b.noDish;
+    if (n == 0 || (!force && now < b.nextSayMs)) return;
+    b.nextSayMs = now + kRefusalSayMs;
+    UE_LOGW("dish_calib_sync: HOST refused %d of slot %u's dish precision(s) since its last line: %d past its intent "
+            "budget, %d not a finite value, %d no live dish -- a live dish named is answered at the host's value, to "
+            "that client alone when nothing was performed", n, static_cast<unsigned>(slot), b.overBudget, b.notFinite,
+            b.noDish);
+    b.overBudget = b.notFinite = b.noDish = 0;
 }
 
 bool TakeToken(uint8_t slot) {
@@ -118,11 +135,13 @@ sg::Verdict OnSetPrecPre(const sg::Call&) {
 
 // The two verbs, each body's entry reading every dish and its exit sending the ones it changed. A body can nest in
 // another watched body, so after a send every enclosing body's reading takes the values as sent, and a change is
-// sent once. The gate's own chain is the scope: an entry at `depth` or deeper whose body ended without its exit
-// (another watcher's Cancel, a fault the firewall absorbed) is dropped at the next entry or exit.
+// sent once. The gate's own chain is the scope: an entry whose body ended without its exit (another watcher's Cancel,
+// a fault the firewall absorbed) is dropped at the next entry at its depth or shallower, at an enclosing body's exit,
+// and at any verb's entry once no body of its function is on the chain.
 struct InFlight {
     int   depth;
     void* stack;
+    void* function;
     float before[kMaxDishes];
     bool  read[kMaxDishes];
 };
@@ -132,13 +151,30 @@ void DropFrom(int depth) {
     while (!g_inFlight.empty() && g_inFlight.back().depth >= depth) g_inFlight.pop_back();
 }
 
+// At a body's entry the gate's chain holds only the bodies around it (its own scope is pushed after the entry
+// callbacks), so an entry whose function no body on the chain runs ended without its exit.
+void DropEnded() {
+    g_inFlight.erase(std::remove_if(g_inFlight.begin(), g_inFlight.end(),
+                                    [](const InFlight& f) { return !sg::IsBodyActive(f.function); }),
+                     g_inFlight.end());
+}
+
 sg::Verdict OnVerbPre(const sg::Call& call) {
     DropFrom(call.depth);
-    if (!IsClient(g_session.load(std::memory_order_acquire))) return sg::Verdict::Run;
+    DropEnded();
+    // A verb on an object of a world this client has not announced ready is not a player's verb on the shared one.
+    if (!IsClient(g_session.load(std::memory_order_acquire)) || !coop::net_pump::IsInAnnouncedWorld(call.object))
+        return sg::Verdict::Run;
     D::DishCalibration rows[kMaxDishes];
-    const int32_t n = D::ReadCalibrations(rows, kMaxDishes);
+    int32_t n = D::ReadCalibrations(rows, kMaxDishes);
     if (n <= 0) return sg::Verdict::Run;
-    InFlight f{call.depth, call.stack, {}, {}};
+    // The verb is judged against the host's values, as setPrec's PRE reads them: a deviation the poll has not put back
+    // yet would otherwise hide a verb that writes exactly it. Not inside another verb, whose change is not sent yet.
+    if (g_inFlight.empty()) {
+        PutBack(rows, n);
+        n = D::ReadCalibrations(rows, kMaxDishes);
+    }
+    InFlight f{call.depth, call.stack, call.function, {}, {}};
     for (int32_t i = 0; i < n; ++i) {
         if (rows[i].index < 0 || rows[i].index >= kMaxDishes) continue;
         f.before[rows[i].index] = rows[i].value;
@@ -173,7 +209,7 @@ void OnVerbPost(const sg::Call& call) {
                 "them); the host's values stand", static_cast<unsigned>(p.count));
         return;
     }
-    // Held once sent: the host performs it and sends it back to all, or sends its own value in its place.
+    // Held once sent: the host performs it and answers with it, or answers with its own value in its place.
     for (uint8_t i = 0; i < p.count; ++i) {
         g_host[p.entries[i].index] = p.entries[i].value;
         g_held[p.entries[i].index] = true;
@@ -244,6 +280,8 @@ void Poll(coop::net::Session* s) {
         PutBack(rows, n);
         return;
     }
+    const uint64_t now = ::GetTickCount64();
+    for (uint8_t slot = 1; slot < coop::net::kMaxPeers; ++slot) SayRefusals(slot, now, false);
     if (!g_haveSent) {
         for (int32_t i = 0; i < n; ++i)
             if (rows[i].index >= 0 && rows[i].index < kMaxDishes) g_sent[rows[i].index] = rows[i].value;
@@ -294,61 +332,85 @@ void OnDishCalib(const coop::net::DishCalibPayload& p, uint8_t senderSlot) {
     }
 }
 
-// HOST: performs what it can of a client's intent and sends every named dish's value, as it now holds it, to all:
-// the author learns the outcome whatever the host did, and no poll diff has to happen to carry it.
+// HOST: performs what it can of a client's intent and answers with every live dish named, as it now holds it, read
+// after the writes. Once anything was performed the answer goes to all, as the server box's upgrade lane broadcasts its
+// canonical after an applied op (server_upgrade_sync.cpp:301) and MTA a confirmed request (CGame.cpp:3196-3197); a
+// refused entry rides along, harmless, since every other client already holds that value. When nothing was
+// performed it goes to the author alone, as both answer a refusal (server_upgrade_sync.cpp:255;
+// CGame.cpp:3042-3043), so the budget bounds what a client can make the host write and send to the others; its
+// author hears at most one answer per intent. A slot not yet in its world is not heard, as MTA hears a joined player
+// only (CGame.cpp:3024-3025): its announce is pinned to this lane, ahead of any intent (session_lanes.h).
 void OnDishCalibIntent(const coop::net::DishCalibPayload& p, uint8_t senderSlot) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || s->role() != coop::net::Role::Host || senderSlot == 0 || senderSlot >= coop::net::kMaxPeers) return;
-    if (!D::EnsureResolved()) {
-        UE_LOGW("dish_calib_sync: slot %u's precision intent dropped -- the dishes are not resolved here",
-                static_cast<unsigned>(senderSlot));
+    Bucket& b = g_budget[senderSlot];
+    const uint64_t now = ::GetTickCount64();
+    const bool worldReady = s->IsSlotWorldReady(senderSlot);
+    if (!worldReady || !D::EnsureResolved()) {
+        if (now >= b.nextSayMs) {
+            b.nextSayMs = now + kRefusalSayMs;
+            UE_LOGW("dish_calib_sync: slot %u's precision intent dropped -- %s", static_cast<unsigned>(senderSlot),
+                    worldReady ? "the dishes are not resolved here" : "that slot has not announced its world");
+        }
         return;
     }
     const bool within = TakeToken(senderSlot);
     D::DishCalibration rows[kMaxDishes];
-    const int32_t m = D::ReadCalibrations(rows, kMaxDishes);
-    coop::net::DishCalibPayload out{};
-    int performed = 0, refused = 0;
+    int32_t m = D::ReadCalibrations(rows, kMaxDishes);
+    bool named[kMaxDishes] = {};
+    int performed = 0, overBudget = 0, notFinite = 0, noDish = 0;
     const int32_t n = p.count <= kMaxDishes ? p.count : kMaxDishes;
     for (int32_t i = 0; i < n; ++i) {
         const auto& e = p.entries[i];
-        const D::DishCalibration* row = nullptr;
-        for (int32_t j = 0; j < m && !row; ++j)
-            if (rows[j].index == e.index) row = &rows[j];
-        if (!row) {  // no live dish at that index here: nothing to answer with
-            ++refused;
+        bool live = false;
+        for (int32_t j = 0; j < m && !live; ++j) live = rows[j].index == e.index;
+        if (e.index >= kMaxDishes || !live) {  // the lane's index rule, and a dish this copy has
+            ++noDish;
             continue;
         }
-        float value = row->value;
-        if (within && std::isfinite(e.value) && D::WriteCalibration(e.index, e.value)) {
-            value = e.value;
+        named[e.index] = true;
+        if (!within) {
+            ++overBudget;
+        } else if (!std::isfinite(e.value)) {
+            ++notFinite;
+        } else if (D::WriteCalibration(e.index, e.value)) {
             ++performed;
             g_counts.lastIndex = e.index;
             g_counts.lastValue = e.value;
         } else {
-            ++refused;
+            ++noDish;
         }
-        auto& a = out.entries[out.count++];
-        a.index = e.index;
-        a.value = value;
-        g_sent[e.index] = value;
     }
+    const int refused = overBudget + notFinite + noDish;
     g_counts.intentsApplied += static_cast<uint64_t>(performed);
     g_counts.intentsRefused += static_cast<uint64_t>(refused);
-    if (out.count > 0) s->SendReliable(coop::net::ReliableKind::DishCalib, &out, sizeof(out));
+    coop::net::DishCalibPayload out{};
+    m = D::ReadCalibrations(rows, kMaxDishes);
+    for (int32_t j = 0; j < m; ++j) {
+        const int32_t idx = rows[j].index;
+        if (idx < 0 || idx >= kMaxDishes || !named[idx]) continue;
+        auto& e = out.entries[out.count++];
+        e.index = static_cast<uint8_t>(idx);
+        e.value = rows[j].value;
+        if (performed > 0) g_sent[idx] = rows[j].value;  // said to all: the poll need not say it again
+    }
+    if (out.count > 0) {
+        if (performed > 0) s->SendReliable(coop::net::ReliableKind::DishCalib, &out, sizeof(out));
+        else s->SendReliableToSlot(senderSlot, coop::net::ReliableKind::DishCalib, &out, sizeof(out));
+    }
     if (performed > 0)
         UE_LOGI("dish_calib_sync: HOST performed %d of slot %u's dish precision(s), dish %d = %.4f last", performed,
                 static_cast<unsigned>(senderSlot), g_counts.lastIndex, g_counts.lastValue);
-    if (refused > 0) {
-        Bucket& b = g_budget[senderSlot];
-        const uint64_t now = ::GetTickCount64();
-        if (now >= b.nextSayMs) {
-            b.nextSayMs = now + kRefusalSayMs;
-            UE_LOGW("dish_calib_sync: HOST refused %d of slot %u's dish precision(s) (%s) -- sent its own values",
-                    refused, static_cast<unsigned>(senderSlot),
-                    within ? "not a finite value, or no live dish there" : "past its intent budget");
-        }
-    }
+    b.overBudget += overBudget;
+    b.notFinite += notFinite;
+    b.noDish += noDish;
+    SayRefusals(senderSlot, now, false);
+}
+
+void OnPeerLeft(uint8_t slot) {
+    if (slot >= coop::net::kMaxPeers) return;
+    SayRefusals(slot, ::GetTickCount64(), true);
+    g_budget[slot] = Bucket{};
 }
 
 void OnDeskReplaced() {
