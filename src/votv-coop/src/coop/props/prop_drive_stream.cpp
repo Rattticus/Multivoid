@@ -6,6 +6,7 @@
 #include "coop/net/session.h"
 #include "coop/props/active_drive.h"
 #include "coop/props/prop_element_tracker.h"  // FindLiveActorByKey: the index only, never the cold walk
+#include "coop/props/prop_park.h"             // Park / Unpark: the parked prop, and a Character welded on it
 #include "coop/props/prop_wire_parity.h"      // the join converge's own physics restore
 #include "coop/props/remote_prop.h"           // ResolveLiveActorByEid, IsActorUnderAnyDrive
 #include "ue_wrap/actors/prop.h"
@@ -75,9 +76,10 @@ void* Resolve(uint32_t eid, const coop::net::WireKey& key) {
 }
 
 void GiveBackPhysics(Drive& dr, void* actor) {
-    if (!dr.physicsParked || !actor || PhysicsStaysOff(actor)) return;
-    ue_wrap::engine::SetComponentSimulatePhysics(dr.d.mesh, true);
-    dr.physicsParked = false;
+    if (!dr.physicsParked || !actor) return;
+    const bool simulate = !PhysicsStaysOff(actor);
+    coop::prop_park::Unpark(actor, dr.d.mesh, simulate);
+    if (simulate) dr.physicsParked = false;
 }
 
 // The end edge on a live prop: the final pose, then the host's physics flags through the same
@@ -91,14 +93,17 @@ void ApplyEnd(void* actor, const coop::net::PropDriveEndPayload& p, bool parkedH
     // the host only (hook_C's attach_a runs setPropProps), so a copy still frozen here takes the
     // host's flags before the physics decision reads them.
     coop::prop_wire_parity::ConvergeFrozenSleep(actor, p.physFlags);
-    if (PhysicsStaysOff(actor)) return;
-    coop::prop_wire_parity::RestoreSpParityPhysicsAfterConverge(actor, p.physFlags);
-    const float lin2 = p.linVelX * p.linVelX + p.linVelY * p.linVelY + p.linVelZ * p.linVelZ;
-    if (parkedHere && coop::prop_wire_parity::SpParitySimulate(p.physFlags) && lin2 > 0.f) {
-        void* mesh = PR::GetStaticMesh(actor);
-        ue_wrap::engine::SetComponentLinearVelocity(mesh, p.linVelX, p.linVelY, p.linVelZ);
-        ue_wrap::engine::SetComponentAngularVelocity(mesh, p.angVelX, p.angVelY, p.angVelZ);
+    if (!PhysicsStaysOff(actor)) {
+        coop::prop_wire_parity::RestoreSpParityPhysicsAfterConverge(actor, p.physFlags);
+        const float lin2 = p.linVelX * p.linVelX + p.linVelY * p.linVelY + p.linVelZ * p.linVelZ;
+        if (parkedHere && coop::prop_wire_parity::SpParitySimulate(p.physFlags) && lin2 > 0.f) {
+            void* mesh = PR::GetStaticMesh(actor);
+            ue_wrap::engine::SetComponentLinearVelocity(mesh, p.linVelX, p.linVelY, p.linVelZ);
+            ue_wrap::engine::SetComponentAngularVelocity(mesh, p.angVelX, p.angVelY, p.angVelZ);
+        }
     }
+    // The park is over, whatever the flags left the body: a Character it stopped moves again.
+    coop::prop_park::Unpark(actor, /*mesh=*/nullptr, /*rootSimulates=*/false);
 }
 
 }  // namespace
@@ -158,7 +163,7 @@ void TickApplyAndDrive(coop::net::Session& s) {
             dr.physicsParked = false;
             dr.relatches  = 0;
             if (dr.d.mesh && !PhysicsStaysOff(actor)) {
-                ue_wrap::engine::SetComponentSimulatePhysics(dr.d.mesh, false);
+                coop::prop_park::Park(actor, dr.d.mesh);
                 dr.physicsParked = true;
             }
             if (ended != g_endedGen.end()) g_endedGen.erase(ended);
@@ -190,7 +195,7 @@ void TickApplyAndDrive(coop::net::Session& s) {
         // frozen, which the park left as it was, and which an unstick or an unfreeze here has since
         // freed: it is parked kinematic from then on, and the end edge hands its physics back.
         if (dr.d.mesh && ue_wrap::engine::IsComponentSimulatingPhysics(dr.d.mesh)) {
-            ue_wrap::engine::SetComponentSimulatePhysics(dr.d.mesh, false);
+            coop::prop_park::Park(actor, dr.d.mesh);
             dr.physicsParked = true;
             if (++dr.relatches == 1) {
                 UE_LOGI("[PROP-DRIVE] CLIENT eid=%u -- the game turned simulation back on under the park; "

@@ -98,6 +98,8 @@
 #include "coop/props/trash_sweep.h"
 #include "coop/props/prop_drive_host.h"    // HOST: the props a hook drags, streamed while they move
 #include "coop/props/prop_drive_stream.h"  // CLIENT: park and drive those props
+#include "coop/props/prop_park.h"  // the parks' held Characters, given back at session end
+#include "coop/props/rider_hold.h"  // the holds on welded Characters' movement, released last
 #include "coop/props/trash_collect_sync.h"
 #include "coop/items/broom_stroke.h"
 #include "coop/props/pack_trash_intent.h"
@@ -546,6 +548,8 @@ DisconnectStats DisconnectAll() {
     coop::trash_clump_pose_stream::OnDisconnect();  // drop all client per-eid carry drives
     coop::prop_drive_host::OnDisconnect();  // drop the host's driven-prop set
     coop::prop_drive_stream::OnDisconnect();  // every driven prop here gets its physics back
+    coop::prop_park::OnDisconnect();  // after both receivers gave their props back: the holds a park still has
+    coop::rider_hold::OnDisconnect();  // last: any movement still held ticks again
     coop::balance_sync::OnDisconnect();  // reset the balance broadcast dedup
     // Last, after every element drain: the client's transfer state, its received identity map and
     // the ephemeral zcoop_<pid> slot the join wrote. The map's binds resolve against Elements, so

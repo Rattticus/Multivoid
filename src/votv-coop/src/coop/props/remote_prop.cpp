@@ -16,6 +16,7 @@
 #include "coop/player/players_registry.h"
 #include "coop/props/pile_look.h"
 #include "coop/props/prop_drive_stream.h"  // IsParked: the host's channel owns a parked copy
+#include "coop/props/prop_park.h"  // Park / Unpark: a held prop, and a Character welded on it
 #include "coop/props/prop_echo_suppress.h"
 #include "coop/props/prop_element_tracker.h"
 #include "coop/props/prop_stick_sync.h"  // the stuck wall-attachable gates
@@ -142,14 +143,6 @@ int FindSlotByKey(const coop::net::WireKey& k) {
     return -1;
 }
 
-// Physics on or off for a drive target: an Aprop_C through its StaticMesh, the clump (null mesh)
-// through the generic root component. `actor` arrives validated (a fresh resolve or
-// drive.LiveActor()); null is a no-op.
-void DriveTogglePhysics(void* actor, void* mesh, bool simulate) {
-    if (mesh) ue_wrap::engine::SetComponentSimulatePhysics(mesh, simulate);
-    else if (actor) ue_wrap::engine::SetActorSimulatePhysics(actor, simulate);
-}
-
 // Every release-shaped physics re-enable (PropRelease, the stream-stop timeout, the switched-prop
 // release) is gated on the stick state: a wall-attachable that stuck while held stays frozen when
 // the sender's hold breaks, or the host watches the camera fall off the wall.
@@ -273,8 +266,8 @@ void ResolveAndStartDrive(int slot, const coop::net::PropPoseSnapshot& pose) {
     coop::prop_sound::PlayUseClick(prop);
     coop::prop_sound::PlayGrabSound(prop);
     // Simulation off so the per-packet SetActorLocation sticks: a kinematic follow, the clump
-    // through the generic root toggle.
-    DriveTogglePhysics(prop, mesh, false);
+    // through the generic root toggle, and a Character welded on the prop stopped (prop_park.h).
+    coop::prop_park::Park(prop, mesh);
     g_drives[slot].actor = prop;
     g_drives[slot].actorIdx = R::InternalIndexOf(prop);  // live here; cache for LiveActor()
     g_drives[slot].mesh  = mesh;
@@ -345,8 +338,8 @@ void Tick(coop::net::Session& session) {
                     // physics unless a stick froze it mid-hold.
                     UE_LOGI("remote_prop: slot %d implicit release (peer switched to a new key/eid)", slot);
                     void* liveA = drive.LiveActor();
-                    if (!StickHoldsPhysicsOff(liveA) && !HostAuthorsTrashBody(liveA))
-                        DriveTogglePhysics(liveA, drive.mesh, true);
+                    coop::prop_park::Unpark(liveA, drive.mesh,
+                                            !StickHoldsPhysicsOff(liveA) && !HostAuthorsTrashBody(liveA));
                 } else if (drive.actor) {
                     UE_LOGI("remote_prop: slot %d hold %u takes the prop of hold %u before that hold's release",
                             slot, static_cast<unsigned>(pose.holdGen), static_cast<unsigned>(hold.driveGen));
@@ -384,8 +377,7 @@ void Tick(coop::net::Session& session) {
             UE_LOGI("remote_prop: slot %d implicit release (%llu ms since last PropPose)",
                     slot, static_cast<unsigned long long>(nowMs - drive.lastApplyMs));
             void* liveA = drive.LiveActor();
-            if (!StickHoldsPhysicsOff(liveA))
-                DriveTogglePhysics(liveA, drive.mesh, true);
+            coop::prop_park::Unpark(liveA, drive.mesh, !StickHoldsPhysicsOff(liveA));
             ResetDriveState(drive);
         }
         // The physics receiver's re-latch (docs/coop-sync-doctrine.md, parking): a driven copy stays
@@ -395,7 +387,7 @@ void Tick(coop::net::Session& session) {
         // state is read each tick rather than one verb hooked: one call per driven prop, a tick's lag.
         // The prop drive only: the clump has no such verb.
         if (drive.mesh && drive.LiveActor() && ue_wrap::engine::IsComponentSimulatingPhysics(drive.mesh)) {
-            ue_wrap::engine::SetComponentSimulatePhysics(drive.mesh, false);
+            coop::prop_park::Park(drive.LiveActor(), drive.mesh);
             if (++hold.relatches == 1) {
                 UE_LOGI("remote_prop: slot %d hold %u -- the game turned simulation back on under the drive; "
                         "re-latched kinematic", slot, static_cast<unsigned>(hold.driveGen));
@@ -493,8 +485,9 @@ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, voi
                 static_cast<unsigned>(payload.holdGen), propActor,
                 otherOwner ? "another drive" : "this peer's own grab");
         if (releasedSlot >= 0) {
-            if (localGrab && !otherOwner && !StickHoldsPhysicsOff(propActor) && !HostAuthorsTrashBody(propActor))
-                DriveTogglePhysics(propActor, meshToActOn, true);
+            if (localGrab && !otherOwner)
+                coop::prop_park::Unpark(propActor, meshToActOn,
+                                        !StickHoldsPhysicsOff(propActor) && !HostAuthorsTrashBody(propActor));
             ResetDriveState(g_drives[releasedSlot]);
         }
         return;
@@ -519,9 +512,11 @@ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, voi
     }
     if (StickHoldsPhysicsOff(propActor)) {
         // The prop froze while held -- a wall-attachable's stick, a slot's insert, a mount: no
-        // physics re-enable and no velocity, it stays where it froze; the drive cache still clears.
+        // physics re-enable and no velocity, it stays where it froze; the drive cache still clears,
+        // and a Character the park stopped moves again.
         UE_LOGI("remote_prop: RELEASE for a prop frozen or static here %p -- physics stays off",
                 propActor);
+        coop::prop_park::Unpark(propActor, meshToActOn, /*rootSimulates=*/false);
         meshToActOn = nullptr;
         propActor = nullptr;
     }
@@ -537,7 +532,7 @@ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, voi
                 payload.elementId, linSpeed);
     } else if (meshToActOn) {
         // Simulate first, then the velocities: a kinematic body ignores a velocity write.
-        ue_wrap::engine::SetComponentSimulatePhysics(meshToActOn, true);
+        coop::prop_park::Unpark(propActor, meshToActOn, /*rootSimulates=*/true);
         ue_wrap::engine::SetComponentLinearVelocity(meshToActOn, payload.linVelX, payload.linVelY, payload.linVelZ);
         ue_wrap::engine::SetComponentAngularVelocity(meshToActOn, payload.angVelX, payload.angVelY, payload.angVelZ);
         // The throw fires above kThrownLinVelThreshold so a passive drop stays silent: the prop's
@@ -556,7 +551,7 @@ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, voi
         // grab minted a real clump on top of the pile). The landed pile is a separate spawn with
         // the default collision.
         ue_wrap::engine::SetActorRootCollisionEnabled(propActor, 2 /*PhysicsOnly -- lands but ungrabbable*/);
-        ue_wrap::engine::SetActorSimulatePhysics(propActor, true);
+        coop::prop_park::Unpark(propActor, nullptr, /*rootSimulates=*/true);
         ue_wrap::engine::SetActorRootPhysicsVelocity(
             propActor,
             ue_wrap::FVector{payload.linVelX, payload.linVelY, payload.linVelZ},
@@ -695,7 +690,7 @@ void ForceRelease() {
         // holder's death-watch is gone). IsLiveByIndex: on the quit-to-menu path the world is dying
         // and a recycled slot passes plain IsLive, landing the physics call on a foreign occupant.
         if (R::IsLiveByIndex(d.actor, d.actorIdx)) {
-            if (d.mesh) ue_wrap::engine::SetComponentSimulatePhysics(d.mesh, true);
+            if (d.mesh) coop::prop_park::Unpark(d.actor, d.mesh, /*rootSimulates=*/true);
             else        ConsumeLocalActor(d.actor);
         }
         ResetDriveState(d);
@@ -746,7 +741,7 @@ void OnDisconnectForSlot(int peerSlot) {
     if (d.mesh && R::IsLiveByIndex(d.actor, d.actorIdx)) {
         // A world prop goes back to physics and persists; by-index, for the recycled-slot hazard
         // above.
-        ue_wrap::engine::SetComponentSimulatePhysics(d.mesh, true);
+        coop::prop_park::Unpark(d.actor, d.mesh, /*rootSimulates=*/true);
         UE_LOGI("remote_prop: peer slot %d disconnected -- releasing held prop (key='%s')",
                 peerSlot, d.lastKey.c_str());
     } else if (d.mesh) {
