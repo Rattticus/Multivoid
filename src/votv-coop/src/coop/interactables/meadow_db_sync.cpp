@@ -12,6 +12,7 @@
 #include "coop/interactables/meadow_db_hash.h"
 #include "coop/interactables/meadow_db_internal.h"
 #include "coop/interactables/meadow_db_park.h"
+#include "coop/interactables/meadow_db_writers.h"
 #include "coop/interactables/signal_wire.h"
 #include "coop/session/net_pump.h"
 
@@ -24,7 +25,6 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
-#include <iterator>
 #include <map>
 #include <vector>
 
@@ -42,20 +42,8 @@ std::atomic<coop::net::Session*> g_session{nullptr};
 constexpr auto kRetryInterval = std::chrono::milliseconds(1000);
 constexpr auto kAssemblyTTL   = std::chrono::seconds(20);
 
-// The database's writers, from the bytecode of every asset that names it: ui_laptop_C's addSignal (an
-// Add), removeSignal (a Remove) and sortSignal (a move, a Remove then an Insert), and the rename window,
-// whose ubergraph writes a row's name in place when its button is clicked. saveSlot_C::reset_days clears
-// the store too, but only on a save the reset menu loads from disk, never on the live one. Each body's
-// entry takes the shadow if the lane has none of this database yet, and its exit sends what it changed.
-struct Writer { const wchar_t* cls; const wchar_t* fn; };
-constexpr Writer kWriters[] = {
-    {L"ui_laptop_C", L"addSignal"},
-    {L"ui_laptop_C", L"removeSignal"},
-    {L"ui_laptop_C", L"sortSignal"},
-    {L"ui_signalName_C", L"ExecuteUbergraph_ui_signalName"},
-};
-constexpr int kTagWriter = 0x4D445742;  // 'MDWB'
-bool g_writersWatched = false;  // registered, once a process
+// The database's writers are coop/interactables/meadow_db_writers'. Each body's entry takes the shadow if
+// the lane has none of this database yet, and its exit sends what it changed.
 bool g_writersSettled = false;  // their names resolved at the gate, each live or dead for good
 
 // The lane's own verb calls in progress (game thread). Its applies run the same verbs a player does, and
@@ -596,23 +584,6 @@ bool ReplayParked(meadow_db_park::Kind kind, const std::vector<uint8_t>& blob, u
     return true;
 }
 
-void WatchUntilSettled() {
-    sg::ResolvePendingNames();
-    size_t live = 0;
-    for (const Writer& w : kWriters)
-        if (sg::ClassNameWatchLive(w.cls, w.fn, kTagWriter)) ++live;
-    if (live < std::size(kWriters) && sg::PendingNameCount() > 0) return;
-    g_writersSettled = true;
-    if (live == std::size(kWriters)) {
-        UE_LOGI("meadow_db: the database's %zu writers are watched at the script-body gate", std::size(kWriters));
-        return;
-    }
-    for (const Writer& w : kWriters)
-        if (!sg::ClassNameWatchLive(w.cls, w.fn, kTagWriter))
-            UE_LOGW("meadow_db: the writer %ls::%ls is NOT watched -- a change it makes goes out only with the "
-                    "next watched writer's", w.cls, w.fn);
-}
-
 void LogTotals(Clock::time_point now) {
     if (now < g_nextStats) return;
     g_nextStats = now + std::chrono::seconds(60);
@@ -639,18 +610,13 @@ void LogTotals(Clock::time_point now) {
 
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
-    if (g_writersWatched) return;
-    bool ok = true;
-    for (const Writer& w : kWriters)
-        ok = sg::WatchClassName(w.cls, w.fn, kTagWriter, &OnWriterPre, &OnWriterPost) && ok;
-    g_writersWatched = ok;
-    if (!ok) UE_LOGW("meadow_db: a writer's watch was refused -- a change it makes is not sent");
+    meadow_db_writers::Watch(&OnWriterPre, &OnWriterPost);
 }
 
 void Tick() {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->running()) return;
-    if (!g_writersSettled) WatchUntilSettled();
+    if (!g_writersSettled) g_writersSettled = meadow_db_writers::Settle();
     const auto now = Clock::now();
     LogTotals(now);
     // Lines that waited for the database go back, in order, once it is here again.
