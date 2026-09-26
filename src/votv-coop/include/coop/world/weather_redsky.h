@@ -4,10 +4,11 @@
 // peer, ending a live red sky and, on a 1% roll, starting one; the cheat menu calls it too. The noon's call runs
 // inside the day cycle's graph, where no ProcessEvent hook sees it; the script gate sees it on every route. The HOST
 // sends its red sky as each toggle leaves it, both edges, as MTA's server sends a weather change at the call that
-// makes it (Server/mods/deathmatch/logic/CStaticFunctionDefinitions.cpp, SetWeather), and a joiner is seeded at its
-// world-ready (coop/world/weather_sync), as MTA's join packet carries the weather (packets/CMapInfoPacket.cpp). A
-// CLIENT refuses its own toggle at the gate, both halves -- its noon would otherwise end the host's red sky it
-// shows -- and applies the host's through the same verb, which its gate lets run.
+// makes it (reference/mtasa-blue/Server/mods/deathmatch/logic/CStaticFunctionDefinitions.cpp, SetWeather), and a
+// joiner is seeded at its world-ready (coop/world/weather_sync), as MTA's join packet carries the weather
+// (reference/mtasa-blue/Server/mods/deathmatch/logic/packets/CMapInfoPacket.cpp). A CLIENT refuses its own toggle
+// at the gate, both halves -- its noon would otherwise end the host's red sky it shows -- and applies the host's
+// through the same verb, which its gate lets run.
 
 #pragma once
 
