@@ -451,7 +451,7 @@ CFG_ENUM(midnight_drill, "midnight_drill", "dev", "off", "off|awake|asleep|cheat
     "samples whose day is not a number, and the client's log says where each was refused. Run it on a "
     "fresh host world; every refused step is logged and ends the arm as invalid.")
 CFG_ENUM(world_roll_drill, "world_roll_drill", "dev", "off",
-    "off|eye_host|eye_client|eye_join|jelly_host|jelly_client|jelly_join",
+    "off|eye_host|eye_client|eye_join|jelly_host|jelly_client|jelly_join|redsky_host|redsky_client|redsky_join",
     "VOTVCOOP_WORLD_ROLL_DRILL",
     "Drill (BOTH peers), the day's world rolls: each a host roll that must cross and a client's own that "
     "must be refused. eye_host: once a client's join is over the host's sky runs setEye(true), as its noon "
@@ -461,8 +461,13 @@ CFG_ENUM(world_roll_drill, "world_roll_drill", "dev", "off",
     "once a client's join is over the host's jellyfish path spawns, as its 18:00 roll would, and the "
     "client's copy must show the seven fish as mirrors within 20 s and see them leave with the host's run; "
     "jelly_client: the joined client's own spawn must leave its path's list as it was; jelly_join: the "
-    "host's run is under way before any client's world is ready. Run it on a fresh host world; every "
-    "refused step is logged and ends the arm as invalid.")
+    "host's run is under way before any client's world is ready. redsky_host: once a client's join is over "
+    "the host's gamemode runs its noon toggle twice, starting a red sky and ending it, and the client's "
+    "copy must see both edges within 20 s; redsky_client: the joined client's own toggle must be refused, "
+    "its sky unchanged; redsky_join: the host's red sky stands before any client's world is ready, the "
+    "joiner's copy must show it within 20 s, and then the joiner's own toggle, as its noon would run it with "
+    "a red sky live, must be refused, its sky still red. Run it on a fresh host world; every refused step is "
+    "logged and ends the arm as invalid.")
 CFG_ENUM(fireext_drill, "fireext_drill", "dev", "off", "off|carry|short|client|join",
     "VOTVCOOP_FIREEXT_DRILL",
     "Drill (BOTH peers): a wall-mounted fire extinguisher taken off through the use key's own grab "

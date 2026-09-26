@@ -14,6 +14,7 @@
 #include "ue_wrap/core/script_gate.h"  // GetStats: the gate's own count of the bodies it refused
 #include "ue_wrap/core/types.h"
 #include "ue_wrap/world/jellyfish_path.h"
+#include "ue_wrap/world/red_sky.h"
 #include "ue_wrap/world/skysphere.h"
 
 #include <atomic>
@@ -25,8 +26,10 @@ namespace {
 
 namespace SKY = ue_wrap::skysphere;
 namespace JP  = ue_wrap::jellyfish_path;
+namespace RS  = ue_wrap::red_sky;
+namespace sg  = ue_wrap::script_gate;
 
-enum class Arm { Off, EyeHost, EyeClient, EyeJoin, JellyHost, JellyClient, JellyJoin };
+enum class Arm { Off, EyeHost, EyeClient, EyeJoin, JellyHost, JellyClient, JellyJoin, RedHost, RedClient, RedJoin };
 // Watch: the jellyfish arms follow the run after its start, the host to the path's end of it and the client
 // to its mirrors leaving.
 enum class Step { Wait, Watch, Done, Invalid };
@@ -49,6 +52,14 @@ constexpr auto kJellyLogEvery = std::chrono::seconds(5);
 std::chrono::steady_clock::time_point g_jellySince{};  // the client's join over; the host's spawn
 std::chrono::steady_clock::time_point g_jellyAt{};     // the run seen under way on this peer
 std::chrono::steady_clock::time_point g_nextJellyLog{};
+// The red sky arms: every set the event runs on this copy, in order ('1' red, '0' clear), counted at set itself so
+// two edges in one tick are both seen, and when the client's join was over.
+constexpr int  kRedSetTag = 0x52534b59;  // 'RSKY'
+constexpr auto kRedBound = std::chrono::seconds(20);
+constexpr size_t kRedSetsKept = 16;
+bool        g_redWatchAsked = false;
+std::string g_redSets;
+std::chrono::steady_clock::time_point g_redSince{};
 
 Arm ArmOf() {
     static const Arm a = [] {
@@ -59,6 +70,9 @@ Arm ArmOf() {
              : v == "jelly_host"   ? Arm::JellyHost
              : v == "jelly_client" ? Arm::JellyClient
              : v == "jelly_join"   ? Arm::JellyJoin
+             : v == "redsky_host"   ? Arm::RedHost
+             : v == "redsky_client" ? Arm::RedClient
+             : v == "redsky_join"   ? Arm::RedJoin
                                  : Arm::Off;
     }();
     return a;
@@ -72,6 +86,9 @@ const char* ArmName() {
     case Arm::JellyHost:   return "jelly_host";
     case Arm::JellyClient: return "jelly_client";
     case Arm::JellyJoin:   return "jelly_join";
+    case Arm::RedHost:     return "redsky_host";
+    case Arm::RedClient:   return "redsky_client";
+    case Arm::RedJoin:     return "redsky_join";
     default:             return "off";
     }
 }
@@ -88,6 +105,14 @@ const char* ArmPlan(bool host) {
         return host ? "watching; the client spawns its own jellyfish" : "spawning this copy's own jellyfish once joined";
     if (ArmOf() == Arm::JellyJoin)
         return host ? "spawning the jellyfish before any client's world is ready" : "watching for the host's running jellyfish";
+    if (ArmOf() == Arm::RedHost)
+        return host ? "starting a red sky and ending it once a client's join is over"
+                    : "watching for the host's red sky to start and end";
+    if (ArmOf() == Arm::RedClient)
+        return host ? "watching; the client runs its own red sky toggle" : "running this copy's own red sky toggle once joined";
+    if (ArmOf() == Arm::RedJoin)
+        return host ? "starting a red sky before any client's world is ready"
+                    : "watching for the host's standing red sky, then running this copy's own toggle";
     return host ? "watching; the client sets its own sky eye" : "setting this copy's own sky eye once joined";
 }
 
@@ -99,6 +124,8 @@ void Invalid(char role, const char* why) {
 bool IsJellyArm() {
     return ArmOf() == Arm::JellyHost || ArmOf() == Arm::JellyClient || ArmOf() == Arm::JellyJoin;
 }
+
+bool IsRedArm() { return ArmOf() == Arm::RedHost || ArmOf() == Arm::RedClient || ArmOf() == Arm::RedJoin; }
 
 long long SecondsSince(std::chrono::steady_clock::time_point t) {
     return std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - t).count();
@@ -277,6 +304,139 @@ void TickJellyClient() {
     }
 }
 
+// Every set the red sky's event runs on this peer, as its begin-play, its destroyed event or anyone's call runs it.
+void OnRedSkySetPost(const sg::Call& call) {
+    bool red = false;
+    if (!RS::ReadIsRed(call.object, red)) return;
+    if (g_redSets.size() < kRedSetsKept) g_redSets.push_back(red ? '1' : '0');
+    auto* s = g_session.load(std::memory_order_acquire);
+    const bool host = s && s->role() == coop::net::Role::Host;
+    UE_LOGI("world_roll_drill: [%c] %s: this copy's red sky event ran set(%d); its sets so far '%s'", host ? 'H' : 'C',
+            ArmName(), red ? 1 : 0, g_redSets.c_str());
+}
+
+// The gamemode's toggle, as the day cycle's noon calls it, with this peer's red sky read on each side.
+bool ToggleRedSky(char role, bool& before, bool& after) {
+    if (!RS::Read(nullptr, before)) return false;
+    if (!RS::CallSpawn()) {
+        Invalid(role, "the gamemode's spawnRedSky did not run");
+        return false;
+    }
+    if (!RS::Read(nullptr, after)) {
+        Invalid(role, "the red sky did not read after the toggle");
+        return false;
+    }
+    return true;
+}
+
+// The host. redsky_join: a red sky before any client's world is ready, so a joiner meets it standing and only the
+// seed at its world-ready can carry it (the save has none). redsky_host: once a client's join is over, two calls of
+// the noon's toggle back to back, a start and an end, so a lane that samples the state instead of carrying each edge
+// sees neither. redsky_client: the host's sky is left alone, and said.
+void TickRedHost(coop::net::Session* s) {
+    if (g_step != Step::Wait) return;
+    bool before = false, after = false;
+    if (ArmOf() == Arm::RedJoin) {
+        if (!RS::Read(nullptr, before)) return;  // the gamemode is not loaded yet
+        for (int slot = 1; slot < static_cast<int>(coop::players::kMaxPeers); ++slot)
+            if (s->IsSlotWorldReady(slot)) {
+                Invalid('H', "a client's world was ready before this host could start its red sky");
+                return;
+            }
+        if (!ToggleRedSky('H', before, after)) return;
+        if (!after) {
+            Invalid('H', "the host's toggle left no red sky");
+            return;
+        }
+        UE_LOGI("world_roll_drill: [H] arm redsky_join -- no client's world is ready yet; its spawnRedSky ran, red %d "
+                "-> %d", before ? 1 : 0, after ? 1 : 0);
+        g_step = Step::Done;
+        return;
+    }
+    for (int slot = 1; slot < static_cast<int>(coop::players::kMaxPeers) && g_slot < 0; ++slot)
+        if (s->IsSlotWorldReady(slot) && coop::prop_snapshot::IsBracketClosed(slot)) g_slot = slot;
+    if (g_slot < 0) return;
+    if (ArmOf() == Arm::RedClient) {
+        RS::Read(nullptr, before);
+        UE_LOGI("world_roll_drill: [H] arm redsky_client -- slot %d's join is over; its sky is left alone, red %d",
+                g_slot, before ? 1 : 0);
+        g_step = Step::Done;
+        return;
+    }
+    bool ended = true;
+    if (!ToggleRedSky('H', before, after)) return;
+    if (before || !after) {
+        Invalid('H', "the host's first toggle did not start a red sky");
+        return;
+    }
+    if (!ToggleRedSky('H', after, ended)) return;
+    if (ended) {
+        Invalid('H', "the host's second toggle did not end its red sky");
+        return;
+    }
+    UE_LOGI("world_roll_drill: [H] arm redsky_host -- slot %d's join is over; its spawnRedSky ran twice, red 0 -> 1 "
+            "-> 0", g_slot);
+    g_step = Step::Done;
+}
+
+// The client, once its join is over. redsky_host: the host's start and end must both reach this copy's event, set
+// true then false, within kRedBound, leaving it clear. redsky_client: this copy's own toggle, as its noon's roll
+// would call it, must be refused at the gate (its own count of refusals moves), no set running and the sky and its
+// event's liveness as they were. redsky_join: the host's standing red sky must show here within kRedBound, and then this copy's own toggle,
+// as its noon would call it with a red sky live, must be refused, the sky still red. A sky that does not read, or
+// a toggle that did not run, proves nothing and ends the arm invalid.
+void TickRedClient() {
+    if (g_step != Step::Wait) return;
+    if (!coop::net_pump::HasAnnouncedWorldReady() ||
+        coop::join_progress::CurrentPhase() != coop::join_progress::Phase::Idle)
+        return;
+    const auto now = std::chrono::steady_clock::now();
+    if (g_redSince == std::chrono::steady_clock::time_point{}) g_redSince = now;
+    bool red = false;
+    if (!RS::Read(nullptr, red)) {
+        if (now - g_redSince > kRedBound) Invalid('C', "the red sky did not read");
+        return;
+    }
+    if (ArmOf() == Arm::RedHost) {
+        const size_t on = g_redSets.find('1');
+        const bool bothEdges = on != std::string::npos && g_redSets.find('0', on) != std::string::npos;
+        if (bothEdges && !red) {
+            UE_LOGI("world_roll_drill: [C] redsky_host DONE -- the host's start and end both reached this copy (its "
+                    "sets '%s'), which reads clear -- PASS", g_redSets.c_str());
+            g_step = Step::Done;
+        } else if (now - g_redSince > kRedBound) {
+            UE_LOGW("world_roll_drill: [C] redsky_host DONE -- %lld s after its join this copy's sets are '%s' and it "
+                    "reads red %d -- FAIL", SecondsSince(g_redSince), g_redSets.c_str(), red ? 1 : 0);
+            g_step = Step::Done;
+        }
+        return;
+    }
+    if (ArmOf() == Arm::RedJoin && !red) {
+        if (now - g_redSince > kRedBound) {
+            UE_LOGW("world_roll_drill: [C] redsky_join DONE -- this copy still reads clear %lld s after its join (its "
+                    "sets '%s') -- FAIL", SecondsSince(g_redSince), g_redSets.c_str());
+            g_step = Step::Done;
+        }
+        return;
+    }
+    const size_t setsBefore = g_redSets.size();
+    const unsigned long long refusedBefore = sg::GetStats().cancelled;
+    bool before = false, after = false, liveBefore = false, liveAfter = false;
+    RS::ReadLive(nullptr, liveBefore);
+    if (!ToggleRedSky('C', before, after)) return;
+    RS::ReadLive(nullptr, liveAfter);
+    const bool refused = sg::GetStats().cancelled > refusedBefore;
+    const std::string ran = g_redSets.substr(setsBefore);
+    if (refused && ran.empty() && after == before && liveAfter == liveBefore)
+        UE_LOGI("world_roll_drill: [C] %s DONE -- this copy's own toggle was refused at the gate: no set ran, its sky "
+                "reads red %d as before -- PASS", ArmName(), after ? 1 : 0);
+    else
+        UE_LOGW("world_roll_drill: [C] %s DONE -- this copy's own toggle ran (refused=%d): its sets '%s', red %d -> "
+                "%d, its event live %d -> %d -- FAIL", ArmName(), refused ? 1 : 0, ran.c_str(), before ? 1 : 0,
+                after ? 1 : 0, liveBefore ? 1 : 0, liveAfter ? 1 : 0);
+    g_step = Step::Done;
+}
+
 // eye_join, the host: its eye is set before any client's world is ready, so a joiner meets it standing and only
 // the snapshot at its world-ready, or the stream after it, can carry it (the save has no eye). The sky is waited for.
 void SetEyeBeforeJoin(coop::net::Session* s) {
@@ -303,6 +463,10 @@ void SetEyeBeforeJoin(coop::net::Session* s) {
 void TickHost(coop::net::Session* s) {
     if (IsJellyArm()) {
         TickJellyHost(s);
+        return;
+    }
+    if (IsRedArm()) {
+        TickRedHost(s);
         return;
     }
     if (g_step != Step::Wait) return;
@@ -333,6 +497,10 @@ void TickHost(coop::net::Session* s) {
 void TickClient() {
     if (IsJellyArm()) {
         TickJellyClient();
+        return;
+    }
+    if (IsRedArm()) {
+        TickRedClient();
         return;
     }
     if (g_step != Step::Wait) return;
@@ -384,6 +552,12 @@ bool IsEnabled() { return ArmOf() != Arm::Off; }
 void Install(coop::net::Session* session) {
     if (!IsEnabled()) return;
     g_session.store(session, std::memory_order_release);
+    if (IsRedArm() && !g_redWatchAsked) {
+        g_redWatchAsked = true;
+        if (!sg::WatchClassName(L"redSkyEvent_C", L"set", kRedSetTag, nullptr, &OnRedSkySetPost))
+            UE_LOGE("world_roll_drill: the script gate refused the watch on redSkyEvent_C.set -- the red sky arms "
+                    "cannot count this copy's sets");
+    }
 }
 
 void Tick() {
@@ -405,6 +579,8 @@ void OnDisconnect() {
     g_slot = -1;
     g_eyeSince = {};
     g_jellySince = g_jellyAt = g_nextJellyLog = {};
+    g_redSets.clear();
+    g_redSince = {};
 }
 
 }  // namespace coop::dev::world_roll_drill
