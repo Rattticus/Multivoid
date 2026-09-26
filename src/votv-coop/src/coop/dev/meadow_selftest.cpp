@@ -4,7 +4,7 @@
 
 #include "coop/config/config.h"
 #include "coop/interactables/meadow_db_hash.h"
-#include "coop/interactables/meadow_db_sync.h"  // SentLines, SetApplyObserver, DebugHoldAppends
+#include "coop/interactables/meadow_db_sync.h"  // SentLines, SetApplyObserver, DebugHoldAppends, DebugAway
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
 #include "coop/session/net_pump.h"  // HasAnnouncedWorldReady
@@ -32,29 +32,31 @@ constexpr auto kStepBound = std::chrono::seconds(60);
 
 // The drill's rows. The rename keeps a row's id and changes its name, so A and A2 are one row of the
 // database under two contents. X and Y are the race's: X the client's, held, Y the host's. X2 is the
-// client's row added and removed while held, whose two lines must reach the host in their order.
-enum RowId : int { kA, kB, kA2, kC, kX, kY, kX2, kRowCount };
+// client's row added and removed while held, whose two lines must reach the host in their order. W is the
+// client's cue while its database reads as away, Z the host's row that must wait for it there.
+enum RowId : int { kA, kB, kA2, kC, kX, kY, kX2, kW, kZ, kRowCount };
 const wchar_t* const kName[kRowCount] = {L"MEADOW-SELFTEST-A", L"MEADOW-SELFTEST-B", L"MEADOW-SELFTEST-A2",
                                          L"MEADOW-SELFTEST-C", L"MEADOW-SELFTEST-X", L"MEADOW-SELFTEST-Y",
-                                         L"MEADOW-SELFTEST-X2"};
+                                         L"MEADOW-SELFTEST-X2", L"MEADOW-SELFTEST-W", L"MEADOW-SELFTEST-Z"};
 const wchar_t* const kId[kRowCount] = {L"selftest-a", L"selftest-b", L"selftest-a", L"selftest-c", L"selftest-x",
-                                       L"selftest-y", L"selftest-x2"};
-constexpr RowId kAllRows[] = {kA, kB, kA2, kC, kX, kY, kX2};
+                                       L"selftest-y", L"selftest-x2", L"selftest-w", L"selftest-z"};
+constexpr RowId kAllRows[] = {kA, kB, kA2, kC, kX, kY, kX2, kW, kZ};
 
 // What each peer's lane must have sent by the end: the host's two adds, the rename as a delete and an
 // append, the order lines of the rename and the move, the two removals, and the race's row and its
-// removal; the client's three rows and their removals. The host's canonical orders, sent after it applies a
-// client's line, are counted apart: at least one, the race's.
-constexpr uint64_t kHostAppends = 4, kHostDeletes = 4, kHostOrders = 2;
-constexpr uint64_t kClientAppends = 3, kClientDeletes = 3, kClientOrders = 0;
+// removal, and Z and its removal; the client's four rows and their removals. The host's canonical orders,
+// sent after it applies a client's line, are counted apart: at least one, the race's.
+constexpr uint64_t kHostAppends = 5, kHostDeletes = 5, kHostOrders = 2;
+constexpr uint64_t kClientAppends = 4, kClientDeletes = 4, kClientOrders = 0;
 
 enum class HostStep : uint8_t {
     Ready, Add, AddSent, Rename, RenameSent, Move, MoveSent, Remove, RemoveSent, ClientRow, RaceSettle, RaceAdd,
-    RaceSent, RaceRow, RaceRemove, RaceRemoveSent, RowWatch, Cleanup, Done
+    RaceSent, RaceRow, RaceRemove, RaceRemoveSent, RowWatch, AwayWatch, AwayAdd, AwaySent, AwayRemove,
+    AwayRemoveSent, Cleanup, Done
 };
 enum class ClientStep : uint8_t {
     Ready, Watch, Add, AddSent, RaceHold, Remove, RemoveSent, RaceWaitY, RaceOrder, RaceRemove, RaceRemoveSent,
-    RowHold, RowRemove, RowSent, Cleanup, Done
+    RowHold, RowRemove, RowSent, AwayArm, AwayWaitZ, AwayBack, AwayRemove, AwayRemoveSent, Cleanup, Done
 };
 
 HostStep   g_host   = HostStep::Ready;
@@ -70,6 +72,7 @@ int        g_reached = 0;           // client: how many of them the database has
 bool       g_clientRowIn = false, g_clientRowOut = false;  // host: the client's row, seen
 bool       g_raceRowIn = false, g_raceRowOut = false;      // host: the client's race row, seen
 bool       g_heldRowIn = false, g_heldRowOut = false;      // host: the client's held-and-removed row, seen
+bool       g_awayRowIn = false, g_awayRowOut = false;      // host: the client's cue row W, seen
 uint64_t   g_canonicalsBefore = 0;                         // host: the lane's canonical orders before the race
 
 bool Enabled() {
@@ -173,6 +176,16 @@ void OnApplied() {
         } else if (!in && g_heldRowIn) {
             g_heldRowOut = true;
             UE_LOGI("[meadow_selftest] host: the client's row X2 left");
+        }
+    }
+    if (g_isHost && !g_awayRowOut) {
+        const bool in = IndexOf(seq, HashOf(kW)) >= 0;
+        if (in && !g_awayRowIn) {
+            g_awayRowIn = true;
+            UE_LOGI("[meadow_selftest] host: the client's row W arrived");
+        } else if (!in && g_awayRowIn) {
+            g_awayRowOut = true;
+            UE_LOGI("[meadow_selftest] host: the client's row W left");
         }
     }
 }
@@ -404,12 +417,65 @@ void HostTick(coop::net::Session& s) {
             }
             return;
         }
+        Enter(HostStep::AwayWatch);
+        return;
+    }
+    case HostStep::AwayWatch:
+        // The client's W arriving says its database reads as away: Z goes to it now and must wait there.
+        if (!g_awayRowIn) {
+            if (StepExpired()) {
+                UE_LOGW("[meadow_selftest] FAIL in session %d: the client's row W did not arrive within 60 s", g_session);
+                Enter(HostStep::Cleanup);
+            }
+            return;
+        }
+        Enter(HostStep::AwayAdd);
+        return;
+    case HostStep::AwayAdd:
+        if (!MS::ApplyAddSignal(MakeRow(kZ))) {
+            UE_LOGW("[meadow_selftest] ABANDONED in session %d: the laptop refused Z's addSignal", g_session);
+            Enter(HostStep::Cleanup);
+            return;
+        }
+        UE_LOGI("[meadow_selftest] host added row Z while the client's database is away");
+        Enter(HostStep::AwaySent);
+        return;
+    case HostStep::AwaySent:
+        // The client takes W out once Z has landed there, back from away.
+        if (SentSinceArm().appends >= 5 && g_awayRowOut) {
+            Enter(HostStep::AwayRemove);
+        } else if (StepExpired()) {
+            UE_LOGW("[meadow_selftest] FAIL in session %d: %s within 60 s", g_session,
+                    SentSinceArm().appends < 5 ? "the lane did not send row Z" : "the client's row W did not leave");
+            Enter(HostStep::Cleanup);
+        }
+        return;
+    case HostStep::AwayRemove:
+        if (TakeOut(kZ)) {
+            UE_LOGI("[meadow_selftest] host removed row Z");
+            Enter(HostStep::AwayRemoveSent);
+        } else if (StepExpired()) {
+            UE_LOGW("[meadow_selftest] FAIL in session %d: removeSignal did not take row Z out within 60 s -- it may "
+                    "be saved into this game's database", g_session);
+            Enter(HostStep::Done);
+        }
+        return;
+    case HostStep::AwayRemoveSent: {
+        if (SentSinceArm().deletes < 5) {
+            if (StepExpired()) {
+                UE_LOGW("[meadow_selftest] FAIL in session %d: the lane did not send row Z's removal within 60 s",
+                        g_session);
+                Enter(HostStep::Done);
+            }
+            return;
+        }
         const MDB::SentCounts d = SentSinceArm();
         const uint64_t canonicals = MDB::SentLines().canonicals - g_canonicalsBefore;
         if (d.appends == kHostAppends && d.deletes == kHostDeletes && d.orders == kHostOrders && canonicals >= 1)
             UE_LOGI("[meadow_selftest] host DONE in session %d: the lane sent its verbs' lines and nothing else "
                     "(%llu appends, %llu deletes, %llu order lines), its canonical order after the client's lines "
-                    "(%llu since the race began), and the client's rows, X2's in their order, arrived and left -- PASS",
+                    "(%llu since the race began), the client's rows, X2's in their order, arrived and left, and Z "
+                    "reached the client's away copy -- PASS",
                     g_session, static_cast<unsigned long long>(d.appends),
                     static_cast<unsigned long long>(d.deletes), static_cast<unsigned long long>(d.orders),
                     static_cast<unsigned long long>(canonicals));
@@ -630,6 +696,63 @@ void ClientTick() {
             }
             return;
         }
+        Enter(ClientStep::AwayArm);
+        return;
+    }
+    case ClientStep::AwayArm:
+        // This database reads as away, as in a travel; W, sent as ever, tells the host to add Z now.
+        MDB::DebugAway(true);
+        if (!MS::ApplyAddSignal(MakeRow(kW))) {
+            MDB::DebugAway(false);
+            UE_LOGW("[meadow_selftest] ABANDONED in session %d: the laptop refused W's addSignal", g_session);
+            Enter(ClientStep::Cleanup);
+            return;
+        }
+        UE_LOGI("[meadow_selftest] client: its database reads as away; it added row W");
+        Enter(ClientStep::AwayWaitZ);
+        return;
+    case ClientStep::AwayWaitZ:
+        if (!MDB::ParkedRow(HashOf(kZ))) {
+            if (StepExpired()) {
+                UE_LOGW("[meadow_selftest] FAIL in session %d: the host's row Z did not wait for this copy while its "
+                        "database was away, within 60 s", g_session);
+                Enter(ClientStep::Cleanup);
+            }
+            return;
+        }
+        UE_LOGI("[meadow_selftest] client: the host's row Z waits for this database -- back from away");
+        MDB::DebugAway(false);
+        Enter(ClientStep::AwayBack);
+        return;
+    case ClientStep::AwayBack:
+        if (IndexOf(kZ) < 0) {
+            if (StepExpired()) {
+                UE_LOGW("[meadow_selftest] FAIL in session %d: the waiting row Z did not land within 60 s", g_session);
+                Enter(ClientStep::Cleanup);
+            }
+            return;
+        }
+        UE_LOGI("[meadow_selftest] client: the row Z that waited landed");
+        Enter(ClientStep::AwayRemove);
+        return;
+    case ClientStep::AwayRemove:
+        if (TakeOut(kW)) {
+            Enter(ClientStep::AwayRemoveSent);
+        } else if (StepExpired()) {
+            UE_LOGW("[meadow_selftest] FAIL in session %d: removeSignal did not take row W out within 60 s", g_session);
+            Enter(ClientStep::Done);
+        }
+        return;
+    case ClientStep::AwayRemoveSent: {
+        const MDB::SentCounts d = SentSinceArm();
+        if (d.deletes < 4) {
+            if (StepExpired()) {
+                UE_LOGW("[meadow_selftest] FAIL in session %d: the lane did not send row W's removal within 60 s",
+                        g_session);
+                Enter(ClientStep::Done);
+            }
+            return;
+        }
         if (d.appends == kClientAppends && d.deletes == kClientDeletes && d.orders == kClientOrders &&
             d.canonicals == 0)
             UE_LOGI("[meadow_selftest] client DONE in session %d: the host's rows came, were renamed and moved in "
@@ -647,7 +770,8 @@ void ClientTick() {
     }
     case ClientStep::Cleanup:
         MDB::DebugHoldAppends(false);
-        if (TakeOut(kC) && TakeOut(kX) && TakeOut(kX2)) {
+        MDB::DebugAway(false);
+        if (TakeOut(kC) && TakeOut(kX) && TakeOut(kX2) && TakeOut(kW)) {
             Enter(ClientStep::Done);
         } else if (StepExpired()) {
             UE_LOGW("[meadow_selftest] client could not take its rows out within 60 s");
@@ -677,6 +801,7 @@ void OnDisconnect() {
     g_clientRowIn = g_clientRowOut = false;
     g_raceRowIn = g_raceRowOut = false;
     g_heldRowIn = g_heldRowOut = false;
+    g_awayRowIn = g_awayRowOut = false;
     for (auto& e : g_expect) e.clear();
     ++g_session;
 }

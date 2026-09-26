@@ -3,12 +3,12 @@
 // other past it through the list's arrows and removes both; the client adds a row of its own and removes
 // it; then a race, a row on each peer that the other has not seen yet (the client's X, held, and the
 // host's Y), which only the host's canonical order settles, Y before X; then X2, which the client adds and
-// removes with its lines held, whose two lines must reach the host in their order.
-//   HOST   -- runs each verb once the lane has sent the one before, then watches its database take and give
-//             back the client's rows. Its DONE line says the lane sent exactly its verbs' lines and at
-//             least one canonical order after the client's lines.
+// removes with its lines held, whose two lines must reach the host in their order; then Z, which the host
+// adds on the client's W while the client's database reads as away, and which must wait there and land.
+//   HOST   -- runs each verb once the lane has sent the one before; its DONE line says the lane sent exactly
+//             its verbs' lines and at least one canonical order after the client's lines.
 //   CLIENT -- checks its database after every line its lane applies. Its DONE line says it sent exactly its
-//             own six lines, so nothing it applied went back out.
+//             own eight lines, so nothing it applied went back out.
 // "[meadow_selftest] FAIL" is the lane failing a step (--fail-marker), "[meadow_selftest] ABANDONED" the
 // drill unable to do its part (--dead-marker), the host's DONE line the --done-marker. The rows go into
 // the save's real database; a leg that ends early takes them back out, and the next run's arm takes out

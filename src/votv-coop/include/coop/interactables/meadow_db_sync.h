@@ -32,7 +32,9 @@ void Install(coop::net::Session* session);
 // the host before the flip and ride the seed back as a duplicate.
 void Tick();
 
-// Wire ingest: one chunk of an appended row (MeadowAppend).
+// Wire ingest: one chunk of an appended row (MeadowAppend). Each of the three ingests puts its line in the
+// lane's pen (coop/interactables/meadow_db_park) while this peer's database or its widget is away, as in a
+// travel, or while lines already wait there; they apply in the order they came once both are back.
 void OnAppendChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot);
 
 // Wire ingest: one content-keyed delete (MeadowDelete). A delete that matches no
@@ -84,6 +86,11 @@ void DebugHoldAppends(bool hold);
 
 // [dev] Whether this host owes every peer its canonical order, for the selftest's race. Game thread.
 bool OwesCanonical();
+
+// [dev] While set, this peer's database reads as away, as in a travel: inbound lines wait in the pen. And
+// whether an append of this row waits there. The selftest's away leg. Game thread.
+void DebugAway(bool away);
+bool ParkedRow(uint64_t hash);
 
 // [dev] Called on the game thread after each line this peer's lane applies to its database -- an append,
 // a delete, an order -- so the selftest sees every state the database passes through, not only the ones

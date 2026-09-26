@@ -1,13 +1,14 @@
-// coop/interactables/meadow_db_park.h -- the meadow lane's inbound holding pen: deletes that came before
-// their row. One entry per outstanding count, held until an append of that content consumes it or its
-// time runs out -- the delete-beats-append race cover. The lane (meadow_db_sync) owns the apply and hands
-// it in through a callback, so nothing here reads the database. Game thread throughout.
+// coop/interactables/meadow_db_park.h -- the meadow lane's inbound holding pen, for lines that cannot apply
+// yet: deletes that came before their row, and every line that came while this peer's database was away.
+// The lane (meadow_db_sync) owns the parse and the apply and hands them in through callbacks, so nothing
+// here reads the database. Game thread throughout.
 
 #pragma once
 
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <vector>
 
 namespace coop::meadow_db_park {
 
@@ -32,6 +33,25 @@ void RetryDeletes(ApplyDeleteFn apply);
 
 size_t HeldDeletes();
 
+// The lines that came while this peer's database or its laptop widget was away -- a travel between the
+// gamemode that held them and the next, or a load -- kept in the order they came, an append, a delete and
+// an order line alike, since each is a step of the database the next one assumes. Past the bound a line is
+// refused (said), not an older one evicted; a travel's worth of edits is a handful. `hash` names an
+// append's or a delete's row. False when refused.
+enum class Kind : uint8_t { Append, Delete, Order };
+bool Park(Kind kind, std::vector<uint8_t>&& blob, uint64_t hash, uint8_t senderSlot);
+
+// Hand the parked lines back in order until `replay` answers false -- the database went again -- keeping
+// that line and the ones after it. Returns the lines replayed.
+using ReplayFn = bool (*)(Kind kind, const std::vector<uint8_t>& blob, uint64_t hash, uint8_t senderSlot);
+size_t Drain(ReplayFn replay);
+
+size_t Parked();
+
+// [dev] Whether an append of this row waits among the parked lines.
+bool ParkedAppend(uint64_t hash);
+
+// Both kinds of waiting line go: a new database, or the session's end.
 void Clear();
 
 }  // namespace coop::meadow_db_park

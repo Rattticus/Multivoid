@@ -103,6 +103,10 @@ uint32_t g_owedSlots = 0;
 // [dev] DebugHoldAppends: this peer's appends wait as a refused send's do, so the selftest can put a row
 // on this peer that no other peer has seen yet.
 bool g_debugHoldAppends = false;
+// [dev] DebugAway: this peer's database reads as away, as in a travel, so the selftest can send it lines
+// that must wait.
+bool g_debugAway = false;
+bool g_awaySaid = false;  // the lines waiting for the database, said once an episode
 
 coop::blob_chunks::Assembler g_assembler;
 uint32_t g_nextSeq = 1;
@@ -197,6 +201,25 @@ bool EnsurePrimed() {
     UE_LOGI("meadow_db: shadow primed at %zu row(s)", g_orderBase.size());
     LogDigest("prime");
     return true;
+}
+
+// Whether this peer's database or its laptop widget is away -- a travel between the gamemode that held them
+// and the next, or a load: an inbound line waits in the pen instead of applying.
+bool Away() {
+    return g_debugAway || !EnsurePrimed() || !MS::Widget();
+}
+
+// An inbound line into the pen, while the database is away or lines already wait there, so none overtakes
+// another.
+void ParkLine(meadow_db_park::Kind kind, std::vector<uint8_t>&& blob, uint64_t hash, uint8_t senderSlot) {
+    if (!meadow_db_park::Park(kind, std::move(blob), hash, senderSlot)) return;
+    if (g_awaySaid) return;
+    g_awaySaid = true;
+    UE_LOGI("meadow_db: the database is away -- the lane's inbound lines wait for it");
+}
+
+bool Parking() {
+    return meadow_db_park::Parked() > 0 || Away();
 }
 
 // Send paths; the shadow advances only on successful delivery.
@@ -436,11 +459,6 @@ void ApplyAppendBlob(const std::vector<uint8_t>& blob, uint8_t senderSlot) {
                 static_cast<unsigned>(senderSlot));
         return;
     }
-    if (!EnsurePrimed() || !MS::Widget()) {
-        UE_LOGW("meadow_db: append from slot %u dropped -- store/widget unresolved "
-                "(world transition?)", static_cast<unsigned>(senderSlot));
-        return;
-    }
     // An outstanding delete beats the append, the race cover.
     if (meadow_db_park::ConsumeDelete(hash)) {
         ++g_cTombConsumed;
@@ -508,11 +526,6 @@ void ApplyOrderBlob(const std::vector<uint8_t>& blob, uint8_t senderSlot) {
                 static_cast<unsigned>(senderSlot));
         return;
     }
-    if (!EnsurePrimed() || !MS::Widget()) {
-        UE_LOGW("meadow_db: order from slot %u dropped -- store/widget unresolved",
-                static_cast<unsigned>(senderSlot));
-        return;
-    }
     std::map<uint64_t, int32_t> cur;
     std::vector<uint64_t> seq;
     if (!MH::HashStore(cur, &seq)) return;
@@ -567,6 +580,22 @@ void ApplyOrderBlob(const std::vector<uint8_t>& blob, uint8_t senderSlot) {
 // Asked until the gate has settled every name watch: a watch refused at registration or dead in a full
 // table never goes live, and asking after that would walk the table every tick. A writer still waiting
 // for its name is not dead yet, so the settling waits for the gate's own count.
+// A delete that found no row waits in the pen for its row's append (the pen says a refusal).
+void DeleteOrHold(uint64_t hash, uint8_t senderSlot) {
+    if (!ApplyDeleteByHash(hash)) meadow_db_park::HoldDelete(hash, senderSlot, Clock::now());
+}
+
+// A parked line back to its apply, in the order it came; false while the database is still away.
+bool ReplayParked(meadow_db_park::Kind kind, const std::vector<uint8_t>& blob, uint64_t hash, uint8_t senderSlot) {
+    if (Away()) return false;
+    switch (kind) {
+    case meadow_db_park::Kind::Append: ApplyAppendBlob(blob, senderSlot); break;
+    case meadow_db_park::Kind::Delete: DeleteOrHold(hash, senderSlot); break;
+    case meadow_db_park::Kind::Order:  ApplyOrderBlob(blob, senderSlot); break;
+    }
+    return true;
+}
+
 void WatchUntilSettled() {
     sg::ResolvePendingNames();
     size_t live = 0;
@@ -624,6 +653,14 @@ void Tick() {
     if (!g_writersSettled) WatchUntilSettled();
     const auto now = Clock::now();
     LogTotals(now);
+    // Lines that waited for the database go back, in order, once it is here again.
+    if (meadow_db_park::Parked() > 0 && !Away()) {
+        const size_t n = meadow_db_park::Drain(&ReplayParked);
+        if (meadow_db_park::Parked() == 0) {
+            g_awaySaid = false;
+            UE_LOGI("meadow_db: the database is back -- %zu waiting line(s) applied in their order", n);
+        }
+    }
     // The retries -- a line whose send failed or waits for this client's world-ready, a delete that
     // came before its row, an order held behind them, a row's chunks in flight -- once a second, and
     // only while one of them waits.
@@ -651,21 +688,30 @@ void Tick() {
 void OnAppendChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) {
     if (senderSlot >= coop::net::kMaxPeers) return;
     std::vector<uint8_t> blob;
-    if (g_assembler.OnChunk(p, senderSlot, blob))
+    if (!g_assembler.OnChunk(p, senderSlot, blob)) return;
+    if (Parking()) {
+        const uint64_t hash = coop::signal_wire::ContentHash(blob);
+        ParkLine(meadow_db_park::Kind::Append, std::move(blob), hash, senderSlot);
+    } else {
         ApplyAppendBlob(blob, senderSlot);
+    }
 }
 
 void OnDelete(const coop::net::ContentHashPayload& p, uint8_t senderSlot) {
     if (senderSlot >= coop::net::kMaxPeers) return;
     if (p.contentHash == 0) return;
-    // A delete that found no row waits in the pen for its row's append (the pen says a refusal).
-    if (!ApplyDeleteByHash(p.contentHash)) meadow_db_park::HoldDelete(p.contentHash, senderSlot, Clock::now());
+    if (Parking()) ParkLine(meadow_db_park::Kind::Delete, {}, p.contentHash, senderSlot);
+    else DeleteOrHold(p.contentHash, senderSlot);
 }
 
 void OnOrderChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) {
     if (senderSlot >= coop::net::kMaxPeers) return;
     std::vector<uint8_t> blob;
-    if (g_orderAsm.OnChunk(p, senderSlot, blob))
+    if (!g_orderAsm.OnChunk(p, senderSlot, blob)) return;
+    // A client's line waits only when it can apply: the host's (a client drops any other).
+    if ((IsHost() || senderSlot == 0) && Parking())
+        ParkLine(meadow_db_park::Kind::Order, std::move(blob), 0, senderSlot);
+    else
         ApplyOrderBlob(blob, senderSlot);
 }
 
@@ -675,6 +721,14 @@ SentCounts SentLines() {
 
 void DebugHoldAppends(bool hold) {
     g_debugHoldAppends = hold;
+}
+
+void DebugAway(bool away) {
+    g_debugAway = away;
+}
+
+bool ParkedRow(uint64_t hash) {
+    return meadow_db_park::ParkedAppend(hash);
 }
 
 bool OwesCanonical() {
@@ -696,6 +750,8 @@ void OnDisconnect() {
     g_owedAll = false;
     g_owedSlots = 0;
     g_debugHoldAppends = false;
+    g_debugAway = false;
+    g_awaySaid = false;
     internal::ResetJoinSeeds();
     g_primed = false;
     g_primeMissed = false;

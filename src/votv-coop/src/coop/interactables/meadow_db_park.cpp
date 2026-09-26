@@ -4,6 +4,7 @@
 
 #include "ue_wrap/core/log.h"
 
+#include <deque>
 #include <vector>
 
 namespace coop::meadow_db_park {
@@ -15,6 +16,10 @@ constexpr size_t kHeldCap = 256;
 
 struct Tomb { uint64_t hash; Clock::time_point until; };
 std::vector<Tomb> g_tombs;
+
+constexpr size_t kParkCap = 256;
+struct Line { Kind kind; std::vector<uint8_t> blob; uint64_t hash; uint8_t senderSlot; };
+std::deque<Line> g_lines;
 
 }  // namespace
 
@@ -60,8 +65,40 @@ size_t HeldDeletes() {
     return g_tombs.size();
 }
 
+bool Park(Kind kind, std::vector<uint8_t>&& blob, uint64_t hash, uint8_t senderSlot) {
+    if (g_lines.size() >= kParkCap) {
+        UE_LOGW("meadow_db: a line from slot %u REFUSED while the database is away -- %zu already wait",
+                static_cast<unsigned>(senderSlot), kParkCap);
+        return false;
+    }
+    g_lines.push_back({kind, std::move(blob), hash, senderSlot});
+    return true;
+}
+
+size_t Drain(ReplayFn replay) {
+    size_t n = 0;
+    while (!g_lines.empty()) {
+        const Line& l = g_lines.front();
+        if (!replay(l.kind, l.blob, l.hash, l.senderSlot)) break;
+        g_lines.pop_front();
+        ++n;
+    }
+    return n;
+}
+
+size_t Parked() {
+    return g_lines.size();
+}
+
+bool ParkedAppend(uint64_t hash) {
+    for (const Line& l : g_lines)
+        if (l.kind == Kind::Append && l.hash == hash) return true;
+    return false;
+}
+
 void Clear() {
     g_tombs.clear();
+    g_lines.clear();
 }
 
 }  // namespace coop::meadow_db_park
