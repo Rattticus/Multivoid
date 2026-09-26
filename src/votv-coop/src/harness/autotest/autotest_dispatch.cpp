@@ -99,8 +99,6 @@ void SpawnEnvGatedTests(coop::net::Role role) {
     SpawnIf("VOTVCOOP_RUN_SCANPARITY", "scan-hub parity drill", &ScanParityThread, role);
     // The weather test, host only: forces rain on and off; the client applies it over the wire.
     SpawnIf("VOTVCOOP_RUN_WEATHER_TEST", "weather test", &WeatherTestThread, role);
-    // The red-sky test, host only: the visually unambiguous variant.
-    SpawnIf("VOTVCOOP_RUN_REDSKY_TEST", "red sky test", &RedSkyTestThread, role);
     // The save-block test, client only: drives saveToSlot so the save hook's block is observable.
     SpawnIf("VOTVCOOP_RUN_SAVEBLOCK_TEST", "save-block test", &SaveBlockTestThread, role);
     // The save-button test, client only: drives the escape press so the pause menu's disabled

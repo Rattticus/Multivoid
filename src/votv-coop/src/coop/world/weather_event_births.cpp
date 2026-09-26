@@ -4,7 +4,6 @@
 
 #include "coop/net/session.h"
 #include "coop/world/weather_fog.h"
-#include "coop/world/weather_redsky.h"
 #include "ue_wrap/core/fname_utils.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
@@ -28,15 +27,14 @@ std::atomic<coop::net::Session*> g_session{nullptr};
 std::atomic<bool> g_isClient{false};
 
 bool g_hookInstalled = false;   // FinishSpawningActor POST hook (process-lifetime)
-bool g_namesMinted   = false;   // the three class FNames resolved (GT-only mint)
+bool g_namesMinted   = false;   // the two class FNames resolved (GT-only mint)
 
 // The suppressed birth classes, matched by FName index (int compares on the
 // hot path -- FinishSpawningActor fires for EVERY actor spawn, so no string
-// build here). Index 0..2: redSkyEvent_C / weatherFogController_C / blackFog_C.
-constexpr int kNumClasses = 3;
+// build here). Index 0..1: weatherFogController_C / blackFog_C.
+constexpr int kNumClasses = 2;
 R::FName g_classNames[kNumClasses] = {};
 const wchar_t* const kClassNameStrs[kNumClasses] = {
-    P::name::RedSkyEventClass,          // L"redSkyEvent_C"
     P::name::WeatherFogControllerClass, // L"weatherFogController_C"
     P::name::BlackFogClass,             // L"blackFog_C"
 };
@@ -63,10 +61,9 @@ void OnFinishSpawnPost(void* /*context*/, void* /*srcObj*/, void* result) {
     if (match < 0) return;
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->connected()) return;
-    // Wire-commanded mirror births pass: each lane raises its echo flag around
-    // its own reflected spawn Call. (blackFog_C has no apply lane yet -- every
-    // client birth of it is organic by construction.)
-    if (coop::weather_redsky::ApplyEchoActive()) return;
+    // A wire-commanded mirror birth passes: the fog lane raises its echo flag
+    // around its own reflected spawn Call. (blackFog_C has no apply lane yet --
+    // every client birth of it is organic by construction.)
     if (coop::weather_fog::MirrorEchoActive()) return;
     if (!R::IsLive(actor)) return;
     E::DestroyActor(actor);
@@ -106,7 +103,7 @@ bool Install(coop::net::Session* session, bool isHost) {
         }
         g_hookInstalled = true;
         UE_LOGI("weather_births: FinishSpawningActor POST hook installed "
-                "(client birth-catch for redSkyEvent_C/weatherFogController_C/blackFog_C)");
+                "(client birth-catch for weatherFogController_C/blackFog_C)");
     }
     return true;
 }

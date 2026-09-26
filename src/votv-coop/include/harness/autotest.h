@@ -96,13 +96,6 @@ DWORD WINAPI WeatherTestThread(LPVOID arg);
 DWORD WINAPI SeedDrillThread(LPVOID arg);  // the seeds lane's red/green drill (host only)
 DWORD WINAPI ScanParityThread(LPVOID arg);  // the scan hub's N-match parity drill (either role)
 
-// The red-sky sync test (harness/autotest/autotest_weather.cpp), host sender:
-// weather_redsky::DebugForce flips the scene's sky and ambient curves to the red set; the client
-// applies the same on its gamemode, and both peers' screenshots show a red sky (rain reads as
-// ambiguous mist in a screenshot; red sky is unmistakable). Env VOTVCOOP_RUN_REDSKY_TEST=1.
-void RunAutonomousRedSkyTest();
-DWORD WINAPI RedSkyTestThread(LPVOID arg);
-
 // The client save-block test, client only: after the settle the live saveSlot_C is resolved and
 // its saveToSlot called by reflection, driving UGameplayStatics::SaveGameToSlot (the hook
 // target) without an autosave; the client log shows the invoke line and then the block line, so

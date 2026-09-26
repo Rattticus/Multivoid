@@ -521,8 +521,8 @@ inline constexpr size_t DirectionalWind_windStrength_background = 0x02F0;  // fl
 // input; the host reads and the client writes it.
 inline constexpr size_t DirectionalWind_windTarget             = 0x0238;  // UBillboardComponent* (RelativeLocation @ +0x011C = the gust input)
 
-// AmainGamemode_C::redSky: the AredSkyEvent_C actor spawnRedSky stashes; the receiver calls
-// redSky.set(state) on it, or spawnRedSky when it is null and the state is on.
+// AmainGamemode_C::redSky: the AredSkyEvent_C actor spawnRedSky stashes and, the next call, destroys;
+// a receiver runs the same toggle (ue_wrap/world/red_sky), and set() runs only inside the event.
 inline constexpr size_t AmainGamemode_redSky                = 0x0888;  // AredSkyEvent_C*
 
 // AmainGamemode_C::saveSlot: the live world-save container saveObjects() / saveTriggers()

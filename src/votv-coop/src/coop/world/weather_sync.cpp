@@ -393,19 +393,18 @@ void Install(coop::net::Session* session) {
     coop::weather_rain::SetSession(session);
     if (!coop::weather_rain::Install()) return;
 
-    // Red sky: both roles resolve; the host's edge is the field poll in TickConnect, since the
-    // organic roll is invisible to a ProcessEvent observer.
-    coop::weather_redsky::SetSession(session);
-    coop::weather_redsky::TryResolve();
+    // Red sky: the gamemode's toggle is watched at the script gate, where the host sends each edge
+    // and a client refuses its own.
+    coop::weather_redsky::Install(session);
 
     // Fog: the role-gated, echo-suppressed spawnFog interceptor, so a client never makes
     // uncommanded fog. The latch waits on it: an unregistered interceptor must retry, not leave the
     // client unsuppressed.
     if (!coop::weather_fog::Install(isHost)) return;
 
-    // The event-birth catch: a client's own weather rolls (red sky, black fog, rolling fog) are
-    // destroyed at FinishSpawningActor, the one place the organic roll surfaces (its caller is
-    // invisible to every ProcessEvent seam). The latch waits on it too.
+    // The event-birth catch: a client's own black fog and rolling fog births are destroyed at
+    // FinishSpawningActor, where the organic roll surfaces (its caller is invisible to every
+    // ProcessEvent seam). The latch waits on it too.
     if (!coop::weather_event_births::Install(session, isHost)) return;
 
     g_installed = true;
@@ -439,14 +438,12 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
             peerSlot, p.flags, p.rainStrength, p.rainLightningChance,
             p.rainDeactivateChance, p.rainWindSpeed);
 
-    // The red-sky seed: WeatherState does not carry the red-sky bit (its own reliable kind), so a
-    // joiner entering a red world gets its own ON. OFF needs no seed.
-    if (coop::weather_redsky::LocalRedSkyActive()) {
-        coop::net::RedSkyPayload rp{};
-        rp.state = 1;
-        s->SendReliableToSlot(peerSlot, coop::net::ReliableKind::RedSky, &rp, sizeof(rp));
-        UE_LOGI("weather: connect-broadcast slot=%d RedSky seed state=1 (world is red)", peerSlot);
-    }
+    // The red sky's seed: WeatherState does not carry it (its own reliable kind), so a joiner is told
+    // the host's red sky either way, as MTA's join packet carries the weather.
+    coop::net::RedSkyPayload rp{};
+    rp.state = coop::weather_redsky::LocalRedSkyActive() ? 1 : 0;
+    s->SendReliableToSlot(peerSlot, coop::net::ReliableKind::RedSky, &rp, sizeof(rp));
+    UE_LOGI("weather: connect-broadcast slot=%d RedSky seed state=%u", peerSlot, static_cast<unsigned>(rp.state));
 }
 
 void TickConnect() {
@@ -464,10 +461,6 @@ void TickConnect() {
         }
         // Otherwise the cycle is still loading; next tick.
     }
-
-    // The host's red-sky edge, polled at the field level (gamemode.redSky liveness and isred),
-    // throttled inside.
-    coop::weather_redsky::HostPollEdge();
 
     // The host's fog-edge detector: the rolling-fog actor self-destructs from its own tick, no
     // scheduler UFunction fires, so the observer misses the fog end. HostFogStateChanged throttles

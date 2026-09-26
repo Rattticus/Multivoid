@@ -56,7 +56,7 @@ uint32_t WindRollFired();
 uint32_t WindRollSuppressed();
 
 // DebugForceRain, DebugForceSnow and ReadLocalIsRaining live in coop/world/weather_rain.h, the
-// rain-and-snow cycle-side sub-lane. For a red sky or a lightning strike, call
-// coop::weather_redsky or coop::weather_lightning directly.
+// rain-and-snow cycle-side sub-lane. For a lightning strike, call coop::weather_lightning
+// directly.
 
 }  // namespace coop::weather_sync

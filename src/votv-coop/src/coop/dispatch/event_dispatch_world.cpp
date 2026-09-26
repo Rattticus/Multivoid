@@ -275,10 +275,9 @@ bool HandleWorldEvent(net::Session& session,
         break;
     }
     case net::ReliableKind::RedSky: {
-        // The one-shot red-sky story event. The host has no observer on it -- the organic caller
-        // is an EX_LocalVirtualFunction that ProcessEvent never sees -- so the host's field poll
-        // catches the edge and broadcasts; the receiver invokes the same spawn-and-set chain on
-        // its own local gamemode.
+        // The red sky's edge: the host sends its red sky as each run of the gamemode's toggle
+        // leaves it (watched at the script gate); the receiver runs the same toggle on its own
+        // gamemode when its sky differs.
         if (msg.payloadLen < sizeof(net::RedSkyPayload)) {
             UE_LOGW("event_feed: RedSky payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::RedSkyPayload));

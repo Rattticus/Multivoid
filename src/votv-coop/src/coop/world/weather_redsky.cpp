@@ -6,323 +6,151 @@
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
-#include "ue_wrap/core/call.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
-#include "ue_wrap/core/reflection.h"
-#include "ue_wrap/world/world_singleton.h"
-#include "ue_wrap/core/sdk_profile.h"
-#include "ue_wrap/engine/engine.h"
+#include "ue_wrap/core/script_gate.h"
+#include "ue_wrap/world/red_sky.h"
 
 #include <atomic>
-#include <chrono>
 #include <cstdint>
 
 namespace coop::weather_redsky {
 namespace {
 
-namespace P = ue_wrap::profile;
-namespace R = ue_wrap::reflection;
 namespace GT = ue_wrap::game_thread;
+namespace RS = ue_wrap::red_sky;
+namespace sg = ue_wrap::script_gate;
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 
-// Resolved-once dependencies. spawnRedSky is on AmainGamemode_C (resolved
-// via the gamemode CDO). redSkyEvent_C is a content BP class that may not
-// be loaded until first spawn -- the set UFunction is resolved lazily.
-void* g_gamemodeCdo            = nullptr;
-void* g_spawnRedSkyFn          = nullptr;
-void* g_redSkyEventSetFn       = nullptr;
+// Game thread, but for the session pointer.
+constexpr int kSpawnRedSkyTag = 0x52534b54;  // 'RSKT'
+bool g_gateAsked = false;  // the watch was registered (or refused, said)
+bool g_applying = false;   // the lane's own apply of the host's red sky runs
+// This session's counts, said at its end.
+uint64_t g_refused = 0;      // a client's own toggles refused
+bool     g_saidRefused = false;
+uint64_t g_sent = 0;         // the host's red sky sent as a toggle left it
+uint64_t g_applied = 0;      // the host's red sky applied here
+uint64_t g_applyFailed = 0;  // the host's red sky whose toggle here did not leave this copy's sky as the host's
 
-// Receiver-side suppression: while we APPLY a remote red-sky state, the
-// mirror spawn must pass coop/weather_event_births' client birth-catch
-// (which destroys any UNCOMMANDED redSkyEvent_C birth -- the organic 1%
-// hour roll). Atomic for the same reason as g_session.
-std::atomic<bool> g_echoSuppress{false};
+// The lane's own apply, for the length of one toggle: the gate lets exactly this call run.
+struct Applying {
+    Applying() { g_applying = true; }
+    ~Applying() { g_applying = false; }
+    Applying(const Applying&) = delete;
+    Applying& operator=(const Applying&) = delete;
+};
 
-// HOST poll state (game-thread only). The organic spawnRedSky caller is an
-// EX_LocalVirtualFunction, invisible to ProcessEvent, so edge detection is FIELD-LEVEL the way
-// weather_fog's is: gamemode.redSky liveness plus its `isred` bool, on a throttle.
-long long g_lastPollMs      = 0;             // edge-poll throttle (500 ms)
-int       g_lastPolledState = -1;            // -1 = never sampled (no edge on first read)
-int32_t   g_isredOff        = -1;            // redSkyEvent_C `isred` offset (lazy)
-
-long long NowMsSteady() {
-    using namespace std::chrono;
-    return duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
-}
-
-// Read the CURRENT red-sky truth from a live gamemode: actor live && isred.
-// The isred offset resolves lazily from the ACTOR's runtime class (the class
-// may not exist before the first spawn). Unknown offset while an actor is
-// live reads as OFF until the offset resolves (next poll).
-bool ReadRedSkyActive(void* gm) {
-    void* redSky = *reinterpret_cast<void**>(
-        reinterpret_cast<uint8_t*>(gm) + P::off::AmainGamemode_redSky);
-    if (!redSky || !R::IsLive(redSky)) return false;
-    if (g_isredOff < 0) {
-        void* cls = R::ClassOf(redSky);
-        if (cls) g_isredOff = R::FindPropertyOffset(cls, L"isred");
-        if (g_isredOff >= 0)
-            UE_LOGI("weather: red-sky isred offset resolved @ +0x%X", g_isredOff);
+// CLIENT, before the gamemode's toggle: the host's red sky owns both edges, and only the lane's apply runs. No
+// world's load calls the toggle (the save holds no red sky), so a world this client has not announced ready is
+// refused too: a clock sample crossing noon there would otherwise start a red sky the host never had.
+sg::Verdict OnSpawnRedSkyPre(const sg::Call& /*call*/) {
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s || !s->connected() || s->role() == coop::net::Role::Host) return sg::Verdict::Run;
+    if (g_applying) return sg::Verdict::Run;
+    ++g_refused;
+    if (!g_saidRefused) {
+        g_saidRefused = true;
+        UE_LOGI("weather: a client refused its own red sky toggle -- the host's red sky owns both edges (first "
+                "refusal; the rest are counted)");
     }
-    if (g_isredOff < 0) return false;
-    return *reinterpret_cast<bool*>(reinterpret_cast<uint8_t*>(redSky) + g_isredOff);
+    return sg::Verdict::Cancel;
 }
 
-void* ResolveSetFn(void* redSkyActor) {
-    // Prefer resolving from the actor's runtime class. More reliable than
-    // FindClass because BP-content classes are loaded lazily and may not
-    // exist in the GUObjectArray before the first spawn.
-    if (g_redSkyEventSetFn) return g_redSkyEventSetFn;
-    if (!redSkyActor) return nullptr;
-    void* cls = R::ClassOf(redSkyActor);
-    if (!cls) return nullptr;
-    g_redSkyEventSetFn = R::FindFunction(cls, P::name::RedSkyEvent_SetFn);
-    if (g_redSkyEventSetFn) {
-        UE_LOGI("weather: lazily resolved redSkyEvent.set @ %p (from actor's class %p)",
-                g_redSkyEventSetFn, cls);
+// Whether any client's world is ready. The transport sends a loading client no edge (its pre-world gate), and that
+// client gets the seed at its world-ready instead.
+bool AnyClientWorldReady(coop::net::Session* s) {
+    for (int slot = 1; slot < static_cast<int>(coop::players::kMaxPeers); ++slot)
+        if (s->IsSlotWorldReady(slot)) return true;
+    return false;
+}
+
+// HOST, after the toggle ran: its red sky as the body left it, to every world-ready client.
+void OnSpawnRedSkyPost(const sg::Call& call) {
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s || !s->connected() || s->role() != coop::net::Role::Host) return;
+    bool red = false;
+    if (!RS::Read(call.object, red)) {
+        UE_LOGW("weather: the host's red sky toggle ran and its sky did not read -- nothing sent");
+        return;
     }
-    return g_redSkyEventSetFn;
-}
-
-// Broadcast the host's red-sky state. There is no observer on spawnRedSky or on set: the
-// organic caller is an EX_LocalVirtualFunction, so a POST observer fired only for our own
-// reflected Calls and never once organically in any log on disk. HostPollEdge below is the ONE
-// detector.
-bool SendState(coop::net::Session* s, int state) {
+    if (!AnyClientWorldReady(s)) {
+        UE_LOGI("weather: the host's red sky toggle ran -- red %d; no client's world is ready, the seed carries it",
+                red ? 1 : 0);
+        return;
+    }
     coop::net::RedSkyPayload p{};
-    // The host stamps its own local Player Element id.
-    {
-        const coop::element::ElementId selfEid =
-            coop::players::Registry::Get().LocalPlayerElementId();
-        p.senderElementId =
-            (selfEid == coop::element::kInvalidId) ? 0u : selfEid;
+    const coop::element::ElementId self = coop::players::Registry::Get().LocalPlayerElementId();
+    p.senderElementId = self == coop::element::kInvalidId ? 0u : self;
+    p.state = red ? 1 : 0;
+    if (!s->SendReliable(coop::net::ReliableKind::RedSky, &p, sizeof(p))) {
+        UE_LOGW("weather: the host's red sky %d was not sent -- SendReliable failed", red ? 1 : 0);
+        return;
     }
-    p.state = static_cast<uint8_t>(state);
-    const bool sent = s->SendReliable(
-        coop::net::ReliableKind::RedSky, &p, sizeof(p));
-    if (!sent) UE_LOGW("weather: RedSky state=%d SendReliable failed", state);
-    return sent;
+    ++g_sent;
+    UE_LOGI("weather: the host's red sky toggle ran -- sent red %d", red ? 1 : 0);
 }
 
 }  // namespace
 
-void SetSession(coop::net::Session* session) {
+void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
-}
-
-bool TryResolve() {
-    if (!g_gamemodeCdo) {
-        g_gamemodeCdo = R::FindClassDefaultObject(P::name::GamemodeClass);
-    }
-    if (!g_gamemodeCdo) return false;
-    if (!g_spawnRedSkyFn) {
-        void* gmCls = R::ClassOf(g_gamemodeCdo);
-        if (gmCls) {
-            g_spawnRedSkyFn = R::FindFunction(gmCls, P::name::MainGamemode_SpawnRedSkyFn);
-        }
-    }
-    if (!g_spawnRedSkyFn) return false;
-    if (!g_redSkyEventSetFn) {
-        // redSkyEvent_C is a content BP class; may not be loaded until
-        // first spawnRedSky call. Try to resolve, but don't gate the
-        // overall install on it -- the host's POST observer on
-        // spawnRedSky still fires + broadcasts even before the set fn
-        // is resolved, and the receiver lazily resolves on first apply.
-        void* cls = R::FindClass(P::name::RedSkyEventClass);
-        if (cls) {
-            g_redSkyEventSetFn = R::FindFunction(cls, P::name::RedSkyEvent_SetFn);
-        }
-    }
-    return true;
+    if (g_gateAsked) return;
+    g_gateAsked = true;
+    if (!sg::WatchClassName(L"mainGamemode_C", L"spawnRedSky", kSpawnRedSkyTag, &OnSpawnRedSkyPre,
+                            &OnSpawnRedSkyPost))
+        UE_LOGE("weather: the script gate refused the watch on mainGamemode_C.spawnRedSky -- the host's red sky does "
+                "not cross, and a client's own noon toggle runs");
 }
 
 bool LocalRedSkyActive() {
-    if (!GT::IsGameThread()) return false;
-    void* gm = ue_wrap::world_singleton::Gamemode();
-    if (!gm) return false;
-    return ReadRedSkyActive(gm);
-}
-
-bool ApplyEchoActive() {
-    return g_echoSuppress.load(std::memory_order_acquire);
-}
-
-void HostPollEdge() {
-    if (!GT::IsGameThread()) return;
-    auto* s = g_session.load(std::memory_order_acquire);
-    if (!s || !s->connected() || s->role() != coop::net::Role::Host) return;
-    const long long now = NowMsSteady();
-    if (now - g_lastPollMs < 500) return;
-    g_lastPollMs = now;
-    void* gm = ue_wrap::world_singleton::Gamemode();
-    if (!gm) return;
-    const int state = ReadRedSkyActive(gm) ? 1 : 0;
-    if (g_lastPolledState == -1) {
-        // First sample of the session: broadcast only if ALREADY red (the
-        // clients seeded before this poll armed still need the ON), stay
-        // silent on the common already-clear world.
-        g_lastPolledState = state;
-        if (state == 1 && SendState(s, 1))
-            UE_LOGI("weather: host broadcast RedSky state=1 (first poll found an active red sky)");
-        return;
-    }
-    if (state == g_lastPolledState) return;
-    g_lastPolledState = state;
-    if (SendState(s, state))
-        UE_LOGI("weather: host broadcast RedSky state=%d (field-poll edge)", state);
-}
-
-bool DebugForce(bool red) {
-    if (!GT::IsGameThread()) {
-        UE_LOGW("weather: red-sky DebugForce off-game-thread -- wrap in GT::Post");
-        return false;
-    }
-    auto* s = g_session.load(std::memory_order_acquire);
-    if (!s || s->role() != coop::net::Role::Host) {
-        UE_LOGW("weather: red-sky DebugForce called on non-host");
-        return false;
-    }
-    if (!TryResolve() || !g_spawnRedSkyFn) {
-        UE_LOGW("weather: red-sky DebugForce spawnRedSky UFunction not yet resolved");
-        return false;
-    }
-    void* gm = ue_wrap::world_singleton::Gamemode();
-    if (!gm) {
-        UE_LOGW("weather: red-sky DebugForce no live mainGamemode_C");
-        return false;
-    }
-    // Look up the existing redSky pointer.
-    void* redSky = *reinterpret_cast<void**>(
-        reinterpret_cast<uint8_t*>(gm) + P::off::AmainGamemode_redSky);
-
-    if (red) {
-        // Step 1: spawn the AredSkyEvent_C actor if it doesn't exist.
-        // spawnRedSky's IDA-dump locals show ONLY the spawn chain
-        // (MakeTransform/BeginDeferred/FinishSpawn/IsValid) -- it does
-        // NOT call set internally. The actor stays inert (isred=false,
-        // color curves unchanged) until we explicitly call set(true).
-        if (!redSky) {
-            ue_wrap::ParamFrame f(g_spawnRedSkyFn);
-            ue_wrap::Call(gm, f);
-            UE_LOGI("weather: red-sky DebugForce -- spawnRedSky() called (actor instantiation)");
-            // Re-read the pointer, which spawnRedSky stores in that same field.
-            redSky = *reinterpret_cast<void**>(
-                reinterpret_cast<uint8_t*>(gm) + P::off::AmainGamemode_redSky);
-        }
-        // Step 2: call set(true) to swap the color curves to the red set.
-        if (redSky && R::IsLive(redSky)) {
-            void* setFn = ResolveSetFn(redSky);
-            if (setFn) {
-                ue_wrap::ParamFrame f(setFn);
-                f.Set<bool>(L"isred", true);
-                ue_wrap::Call(redSky, f);
-                UE_LOGI("weather: red-sky DebugForce -- redSky.set(true) called -- "
-                        "color curves should swap to red set");
-            } else {
-                UE_LOGW("weather: red-sky DebugForce -- set UFunction unresolvable");
-                return false;
-            }
-        } else {
-            UE_LOGW("weather: red-sky DebugForce -- spawn produced no live actor (gm.redSky=%p)", redSky);
-            return false;
-        }
-    } else {
-        // OFF: revert via set(false). No-op if the actor never existed.
-        if (redSky && R::IsLive(redSky)) {
-            void* setFn = ResolveSetFn(redSky);
-            if (setFn) {
-                ue_wrap::ParamFrame f(setFn);
-                f.Set<bool>(L"isred", false);
-                ue_wrap::Call(redSky, f);
-                UE_LOGI("weather: red-sky DebugForce -- redSky.set(false) called -- color curves revert");
-            }
-        } else {
-            UE_LOGI("weather: red-sky DebugForce red=false but no live redSky actor -- nothing to revert");
-        }
-    }
-    return true;
+    bool red = false;
+    return GT::IsGameThread() && RS::Read(nullptr, red) && red;
 }
 
 void Apply(const coop::net::RedSkyPayload& payload) {
     if (!GT::IsGameThread()) {
-        UE_LOGW("weather: red-sky Apply off-game-thread -- dropping");
+        UE_LOGW("weather: the host's red sky applied off the game thread -- dropping");
         return;
     }
-    // The "is the sender the host?" trust bound lives one level up, in event_feed's world-event
-    // handler, which validates msg.senderPeerSlot == 0 before posting here.
-    if (!TryResolve() || !g_spawnRedSkyFn) {
-        UE_LOGW("weather: red-sky Apply spawnRedSky UFunction not yet resolved -- dropping");
+    // The sender is checked one level up: event_dispatch_world takes this kind from the host's slot only.
+    const bool want = payload.state != 0;
+    bool live = false;
+    if (!RS::ReadLive(nullptr, live)) {
+        UE_LOGI("weather: the host's red sky %d arrived before this client's gamemode -- its world-ready seed "
+                "carries it", want ? 1 : 0);
         return;
     }
-    void* gm = ue_wrap::world_singleton::Gamemode();
-    if (!gm) {
-        UE_LOGW("weather: red-sky Apply no live mainGamemode_C -- dropping");
-        return;
+    // The toggle's own test: a live event is ended, none is started.
+    if (live == want) return;
+    bool ran = false;
+    {
+        Applying scope;
+        ran = RS::CallSpawn();
     }
-    const bool wantRed = (payload.state != 0);
-    void* redSky = *reinterpret_cast<void**>(
-        reinterpret_cast<uint8_t*>(gm) + P::off::AmainGamemode_redSky);
-
-    // Echo-suppress: while the receiver invokes spawnRedSky / set, the
-    // local POST observer fires + would broadcast back to the host. The
-    // role gate on the observer already prevents this on the client (role
-    // != host), but the suppress flag is a belt-and-braces for symmetry
-    // with the rain path + future N-peer scenarios where receiver might
-    // also be the host.
-    g_echoSuppress.store(true, std::memory_order_release);
-
-    if (wantRed) {
-        // Spawn the actor if absent.
-        if (!redSky) {
-            ue_wrap::ParamFrame f(g_spawnRedSkyFn);
-            ue_wrap::Call(gm, f);
-            UE_LOGI("weather: red-sky Apply -- spawnRedSky() called (instantiating actor)");
-            redSky = *reinterpret_cast<void**>(
-                reinterpret_cast<uint8_t*>(gm) + P::off::AmainGamemode_redSky);
-        }
-        // Call set(true) to swap the color curves to red. spawnRedSky
-        // alone doesn't apply the effect (IDA RE confirms its body is
-        // pure SpawnActor with no set call).
-        if (redSky && R::IsLive(redSky)) {
-            void* setFn = ResolveSetFn(redSky);
-            if (setFn) {
-                ue_wrap::ParamFrame f(setFn);
-                f.Set<bool>(L"isred", true);
-                ue_wrap::Call(redSky, f);
-                UE_LOGI("weather: red-sky Apply -- redSky.set(true) called");
-            } else {
-                UE_LOGW("weather: red-sky Apply -- set UFunction unresolvable; color curves NOT applied");
-            }
-        }
-    } else {
-        if (redSky && R::IsLive(redSky)) {
-            void* setFn = ResolveSetFn(redSky);
-            if (setFn) {
-                ue_wrap::ParamFrame f(setFn);
-                f.Set<bool>(L"isred", false);
-                ue_wrap::Call(redSky, f);
-                UE_LOGI("weather: red-sky Apply -- redSky.set(false) called");
-            }
-            // Full OFF mirror: destroy the local actor and clear the gamemode slot, so "no red sky"
-            // is structural rather than a dormant actor, and the next ON re-spawns cleanly through
-            // the branch above. ReceiveDestroyed runs the actor's own teardown.
-            ue_wrap::engine::DestroyActor(redSky);
-            *reinterpret_cast<void**>(
-                reinterpret_cast<uint8_t*>(gm) + P::off::AmainGamemode_redSky) = nullptr;
-            UE_LOGI("weather: red-sky Apply -- local redSkyEvent actor destroyed (OFF mirror)");
-        }
+    bool red = !want;
+    const bool read = RS::Read(nullptr, red);
+    if (ran && read && red == want) {
+        ++g_applied;
+        UE_LOGI("weather: applied the host's red sky %d", want ? 1 : 0);
+    } else if (g_applyFailed++ == 0) {
+        UE_LOGW("weather: the host's red sky %d did not apply -- the toggle ran=%d, this copy reads %s (first "
+                "failure; the rest are counted, and the next edge tries again)", want ? 1 : 0, ran ? 1 : 0,
+                read ? (red ? "red" : "clear") : "nothing");
     }
-
-    g_echoSuppress.store(false, std::memory_order_release);
 }
 
 void OnDisconnect() {
-    g_echoSuppress.store(false, std::memory_order_release);
+    if (g_refused || g_sent || g_applied || g_applyFailed)
+        UE_LOGI("weather: red sky session end -- %llu of this client's own toggles refused, %llu sent, %llu applied, "
+                "%llu did not apply", static_cast<unsigned long long>(g_refused),
+                static_cast<unsigned long long>(g_sent), static_cast<unsigned long long>(g_applied),
+                static_cast<unsigned long long>(g_applyFailed));
+    g_refused = g_sent = g_applied = g_applyFailed = 0;
+    g_saidRefused = false;
+    g_applying = false;
     g_session.store(nullptr, std::memory_order_release);
-    g_lastPolledState = -1;   // next session re-learns; first poll re-seeds an active red
-    g_lastPollMs      = 0;
 }
 
 }  // namespace coop::weather_redsky

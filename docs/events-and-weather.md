@@ -27,8 +27,10 @@ again, and game mode 0's day-number achievements `[RD]` (`coop/world/day_edge`).
 still run, so the game's automatic 6 am drone order is latched on a client: its slot can load the
 flag open from the save, and the midnight that re-opens it daily is the host's alone; the weather
 births and the event walk are held too (below), and the sky eye is the host's (a client's own noon
-roll is refused) `[V]`, and so is the jellyfish (a client's own 18:00 spawn is refused) `[V]`, while
-the flesh rain, the gifts and the red sky's noon end run per peer (the known limits). Game mode 5 resets the time
+roll is refused) `[V]`, and so are the jellyfish (a client's own 18:00 spawn is refused) `[V]` and
+the red sky (a client's own toggle is refused, its start and its end alike: `[V]` on a reflected
+call, the noon's own route `[RD]` by the gate's every-route design), while the flesh rain and the
+gifts run per peer (the known limits). Game mode 5 resets the time
 of day every second on every machine; a client refuses its own copy of that loop at the loop's
 once-a-second resume, after the one pass its begin-play runs, which the clock takes back `[V]`, and
 the mode's other flows run on: its needs restore `[V]`, its ambience and spawners `[RD]` (measured
@@ -57,10 +59,11 @@ destroys itself; the host mirrors the actor's life (`coop/world/weather_fog`). A
 strike is a transient actor; the host observes its spawn and sends the location
 (`coop/world/weather_lightning`). The red sky is a story event actor that the clock's hour pulse
 toggles at noon on every peer -- a living one ends, else a one-percent roll starts one --
-dispatched inside the Blueprint, so the host polls the state field for the edge and the client's
-own start is killed at birth: every weather birth the clock rolls (red sky, black fog, rolling
-fog) funnels through the engine's finish-spawning call, where a client-side catch destroys any
-birth the host did not command (`coop/world/weather_redsky`, `coop/world/weather_event_births`).
+dispatched inside the Blueprint, where the script-body gate still sees the toggle: the host sends
+its red sky as each toggle leaves it, and a client refuses its own and runs the host's through
+the same toggle (`coop/world/weather_redsky`). The black fog and the rolling fog the clock rolls
+funnel through the engine's finish-spawning call, where a client-side catch destroys any birth
+the host did not command (`coop/world/weather_event_births`).
 
 Fireflies are the one peer-symmetric weather: the spawner rolls a ring around the local camera,
 so every peer keeps its own and shares each spawn, and the union is fireflies near everyone
@@ -153,7 +156,8 @@ task state (`coop/world/daily_task_sync`). The rewards land in the shared balanc
 | State | Owner | Shape |
 |---|---|---|
 | the clock, the sky | the host | streamed; the client's clock held at zero rate |
-| rain, snow, fog, wind, lightning, red sky | the host | scheduler observed on the host, cancelled on the client; the client's births killed |
+| rain, snow, fog, wind, lightning | the host | scheduler observed on the host, cancelled on the client; the client's births killed |
+| the red sky | the host | its toggle sent from the host as it returns, refused on the client |
 | fireflies | each peer | peer-symmetric union |
 | ambient spawners | the host | refused on clients at the script-body gate; the camera-anchored ones per peer |
 | a scheduled or story event | the host | observed at its verb; replayed on the client per row |
@@ -179,8 +183,8 @@ task state (`coop/world/daily_task_sync`). The rewards land in the shared balanc
 ## Late join
 
 The clock streams from the connect, so a joiner's first sample once its world exists sets its time
-and day number; the sky (its eye included), the weather state and an active red sky are seeded at
-the joiner's world-ready.
+and day number; the sky (its eye included), the weather state and the red sky's state, red or
+clear, are seeded at the joiner's world-ready.
 The in-flight events arrive as snapshot entries and replay with the override; the live cues are
 re-sent; every tracked event actor is re-spawned on the joiner; the pyramid's gather in flight
 is re-sent after its mirrors exist; the alarm's current flag is sent unconditionally, and the
@@ -193,7 +197,6 @@ edge. A one-shot cue a joiner was not present for is missed, by definition.
 | Limit | Evidence |
 |---|---|
 | A black fog the host rolls has no wire lane yet; the client's own rolls are suppressed | `[V]` `coop/world/weather_event_births` |
-| A client's own noon pulse still ends a red sky: when the host's start reaches it before its clock passes noon, the client's pulse ends the new one | `[RD]` the red sky's noon toggle and the catch's birth-only seam |
 | The flesh rain is rolled by every peer's own hour pulse and is not mirrored (the sky eye and the jellyfish are not: `SkyState` carries the eye, the world-actor lane the host's fish, and a client's own `setEye` and path spawn are refused) | `[RD]` the clock's hour roll; the jellyfish is on the world-actor mirror's list, but its spawn happens inside a Blueprint where the mirror's catch does not see it |
 | A decorated Christmas tree spawns its gifts on each peer whose player sleeps through midnight, and a client's gifts are its own | `[RD]` the tree's own check of the local player's sleep at hour 0 |
 | Several rolls are still per peer: the rare gamemode rolls (the one-percent forced quit), the server break-minigame variant, the underground loot mounds, the signal scramble and the radio-tower shuffle | `[V]` no lane under `coop/world` carries them; `coop/interactables/garbage_sync` names the mounds |

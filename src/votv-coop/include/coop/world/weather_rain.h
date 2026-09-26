@@ -9,7 +9,7 @@
 // module the same way they call weather_fog and directionalwind.
 //
 // Principle 7: the substrate (offsets and UFunction thunks) lives here and weather_sync drives it,
-// the same shape as weather_fog, weather_lightning and weather_redsky.
+// the same shape as weather_fog and weather_lightning.
 
 #pragma once
 
@@ -17,9 +17,9 @@ namespace coop::net { class Session; struct WeatherStatePayload; }
 
 namespace coop::weather_rain {
 
-// Session pointer for the Debug* host-role checks (the weather_redsky /
-// weather_lightning SetSession shape). Set from weather_sync::Install every
-// re-entry; atomic inside.
+// Session pointer for the Debug* host-role checks (the weather_lightning
+// SetSession shape). Set from weather_sync::Install every re-entry; atomic
+// inside.
 void SetSession(coop::net::Session* session);
 
 // Idempotent install. Resolves the 5 mutator UFunctions off daynightCycle_C

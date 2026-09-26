@@ -1,14 +1,11 @@
-// harness/autotest/autotest_weather.cpp -- the weather-sync tests: forced rain cycles
-// (VOTVCOOP_RUN_WEATHER_TEST) and the red-sky variant (VOTVCOOP_RUN_REDSKY_TEST). Both are
-// host-only drivers; clients apply through the wire. Interfaces and docs in harness/autotest.h.
+// harness/autotest/autotest_weather.cpp -- the weather-sync test: forced rain cycles
+// (VOTVCOOP_RUN_WEATHER_TEST), a host-only driver; clients apply through the wire. Interfaces and
+// docs in harness/autotest.h.
 
 #include "harness/autotest.h"
 
 #include "coop/config/config.h"
 #include "coop/world/weather_rain.h"
-#include "coop/world/weather_redsky.h"
-#include "coop/player/puppet_drive.h"    // Puppet(1) -- the redsky ready-peer wait
-#include "coop/player/remote_player.h"   // RemotePlayer::GetActor (the wait's liveness read)
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 
@@ -126,74 +123,6 @@ void RunAutonomousWeatherTest() {
 
 DWORD WINAPI WeatherTestThread(LPVOID /*arg*/) {
     RunAutonomousWeatherTest();
-    return 0;
-}
-
-// ---- autonomous RED SKY test ------------------------
-// Host-only. After stabilization it fires DebugForceRedSky(true), which spawns AredSkyEvent_C on
-// the gamemode and lets the blueprint swap the four colour-curve assets to the red set. The host's
-// field poll (weather_redsky::HostPollEdge) sees the edge within 500 ms and broadcasts; the client
-// applies the same chain, and the whole sky and ambient lighting turn red on both peers.
-//
-// Two phases, ON then OFF, with the final state OFF so the next run starts clean. The ten-second ON
-// dwell gives the visual change time to settle.
-void RunAutonomousRedSkyTest() {
-    const bool isHost = !IsClientRole();
-    if (!isHost) {
-        UE_LOGI("redsky_test: not host -- this routine is host-only "
-                "(client observes via wire). Returning.");
-        return;
-    }
-    UE_LOGI("redsky_test: starting autonomous routine on host (waiting for a "
-            "WORLD-READY peer -- the broadcast needs a recipient; up to 180 s)");
-    // Wait for a peer that is actually world-ready rather than for a fixed delay: a cold client's
-    // join does a double level load, so a blind wait sends RedSky to zero ready peers and proves
-    // nothing. The slot-1 puppet existing means the peer is connected, streaming and world-ready.
-    for (int attempt = 0; attempt < 180; ++attempt) {
-        auto ready = std::make_shared<std::atomic<int>>(0);
-        GT::Post([ready] {
-            void* p = coop::puppet_drive::Puppet(1).GetActor();
-            ready->store(p ? 1 : -1, std::memory_order_release);
-        });
-        while (ready->load() == 0) ::Sleep(5);
-        if (ready->load() == 1) break;
-        ::Sleep(1000);
-    }
-    ::Sleep(3000);  // small settle past the join seed window
-
-    UE_LOGI("redsky_test: phase ON -- DebugForceRedSky(true)");
-    auto onDone = std::make_shared<std::atomic<int>>(0);
-    GT::Post([onDone] {
-        const bool ok = coop::weather_redsky::DebugForce(true);
-        onDone->store(ok ? 1 : -1, std::memory_order_release);
-    });
-    while (onDone->load() == 0) ::Sleep(5);
-    if (onDone->load() < 0) {
-        UE_LOGW("redsky_test: ON phase failed (DebugForceRedSky returned false)");
-        return;
-    }
-
-    // 10 s ON dwell -- ample for client to receive + apply + screenshot.
-    ::Sleep(10000);
-
-    UE_LOGI("redsky_test: phase OFF -- DebugForceRedSky(false)");
-    auto offDone = std::make_shared<std::atomic<int>>(0);
-    GT::Post([offDone] {
-        const bool ok = coop::weather_redsky::DebugForce(false);
-        offDone->store(ok ? 1 : -1, std::memory_order_release);
-    });
-    while (offDone->load() == 0) ::Sleep(5);
-
-    // 6 s OFF dwell -- color curves revert; verify both peers return to
-    // normal coloration.
-    ::Sleep(6000);
-
-    UE_LOGI("redsky_test: DONE (ON+OFF cycle complete; final state should "
-            "be normal sky)");
-}
-
-DWORD WINAPI RedSkyTestThread(LPVOID /*arg*/) {
-    RunAutonomousRedSkyTest();
     return 0;
 }
 

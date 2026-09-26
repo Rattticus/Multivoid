@@ -625,13 +625,11 @@ inline constexpr const wchar_t* DaynightCycle_setFogDensityFn      = L"SetFogDen
 // after causeRain.
 inline constexpr const wchar_t* DaynightCycle_setRainParticlesFn   = L"setRainParticles";
 
-// The red-sky path on AmainGamemode_C: spawnRedSky() spawns redSkyEvent_C and stashes it at
-// mainGamemode.redSky @0x0888 (mainGamemode.hpp:150); later toggles call redSky.set(bool isred),
-// which swaps the four colour-curve assets on the daynightCycle deterministically.
+// The red sky's toggle on AmainGamemode_C: spawnRedSky() destroys the redSkyEvent_C held at
+// mainGamemode.redSky @0x0888 (mainGamemode.hpp:150) when one lives and spawns one there otherwise
+// (ue_wrap/world/red_sky).
 inline constexpr const wchar_t* MainGamemode_SpawnRedSkyFn      = L"spawnRedSky";
-inline constexpr const wchar_t* RedSkyEventClass               = L"redSkyEvent_C";
-inline constexpr const wchar_t* RedSkyEvent_SetFn              = L"set";
-// The other two weather-event birth classes (weather_event_births' client birth catch).
+// The two weather-event birth classes (weather_event_births' client birth catch).
 inline constexpr const wchar_t* WeatherFogControllerClass      = L"weatherFogController_C";
 inline constexpr const wchar_t* BlackFogClass                  = L"blackFog_C";
 // SetCollisionEnabled (UPrimitiveComponent): remote_prop::OnSpawn restores default collision
