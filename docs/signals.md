@@ -134,6 +134,19 @@ simulation is host-owned and driven into each client's server boxes as state, so
 break is overwritten within a second (`coop/interactables/serverbox_sync`). A break the client
 authors locally can still raise one transient notice before that.
 
+### The SAT console
+
+A machine has one SAT console terminal, the widget every SAT console panel in the world shows; a
+panel points it at its dish, or at ROOT. A line a client types there whose command rests on the
+shared world -- a dish's calibration, a floppy's export or eject, a gift box, a server's or a
+tower's state, the debug and joke commands that spawn or destroy things -- is refused on the
+client and sent to the host with the terminal's context. The host keeps a terminal of the game's
+own class for each typist, never shown, and runs the line there, so the command happens once, in
+the host's world, and its results cross by their own lanes; every line that terminal prints comes
+back to its typist alone, and so does its busy state. A line whose effect is the typist's own -- its
+compass, its terminal, the desk's radar filter and sounds on its machine -- runs where it was typed
+(`coop/interactables/sat_console_sync`, the command table in `coop/interactables/sat_console_table`).
+
 ### Upgrades
 
 The signal upgrades are one persistent struct of eighteen levels that parametrise the download,
@@ -160,6 +173,7 @@ not built. The ATV's physical modules are on [vehicles.md](vehicles.md).
 | drives, racks, modules, the crate, the file buffer | the host, canonical | any peer's operations, the host's array back |
 | the tape accrual | each peer, host-corrected | a one-hertz re-snap |
 | the servers | the host | state driven into each box |
+| a SAT console command that rests on the world | the host, on a terminal kept for its typist | the typed line up; the printed lines and the busy state back |
 | the upgrade levels | the host's save, once | not mirrored |
 
 ## Wire messages
@@ -178,6 +192,7 @@ not built. The ATV's physical modules are on [vehicles.md](vehicles.md).
 | `ReelSlot`, `ReelPose` (stream), `ReelEjectIntent` | the presser; the host; a client | slot edges; the corrector; a reel birth |
 | `LaptopState`, `LaptopBlob`, `LaptopQuad` | the presser and the host | power and floppy edges; content streams; the file buffer |
 | `ServerState` | the host to all | the servers' broken set |
+| `SatConsole` | a client to the host; the host to that client | a typed line with its terminal's context; the lines the host's run printed, and its busy state |
 
 ## Late join
 
@@ -187,7 +202,10 @@ dependency is never applied before its base; the deck list, the database and the
 seeded as deltas against the blob instant; every drive slot and payload, the rack, the module set,
 the reel slots, the laptop's power and content and the crate arrive as canonical rows from the
 host; the desk's two loops are re-sent from component truth. A joiner never sees a running ping's
-stage visuals, only its outcome. The upgrade levels arrive with the save and never again.
+stage visuals, only its outcome. A SAT console typist that leaves mid-command while another client
+keeps the session leaves the command running on the host and, back, is bound to its terminal and its
+busy state as its world is ready; the last client's leave ends the session, and every such terminal
+is discarded with it, its command stopping there. The upgrade levels arrive with the save and never again.
 
 ## Known limits
 
@@ -198,6 +216,8 @@ stage visuals, only its outcome. The upgrade levels arrive with the save and nev
 | The desk cursor has degraded to a few frames per second mid-session; two mechanisms were removed, and a warning names an occupancy flap if it recurs | `[?]` `coop/interactables/desk_cursor_sync`; not reproduced since |
 | A refiner completion fires world triggers on the one simulating machine only; other peers mirror the state | `[V]` `coop/interactables/comp_sync`, by design of the single simulator |
 | The red phone's ring is per-peer randomness with no lane | `[V]` no lane exists |
+| A SAT console command that spawns or destroys a class no lane carries (the rufus, the thiccfus, the llama's soul, the madness, the centipede, the murder kerfur) acts in the host's world only; its typist does not see it | `[V]` no lane exists for those classes |
+| Each player's SAT console screen and log are its own; another player's typing is not shown | `[V]` by design until decided |
 
 ## Code map
 
@@ -209,6 +229,7 @@ stage visuals, only its outcome. The upgrade levels arrive with the save and nev
 | the deck and the refiner | `coop/interactables/deck_play_sync`, `coop/interactables/comp_sync` |
 | drives, racks, modules, tapes | `coop/interactables/drive_sync`, `coop/interactables/drive_rack_sync`, `coop/interactables/physmods_sync`, `coop/interactables/tape_caddy_sync` |
 | the laptop, the crate, the database, the servers | `coop/interactables/laptop_sync`, `coop/interactables/laptop_buffer_sync`, `coop/interactables/floppybox_sync`, `coop/interactables/meadow_db_sync`, `coop/interactables/serverbox_sync` |
-| the engine wrappers | `ue_wrap/desk/` (the dish, the console, the coordinate panel, the refiner pane, the drive chain, the tape caddy, the modules, the saved signals, the database, the audio) |
+| the SAT console | `coop/interactables/sat_console_sync`, `coop/interactables/sat_console_table` |
+| the engine wrappers | `ue_wrap/desk/` (the dish, the console, the coordinate panel, the refiner pane, the drive chain, the tape caddy, the modules, the saved signals, the database, the audio, the SAT console) |
 | the join seeds | `coop/session/join_seed` |
-| tests and instruments | `coop/dev/drive_selftest`, `coop/dev/desk_diag`, `harness/autotest/autotest_seeddrill.cpp`, `harness/autotest/autotest_driveslot.cpp` (a drive taken out on one peer is out and carried on the other) |
+| tests and instruments | `coop/dev/drive_selftest`, `coop/dev/desk_diag`, `coop/dev/sat_console_drill`, `harness/autotest/autotest_seeddrill.cpp`, `harness/autotest/autotest_driveslot.cpp` (a drive taken out on one peer is out and carried on the other) |

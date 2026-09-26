@@ -136,6 +136,10 @@ inline Lane LaneForKind(ReliableKind k) {
     // ServerUpgradeState is the same shape for the servers' upgrades: an op must not overtake the
     // canonical it was diffed against, and a deny precedes its canonical; pinned. Not relayable.
     case ReliableKind::ServerUpgradeState: return Lane::Normal;
+    // SatConsole's blobs assume in-lane order: a line's echo before its answers, a busy level between
+    // the lines it falls between; pinned. Not relayable: a line is addressed to the host, and its
+    // answers to its typist alone.
+    case ReliableKind::SatConsole: return Lane::Normal;
     // The drive-chain trio assumes in-lane order between a slot line, the payload row it references
     // and a rack pair; pinned together.
     case ReliableKind::DriveSlotState: return Lane::Normal;

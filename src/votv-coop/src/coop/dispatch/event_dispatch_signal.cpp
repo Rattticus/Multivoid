@@ -20,6 +20,7 @@
 #include "coop/interactables/floppybox_sync.h"   // FloppyBoxState
 #include "coop/interactables/meadow_db_sync.h"   // MeadowAppend/MeadowDelete
 #include "coop/interactables/physmods_sync.h"    // PhysModsState
+#include "coop/interactables/sat_console_sync.h"  // SatConsole
 #include "coop/interactables/drive_sync.h"       // DriveSlotState/DrivePayload
 #include "coop/interactables/drive_rack_sync.h"  // RackState
 #include "coop/interactables/signal_catch_sync.h"
@@ -288,6 +289,23 @@ bool HandleSignalEvent(net::Session& /*session*/,
                 ? static_cast<uint8_t>(msg.senderPeerSlot)
                 : static_cast<uint8_t>(0xFF);
         coop::floppy_slot_sync::OnChunk(fs, fsslot);
+        break;
+    }
+    case net::ReliableKind::SatConsole: {
+        // A client's line to the host, or the host's answer to its typist; the lane checks the
+        // direction by the role and the sender.
+        if (msg.payloadLen < sizeof(net::BlobChunkPayload)) {
+            UE_LOGW("event_feed: SatConsole payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::BlobChunkPayload));
+            break;
+        }
+        net::BlobChunkPayload sc{};
+        std::memcpy(&sc, msg.payload, sizeof(sc));
+        const uint8_t scslot =
+            (msg.senderPeerSlot >= 0 && msg.senderPeerSlot < net::kMaxPeers)
+                ? static_cast<uint8_t>(msg.senderPeerSlot)
+                : static_cast<uint8_t>(0xFF);
+        coop::sat_console_sync::OnChunk(sc, scslot);
         break;
     }
     case net::ReliableKind::DishHashcodes: {

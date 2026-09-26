@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 194;
+inline constexpr uint16_t kProtocolVersion = 195;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -865,6 +865,13 @@ enum class ReliableKind : uint8_t {
     // world-ready. Host to one: a refusal of that client's op, which lost a race, before the canonical.
     // Never relayed. ServerUpgradeStatePayload.
     ServerUpgradeState = 156,
+
+    // The SAT console's shared commands. Client to host: a typed line whose command rests on the shared
+    // world, with its terminal's context (its dish or ROOT, its name, the panel last used); the host
+    // runs the line on a terminal it keeps for that client. Host to that client alone: each line that
+    // terminal prints, and each change of its busy flag. Never relayed; a joiner
+    // has nothing to replay. BlobChunkPayload: [u8 op] then the op's fields (sat_console_sync).
+    SatConsole = 157,
 };
 
 #pragma pack(push, 1)

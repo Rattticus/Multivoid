@@ -21,6 +21,7 @@
 #include "coop/interactables/desk_sim_sync.h"
 #include "coop/interactables/dish_hashcode_sync.h"
 #include "coop/interactables/dish_sync.h"
+#include "coop/interactables/sat_console_sync.h"  // the SAT console's shared commands run on the host
 #include "coop/interactables/tape_caddy_sync.h"
 #include "coop/world/daily_task_sync.h"
 #include "coop/interactables/device_occupancy.h"
@@ -226,6 +227,7 @@ void Install(coop::net::Session& session) {
     coop::desk_sim_sync::Install(&session);  // download-SIM host-authoritative output stream (decoded/needle/rate/frData/poData/offsets; client overwrites)
     coop::dish_sync::Install(&session);  // host-auth dish pose mirror + host-polarity ARM edge + symmetric calibration lane (client sim parked)
     coop::dish_hashcode_sync::Install(&session);  // the dishes' hash codes: the host's rollover sends them, a client refuses its own
+    coop::sat_console_sync::Install(&session);  // the SAT console: a client's shared commands run on a terminal the host keeps for it
     coop::tape_caddy_sync::Install(&session);  // caddy reel slots (presser edges) + host accrual corrector (client accrual NOT parked -- corrector-bounded)
     coop::daily_task_sync::Install(&session);  // saveSlot.taskNew host mirror (rollover/sell are host-only live)
     coop::email_sync::Install(&session);  // meadow-PC email mirror (watermark -> chunked rows -> addEmail)
@@ -297,6 +299,7 @@ void ConnectReplayForSlot(int slot) {
     coop::prop_snapshot::TriggerForSlot(slot);
     coop::prop_drive_host::OnPeerWorldReady();  // every driven prop's pose again, so the joiner parks the resting ones the delta gate would never send it
     coop::kerfus_lanes::OnPeerWorldReady(slot);  // and every Kerfus's on, charging and energy
+    coop::sat_console_sync::OnPeerWorldReady(slot);  // a SAT console typist back at a terminal still running finds it
     // Deliver the current position of any save-authoritative chipPile the host moved in this
     // joiner's connect window (the move's convert was dropped pre-world, and chipPiles carry no
     // position in the snapshot). After the snapshot, so it rides the bulk lane behind it; the
@@ -398,6 +401,7 @@ void DisconnectSlot(coop::net::Session& session, int slot) {
     coop::prop_save_data::OnPeerGone(static_cast<uint8_t>(slot));
     coop::floppy_slot_sync::OnPeerGone(static_cast<uint8_t>(slot));
     coop::dish_hashcode_sync::OnPeerGone(static_cast<uint8_t>(slot));
+    coop::sat_console_sync::OnPeerGone(static_cast<uint8_t>(slot));  // its terminal kept, running its command, for its return
     coop::signal_sync::OnDisconnectSlot(slot);
     coop::email_sync::OnDisconnectSlot(slot);
     // Shut the chat lane's per-slot seed gate: the next occupant's applied range starts empty, so
@@ -507,6 +511,7 @@ DisconnectStats DisconnectAll() {
     coop::desk_sim_sync::OnDisconnect();
     coop::dish_sync::OnDisconnect();  // wire-residue sweep + ticker restores (the suppression loan)
     coop::dish_hashcode_sync::OnDisconnect();
+    coop::sat_console_sync::OnDisconnect();  // the terminals it keeps, and a busy flag mirrored here
     coop::tape_caddy_sync::OnDisconnect();  // poll baselines + IsRecent stamps + the singleton cache (no suppression -- nothing to restore)
     coop::daily_task_sync::OnDisconnect();  // change-hash baseline
     coop::desk_input_sync::OnDisconnect();
@@ -613,6 +618,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:desk_sim"}; coop::desk_sim_sync::Tick(); }  // download-SIM -- host streams outputs (10Hz) / client interpolates + WriteSimOutputs
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:dish"}; coop::dish_sync::Tick(); }  // host pose sweep + arm poll (4Hz) / client apply + park latch / calib diff-poll (1Hz)
     { PP::Scope _s{PP::Bucket::Interactable}; coop::dish_hashcode_sync::Tick(); }  // host: the marked codes, a joiner's owed set / client: rows waiting for their dish
+    { PP::Scope _s{PP::Bucket::Interactable}; coop::sat_console_sync::Tick(); }  // owed blobs, and a terminal whose world is gone
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:reel"}; coop::tape_caddy_sync::Tick(); }  // 4Hz slot sentinel poll (both peers) + host 1Hz corrector / client exact-snap apply
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:task"}; coop::daily_task_sync::Tick(); }  // host 1Hz taskNew change-hash poll (fires a few times per game-day)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:desk_input"}; coop::desk_input_sync::Tick(); }  // 250ms input-field poll -> claim-free DeskInput deltas + cooldown charge/scan classification

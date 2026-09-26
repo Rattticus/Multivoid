@@ -91,6 +91,7 @@ set(VOTVCOOP_SOURCES
     src/ue_wrap/desk/coords_panel.cpp
     src/ue_wrap/desk/dish.cpp
     src/ue_wrap/desk/sat_console.cpp
+    src/ue_wrap/desk/sat_console.cpp
     src/ue_wrap/desk/coord_tower.cpp
     src/ue_wrap/desk/tape_caddy.cpp
     src/ue_wrap/devices/floppy_slot.cpp
@@ -226,6 +227,8 @@ set(VOTVCOOP_SOURCES
     src/coop/world/alarm_sync.cpp
     src/coop/interactables/serverbox_sync.cpp
     src/coop/interactables/server_upgrade_sync.cpp
+    src/coop/interactables/sat_console_table.cpp
+    src/coop/interactables/sat_console_sync.cpp
     src/coop/interactables/window_sync.cpp
     src/coop/interactables/window_stroke_sync.cpp
     src/coop/interactables/grime_sync.cpp
