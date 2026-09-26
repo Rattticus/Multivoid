@@ -10,6 +10,7 @@
 #include "coop/session/net_pump.h"  // HasAnnouncedWorldReady
 
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/reflection.h"
 #include "ue_wrap/desk/console_desk.h"
 #include "ue_wrap/desk/dish.h"
 #include "ue_wrap/desk/dish_writers.h"
@@ -32,9 +33,11 @@ namespace E = ue_wrap::engine;
 constexpr int32_t  kHeldDish     = 0;
 constexpr int32_t  kUncalDish    = 1;
 constexpr int32_t  kToolDish     = 2;
+constexpr int32_t  kRefuseDish   = 3;
 constexpr float    kHeld         = 0.3131f;  // the host's values, none a value a dish rests at
 constexpr float    kUncalHeld    = 0.5757f;
 constexpr float    kToolHeld     = 1.4242f;  // outside 0..1: the host's float must reach the client whole
+constexpr float    kRefuseHeld   = 0.6262f;
 constexpr float    kDeviation    = 0.8686f;  // the client's write into its own copy of dish 0
 constexpr float    kToolValue    = 2.5f;     // outside 0..1: the old wire clamped it to 1
 constexpr float    kNear         = 0.0005f;
@@ -44,7 +47,7 @@ constexpr uint64_t kBackBoundMs  = 3000;     // the client's poll runs once a se
 constexpr uint64_t kHoldMs       = 3000;     // three of the client's polls
 constexpr uint64_t kCheckEveryMs = 250;
 
-enum class Step : uint8_t { Arm, Back, Reader, Uncal, Tool, Hold, Done };
+enum class Step : uint8_t { Arm, Back, Reader, Uncal, Tool, Refuse, Answer, Hold, Done };
 Step     g_step = Step::Arm;
 uint64_t g_stepMs = 0;
 uint64_t g_nextCheckMs = 0;
@@ -84,9 +87,13 @@ float MeanPrecision() {
 bool Near(float v, float to) { return std::fabs(v - to) <= kNear; }
 
 void Fail(const char* what) {
-    UE_LOGW("[CALIB-DRILL] FAIL in session %d: %s (dishes 0/1/2 read %.4f/%.4f/%.4f here)", g_session, what,
-            Precision(kHeldDish), Precision(kUncalDish), Precision(kToolDish));
+    UE_LOGW("[CALIB-DRILL] FAIL in session %d: %s (dishes 0/1/2/3 read %.4f/%.4f/%.4f/%.4f here)", g_session, what,
+            Precision(kHeldDish), Precision(kUncalDish), Precision(kToolDish), Precision(kRefuseDish));
     g_step = Step::Done;
+}
+
+void DestroyIfLive(void* actor) {
+    if (actor && ue_wrap::reflection::IsLive(actor)) E::DestroyActor(actor);
 }
 
 void Abandon(const char* why) {
@@ -129,7 +136,9 @@ void ReaderLeg() {
 }
 
 // The player's hit aimed at dish 1 and an uncalibrator's use run at once, before the next tick's trace replaces the
-// hit. The body zeroes the dish on this copy; the lane sends it to the host and holds it.
+// hit. This copy's dish 1 is zeroed first, a deviation no poll has put back yet: the verb's entry must judge the body
+// against the host's value, or a body that writes exactly the deviation sends nothing. The body zeroes the dish on
+// this copy; the lane sends it to the host and holds it.
 void UncalLeg(void* player) {
     void* dish = D::DishByIndex(kUncalDish);
     void* comp = D::HitComponent(kUncalDish);
@@ -143,6 +152,7 @@ void UncalLeg(void* player) {
         Abandon("an uncalibrator could not be spawned");
         return;
     }
+    D::WriteCalibration(kUncalDish, 0.f);
     const bool ran = E::WriteMainPlayerHitResult(player, dish, comp, dishAt) &&
                      DW::CallUncalibratorUse(uncalibrator, player);
     E::DestroyActor(uncalibrator);
@@ -151,26 +161,29 @@ void UncalLeg(void* player) {
         return;
     }
     if (!Near(Precision(kUncalDish), 0.f)) {
-        Fail("the uncalibrator's use did not zero dish 1 on this copy");
+        Fail("dish 1 does not read 0 on this copy after the uncalibrator's use");
         return;
     }
     UE_LOGI("[CALIB-DRILL] client: the uncalibrator zeroed dish %d here", kUncalDish);
     Next(Step::Tool);
 }
 
-// A toolgun's calibration tool, set to a value the old wire clamped away, run on dish 2 by index as its RMB does.
-void ToolLeg(void* player) {
+// A toolgun's calibration tool run on a dish by index as its RMB does. The tool destroys itself on that path; the
+// toolgun, and a tool that took another path, go here.
+bool RunTool(void* player, int32_t dish, float value) {
     ue_wrap::FVector at{};
-    if (!E::TryGetActorLocation(player, at)) {
-        Abandon("no player to spawn the tool at");
-        return;
-    }
+    if (!E::TryGetActorLocation(player, at)) return false;
     void* toolgun = DW::SpawnToolgun({at.X, at.Y, at.Z + 60.f});
     void* tool = DW::SpawnTool({at.X, at.Y, at.Z + 90.f});
-    const bool ran = toolgun && tool && DW::CallToolInitByIndex(tool, toolgun, kToolDish, kToolValue);
-    if (toolgun) E::DestroyActor(toolgun);
-    if (!ran) {
-        if (tool) E::DestroyActor(tool);
+    const bool ran = toolgun && tool && DW::CallToolInitByIndex(tool, toolgun, dish, value);
+    DestroyIfLive(toolgun);
+    DestroyIfLive(tool);
+    return ran;
+}
+
+// The tool set to a value the old wire clamped away, on dish 2.
+void ToolLeg(void* player) {
+    if (!RunTool(player, kToolDish, kToolValue)) {
         Abandon("the toolgun's calibration tool could not be spawned or run");
         return;
     }
@@ -179,7 +192,23 @@ void ToolLeg(void* player) {
         return;
     }
     UE_LOGI("[CALIB-DRILL] client: the calibration tool set dish %d to %.4f here", kToolDish, kToolValue);
-    Next(Step::Hold);
+    Next(Step::Refuse);
+}
+
+// The tool set to NaN on dish 3: the host refuses a value that is not finite, and only its answer can put this copy
+// back -- the put-back holds the client's own sent value until the host says otherwise.
+void RefuseLeg(void* player) {
+    if (!RunTool(player, kRefuseDish, NAN)) {
+        Abandon("the toolgun's calibration tool could not be spawned or run for the refusal");
+        return;
+    }
+    if (D::Count() <= kRefuseDish || !std::isnan(Precision(kRefuseDish))) {
+        Fail("the calibration tool did not write its NaN into dish 3 on this copy");
+        return;
+    }
+    UE_LOGI("[CALIB-DRILL] client: the calibration tool wrote NaN into dish %d here; the host must refuse it",
+            kRefuseDish);
+    Next(Step::Answer);
 }
 
 void ClientTick() {
@@ -195,19 +224,19 @@ void ClientTick() {
             return;
         }
         if (!Near(Precision(kHeldDish), kHeld) || !Near(Precision(kUncalDish), kUncalHeld) ||
-            !Near(Precision(kToolDish), kToolHeld)) {
-            if (Expired(kArmBoundMs)) Abandon("the host's values for dishes 0, 1 and 2 did not reach this client in 60 s");
+            !Near(Precision(kToolDish), kToolHeld) || !Near(Precision(kRefuseDish), kRefuseHeld)) {
+            if (Expired(kArmBoundMs)) Abandon("the host's values for dishes 0 to 3 did not reach this client in 60 s");
             return;
         }
         Deviate();
-        UE_LOGI("[CALIB-DRILL] client: dishes 0/1/2 hold the host's values; wrote %.4f into this copy of dish %d",
+        UE_LOGI("[CALIB-DRILL] client: dishes 0 to 3 hold the host's values; wrote %.4f into this copy of dish %d",
                 kDeviation, kHeldDish);
         Next(Step::Back);
         return;
     case Step::Back:
         if (Near(Precision(kHeldDish), kHeld) && CS::LaneCounts().putBack > g_putBackAtDeviation) {
-            UE_LOGI("[CALIB-DRILL] client: the lane put dish %d back at the host's %.4f after %llu ms", kHeldDish, kHeld,
-                    static_cast<unsigned long long>(now - g_stepMs));
+            UE_LOGI("[CALIB-DRILL] client: the lane put dish %d back at the host's %.4f after %llu ms", kHeldDish,
+                    kHeld, static_cast<unsigned long long>(now - g_stepMs));
             Next(Step::Reader);
         } else if (Expired(kBackBoundMs)) {
             Fail("dish 0 was not put back to the host's value within 3 s of the deviation");
@@ -222,6 +251,18 @@ void ClientTick() {
     case Step::Tool:
         if (player) ToolLeg(player);
         return;
+    case Step::Refuse:
+        if (player) RefuseLeg(player);
+        return;
+    case Step::Answer:
+        if (Near(Precision(kRefuseDish), kRefuseHeld)) {
+            UE_LOGI("[CALIB-DRILL] client: the host's answer put dish %d back at its %.4f after %llu ms", kRefuseDish,
+                    kRefuseHeld, static_cast<unsigned long long>(now - g_stepMs));
+            Next(Step::Hold);
+        } else if (Expired(kBackBoundMs)) {
+            Fail("the host's answer did not put dish 3 back within 3 s of the refused intent");
+        }
+        return;
     case Step::Hold:
         if (!Near(Precision(kUncalDish), 0.f)) {
             Fail("the uncalibrator's zero on dish 1 was put back");
@@ -235,10 +276,14 @@ void ClientTick() {
             Fail("dish 0 left the host's value");
             return;
         }
+        if (!Near(Precision(kRefuseDish), kRefuseHeld)) {
+            Fail("dish 3 left the host's value after its answer");
+            return;
+        }
         if (!Expired(kHoldMs)) return;
         UE_LOGI("[CALIB-DRILL] client DONE in session %d (%s): the deviation went back, setPrec read the host's "
-                "average, and the uncalibrator's zero and the tool's %.1f held -- PASS", g_session, Mode().c_str(),
-                kToolValue);
+                "average, the uncalibrator's zero and the tool's %.1f held, and the refused NaN was answered -- PASS",
+                g_session, Mode().c_str(), kToolValue);
         g_step = Step::Done;
         return;
     case Step::Done:
@@ -261,13 +306,14 @@ void HostTick(coop::net::Session* s) {
             }
             return;
         }
-        if (!D::EnsureResolved() || D::Count() <= kToolDish) return;
+        if (!D::EnsureResolved() || D::Count() <= kRefuseDish) return;
         D::WriteCalibration(kHeldDish, kHeld);
         D::WriteCalibration(kUncalDish, kUncalHeld);
         D::WriteCalibration(kToolDish, kToolHeld);
+        D::WriteCalibration(kRefuseDish, kRefuseHeld);
         g_hostHeld = true;
-        UE_LOGI("[CALIB-DRILL] host (%s): dishes 0/1/2 held at %.4f/%.4f/%.4f; the client's deviation must not reach "
-                "dish 0", Mode().c_str(), kHeld, kUncalHeld, kToolHeld);
+        UE_LOGI("[CALIB-DRILL] host (%s): dishes 0/1/2/3 held at %.4f/%.4f/%.4f/%.4f; the client's deviation must not "
+                "reach dish 0", Mode().c_str(), kHeld, kUncalHeld, kToolHeld, kRefuseHeld);
         return;
     }
     if (Near(Precision(kHeldDish), kDeviation)) {
@@ -276,13 +322,14 @@ void HostTick(coop::net::Session* s) {
                 kDeviation);
         return;
     }
-    if (CS::LaneCounts().intentsApplied < 2 || !Near(Precision(kUncalDish), 0.f) ||
-        !Near(Precision(kToolDish), kToolValue))
+    const CS::Counts c = CS::LaneCounts();
+    if (c.intentsApplied < 2 || c.intentsRefused < 1 || !Near(Precision(kUncalDish), 0.f) ||
+        !Near(Precision(kToolDish), kToolValue) || !Near(Precision(kRefuseDish), kRefuseHeld))
         return;
     g_hostDone = true;
     UE_LOGI("[CALIB-DRILL] host DONE in session %d (%s): performed the client's two verbs, dish %d = %.4f and dish %d "
-            "= %.4f here", g_session, Mode().c_str(), kUncalDish, Precision(kUncalDish), kToolDish,
-            Precision(kToolDish));
+            "= %.4f here, and refused its NaN on dish %d, which stays %.4f", g_session, Mode().c_str(), kUncalDish,
+            Precision(kUncalDish), kToolDish, Precision(kToolDish), kRefuseDish, Precision(kRefuseDish));
 }
 
 }  // namespace
