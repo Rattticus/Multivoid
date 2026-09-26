@@ -3,6 +3,7 @@
 #include "coop/dev/fireext_drill.h"
 
 #include "coop/config/config.h"
+#include "coop/dev/director/aimed_grab.h"
 #include "coop/dev/director/director.h"
 #include "coop/net/session.h"
 #include "coop/player/local_streams.h"  // CurrentHoldGen: the hold the stale tail names
@@ -17,12 +18,10 @@
 #include "ue_wrap/actors/fire_extinguisher.h"
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/core/cached_obj_ref.h"
-#include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/engine_attach.h"
-#include "ue_wrap/engine/engine_mainplayer.h"
 #include "ue_wrap/engine/engine_nav.h"
 #include "ue_wrap/engine/engine_pawn.h"
 
@@ -48,7 +47,7 @@ namespace PR = ue_wrap::prop;
 // carry: the host takes it off and carries it off. short: the host lets go the moment it holds it.
 // client: the client carries, the host watches. join: the host takes it off while a joiner loads.
 enum class Arm { Off, Carry, Short, Client, Join };
-enum class Step { WaitJoin, WalkTo, Aim, Grab, WalkAway, Rest, Done, Invalid };
+enum class Step { WaitJoin, WalkTo, Grab, WalkAway, Rest, Done, Invalid };
 
 Arm ArmOf() {
     static const Arm a = [] {
@@ -65,10 +64,6 @@ char Who() { return coop::roster::LocalIsHost() ? 'H' : 'C'; }
 
 constexpr float kReachCm        = 110.f;  // the director's stop distance from the extinguisher, level
 constexpr float kCarryCm        = 450.f;  // how far off the carry's end should be
-constexpr int   kAimTicksPerPose = 6;     // the trace runs on the player's own tick: hold each pose
-constexpr int   kAimFanHalf     = 5;      // an 11 x 11 fan of 3 degrees round the extinguisher
-constexpr float kAimFanStepDeg  = 3.f;
-constexpr int   kGrabVerifyTicks = 30;
 constexpr int   kRestMaxTicks   = 600;    // ~10 s for a dropped extinguisher to come to rest
 // A walk that stops making way ends here. The rig save puts the client about 760 m from the base,
 // a route of some 200 s (the container probe's long-route deadline).
@@ -298,7 +293,7 @@ ue_wrap::CachedObjRef g_target;
 std::wstring g_targetKey;
 ue_wrap::FVector g_mountPos{};
 int g_stepTicks = 0;
-int g_aimPose = 0;
+std::unique_ptr<coop::director::AimedGrab> g_grab;  // the grab of the extinguisher, from its aim to the hand
 
 // ---- The stale tail: the short arm's second measurement, on the host ----------------------------
 
@@ -358,20 +353,6 @@ void SendStaleTail(coop::net::Session& s, void* t, int tick) {
     g_tailSet = true;
 }
 
-// The aim fan, nearest pose first: the extinguisher's origin, then offsets of growing size.
-const std::vector<std::pair<int, int>>& AimFan() {
-    static const std::vector<std::pair<int, int>> fan = [] {
-        std::vector<std::pair<int, int>> v;
-        for (int p = -kAimFanHalf; p <= kAimFanHalf; ++p)
-            for (int y = -kAimFanHalf; y <= kAimFanHalf; ++y) v.emplace_back(p, y);
-        std::stable_sort(v.begin(), v.end(), [](const auto& a, const auto& b) {
-            return a.first * a.first + a.second * a.second < b.first * b.first + b.second * b.second;
-        });
-        return v;
-    }();
-    return fan;
-}
-
 // The director blocks, so a walk runs on a worker; the step polls its state. `carry`: the hand keeps what
 // it holds.
 std::shared_ptr<coop::director::BackgroundWalk> g_walk;
@@ -393,25 +374,6 @@ void Invalid(const char* why) {
 void Go(Step s) {
     g_step = s;
     g_stepTicks = 0;
-}
-
-bool CallWithPlayer(void* obj, const wchar_t* fnName, void* player) {
-    void* fn = R::FindDispatchFunctionCached(R::ClassOf(obj), fnName);
-    if (!fn) return false;
-    ue_wrap::ParamFrame f(fn);
-    return f.valid() && f.Set<void*>(L"player", player) && ue_wrap::Call(obj, f);
-}
-
-bool CallOnPlayer(void* player, const wchar_t* fnName) {
-    void* fn = R::FindDispatchFunctionCached(R::ClassOf(player), fnName);
-    if (!fn) return false;
-    ue_wrap::ParamFrame f(fn);
-    return f.valid() && ue_wrap::Call(player, f);
-}
-
-void* Grabbing(void* player) {
-    E::MainPlayerGrabState gs{};
-    return E::ReadMainPlayerGrabState(player, gs) ? gs.grabbingActor : nullptr;
 }
 
 // The mounted extinguisher at the end of the shortest NavMesh route from the player, from the
@@ -520,61 +482,28 @@ void ActStep(coop::net::Session& s, void* player) {
     case Step::WalkTo:
         if (WalkState() == 0) return;
         if (WalkState() == 2) { Invalid("the walk to the extinguisher did not arrive"); return; }
-        g_aimPose = 0;
-        Go(Step::Aim);
+        LogTarget("BEFORE GRAB");
+        // The director's aimed grab: a fan of aims until the trace takes the extinguisher, then the use key's chain.
+        g_grab = std::make_unique<coop::director::AimedGrab>(player, g_target.Get());
+        Go(Step::Grab);
         return;
-    case Step::Aim: {
-        void* t = g_target.Get();
-        if (!t) { Invalid("the extinguisher died before the grab"); return; }
-        if (E::ReadMainPlayerHitActor(player) == t) {
-            UE_LOGI("[FIREEXT-DRILL] [%c] the trace took the extinguisher at fan pose %d", Who(), g_aimPose);
-            Go(Step::Grab);
-            return;
-        }
-        if (g_stepTicks % kAimTicksPerPose != 1) return;
-        const auto& fan = AimFan();
-        if (g_aimPose >= static_cast<int>(fan.size())) {
-            void* hit = E::ReadMainPlayerHitActor(player);
-            UE_LOGI("[FIREEXT-DRILL] [%c] the fan ended on '%ls'", Who(), hit ? R::ClassNameOf(hit).c_str() : L"nothing");
-            Invalid("no aim the trace would take");
-            return;
-        }
-        // The bounds' centre: a lying extinguisher's origin can sit at the floor's surface.
-        ue_wrap::FVector centre{}, extent{};
-        if (!E::GetActorBounds(t, /*onlyColliding=*/true, centre, extent) && !ReadWatched(t, centre, Who(), "the aim")) {
-            Invalid("the extinguisher has neither bounds nor a readable location to aim at");
-            return;
-        }
-        ue_wrap::FRotator r = coop::director::LookAt(E::GetCameraLocation(), centre);
-        r.Pitch += kAimFanStepDeg * static_cast<float>(fan[g_aimPose].first);
-        r.Yaw   += kAimFanStepDeg * static_cast<float>(fan[g_aimPose].second);
-        E::SetControlRotation(E::GetController(player), r);
-        ++g_aimPose;
-        return;
-    }
     case Step::Grab: {
         void* t = g_target.Get();
         if (!t) { Invalid("the extinguisher died before the grab"); return; }
-        if (g_stepTicks == 1) {
-            LogTarget("BEFORE GRAB");
-            // The use key's release on an aimed prop with an empty hand, in its order.
-            const bool pre = CallWithPlayer(t, L"playerGrabbed_pre", player);
-            void* useFn = R::FindDispatchFunctionCached(R::ClassOf(player), L"useAction");
-            bool use = false;
-            if (useFn) {
-                ue_wrap::ParamFrame f(useFn);
-                use = f.valid() && f.Set<bool>(L"sec", false) && ue_wrap::Call(player, f);
-            }
-            const bool post = CallWithPlayer(t, L"playerGrabbed", player);
-            UE_LOGI("[FIREEXT-DRILL] [%c] grab chain: playerGrabbed_pre=%d useAction=%d playerGrabbed=%d",
-                    Who(), pre ? 1 : 0, use ? 1 : 0, post ? 1 : 0);
+        const coop::director::GrabState gs = g_grab->Tick();
+        if (gs == coop::director::GrabState::Working) return;
+        UE_LOGI("[FIREEXT-DRILL] [%c] the trace took the extinguisher after %d fan pose(s); grab chain: "
+                "playerGrabbed_pre=%d useAction=%d playerGrabbed=%d", Who(), g_grab->AimPoses(),
+                g_grab->ChainPre() ? 1 : 0, g_grab->ChainUse() ? 1 : 0, g_grab->ChainPost() ? 1 : 0);
+        if (gs == coop::director::GrabState::Failed) {
+            Invalid(g_grab->Why());
             return;
         }
-        if (Grabbing(player) == t) {
+        {
             LogTarget("GRABBED");
             if (ArmOf() == Arm::Short || ArmOf() == Arm::Join) {
                 // Let go at once: the stream carries a pose or two, then the release.
-                CallOnPlayer(player, L"dropGrabObject");
+                coop::director::CallOnPlayer(player, L"dropGrabObject");
                 LogTarget("DROPPED");
                 Go(Step::Rest);
                 return;
@@ -582,7 +511,7 @@ void ActStep(coop::net::Session& s, void* player) {
             ue_wrap::FVector end{};
             const char* why = "";
             if (!PickCarryEnd(player, end, why)) {
-                CallOnPlayer(player, L"dropGrabObject");   // the drill ends with an empty hand
+                coop::director::CallOnPlayer(player, L"dropGrabObject");   // the drill ends with an empty hand
                 LogTarget("DROPPED");
                 Invalid(why);
                 return;
@@ -591,15 +520,13 @@ void ActStep(coop::net::Session& s, void* player) {
             Go(Step::WalkAway);
             return;
         }
-        if (g_stepTicks > kGrabVerifyTicks) Invalid("the grab chain did not put the extinguisher in the hand");
-        return;
     }
     case Step::WalkAway:
         if (g_stepTicks % 30 == 0) LogTarget("CARRY");
         if (WalkState() == 0) return;
-        if (Grabbing(player) != g_target.Get()) { Invalid("the hand lost the extinguisher on the way"); return; }
+        if (coop::director::Grabbing(player) != g_target.Get()) { Invalid("the hand lost the extinguisher on the way"); return; }
         LogTarget("CARRIED");
-        CallOnPlayer(player, L"dropGrabObject");
+        coop::director::CallOnPlayer(player, L"dropGrabObject");
         LogTarget("DROPPED");
         Go(Step::Rest);
         return;
@@ -617,6 +544,7 @@ void ActStep(coop::net::Session& s, void* player) {
         UE_LOGI("[FIREEXT-DRILL] ACTOR DONE");
         g_step = Step::Invalid;  // terminal: nothing further runs, and nothing is printed twice
         g_walk.reset();
+        g_grab.reset();
         return;
     case Step::Invalid:
         return;

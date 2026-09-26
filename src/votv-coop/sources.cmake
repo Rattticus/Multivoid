@@ -479,6 +479,7 @@ set(VOTVCOOP_SOURCES
     src/coop/dev/toggle_drill.cpp
     src/coop/dev/blackout_drill.cpp
     src/coop/dev/lid_drill.cpp
+    src/coop/dev/subject_drill.cpp
     src/coop/dev/light_drill.cpp
     src/coop/dev/keypad_drill.cpp
     src/coop/dev/lookat_aim_drill.cpp
@@ -521,6 +522,7 @@ set(VOTVCOOP_SOURCES
     src/coop/dev/director/dup_verifier.cpp
     src/coop/dev/director/door_approach.cpp
     src/coop/dev/director/background_walk.cpp
+    src/coop/dev/director/aimed_grab.cpp
     src/coop/dev/force_weather.cpp
     src/coop/dev/weather_probe.cpp
     src/coop/dev/freecam.cpp
