@@ -11,20 +11,20 @@
 
 namespace ue_wrap::engine {
 
-// UPrimitiveComponent::SetSimulatePhysics. Null-safe.
+// UPrimitiveComponent::SetSimulatePhysics. A no-op on anything but a live primitive component, as each call here is.
 void SetComponentSimulatePhysics(void* component, bool simulate);
 
 // SetPhysicsLinearVelocity (cm/s) and SetPhysicsAngularVelocityInDegrees, replacing the body's own
-// (bAddToCurrent false). A kinematic body ignores both: switch its simulation on first. Null-safe.
+// (bAddToCurrent false). A kinematic body ignores both: switch its simulation on first.
 void SetComponentLinearVelocity(void* component, float vx, float vy, float vz);
 void SetComponentAngularVelocity(void* component, float wx, float wy, float wz);
 
 // IsSimulatingPhysics: USceneComponent's UFunction, which UPrimitiveComponent overrides natively.
-// False for null or when it did not resolve.
+// False for anything but a live primitive component, or when it did not resolve.
 bool IsComponentSimulatingPhysics(void* component);
 
 // GetCenterOfMass: the body's centre of mass in world space; for a body others are welded into, the whole
-// weld's. False for null or when it did not resolve, `out` left as it was.
+// weld's. False for anything but a live primitive component or when it did not resolve, `out` left as it was.
 bool GetComponentCenterOfMass(void* component, FVector& out);
 
 // Every primitive component the actor's Blueprint chain declares as a member (a component variable) that

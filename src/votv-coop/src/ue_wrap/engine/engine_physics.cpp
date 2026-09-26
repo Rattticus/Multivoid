@@ -94,8 +94,19 @@ const std::vector<int32_t>& ComponentMembers(void* cls) {
     return m.offs;
 }
 
+// These are UPrimitiveComponent functions: dispatched on anything else they run on the wrong layout, which the
+// ProcessEvent firewall absorbs as a fault (a walk over an actor's ActorComponents did). Anything else
+// is refused here, the answer the caller gets for an unread body.
+bool IsPrimitive(void* component) {
+    if (!component || !R::IsLive(component)) return false;
+    if (!g_primitiveClass.Alive()) g_primitiveClass.Set(R::FindClass(P::name::PrimitiveComponentClass));
+    void* prim = g_primitiveClass.Raw();
+    void* cls = R::ClassOf(component);
+    return prim && cls && R::IsDescendantOfAny(cls, &prim, 1);
+}
+
 void SetVelocity(Thunk& t, void* component, float x, float y, float z) {
-    if (!component || !Resolve(t)) return;
+    if (!IsPrimitive(component) || !Resolve(t)) return;
     unsigned char frame[kFrameBytes] = {};
     *reinterpret_cast<FVector*>(frame + t.off0) = FVector{x, y, z};
     *reinterpret_cast<R::FName*>(frame + t.off1) = R::FName{0, 0};  // None: the whole body
@@ -105,7 +116,7 @@ void SetVelocity(Thunk& t, void* component, float x, float y, float z) {
 }  // namespace
 
 void SetComponentSimulatePhysics(void* component, bool simulate) {
-    if (!component || !Resolve(g_setSimulate)) return;
+    if (!IsPrimitive(component) || !Resolve(g_setSimulate)) return;
     unsigned char frame[kFrameBytes] = {};
     *reinterpret_cast<bool*>(frame + g_setSimulate.off0) = simulate;
     R::CallFunction(component, g_setSimulate.fn, frame);
@@ -120,7 +131,7 @@ void SetComponentAngularVelocity(void* component, float wx, float wy, float wz) 
 }
 
 bool IsComponentSimulatingPhysics(void* component) {
-    if (!component || !Resolve(g_isSimulating)) return false;
+    if (!IsPrimitive(component) || !Resolve(g_isSimulating)) return false;
     unsigned char frame[kFrameBytes] = {};
     *reinterpret_cast<R::FName*>(frame + g_isSimulating.off0) = R::FName{0, 0};  // None: the whole body
     R::CallFunction(component, g_isSimulating.fn, frame);
@@ -128,7 +139,7 @@ bool IsComponentSimulatingPhysics(void* component) {
 }
 
 bool GetComponentCenterOfMass(void* component, FVector& out) {
-    if (!component || !Resolve(g_getCenterOfMass)) return false;
+    if (!IsPrimitive(component) || !Resolve(g_getCenterOfMass)) return false;
     unsigned char frame[kFrameBytes] = {};
     *reinterpret_cast<R::FName*>(frame + g_getCenterOfMass.off0) = R::FName{0, 0};  // None: the whole body
     R::CallFunction(component, g_getCenterOfMass.fn, frame);
