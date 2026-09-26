@@ -21,6 +21,7 @@
 #include "ue_wrap/desk/coord_tower.h"
 #include "ue_wrap/desk/coords_panel.h"
 #include "ue_wrap/desk/dish.h"
+#include "ue_wrap/desk/sat_console.h"  // SatConsoleLineCount: this machine's own terminal
 #include "ue_wrap/devices/serverbox.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
@@ -93,33 +94,25 @@ bool IsPrefix(const std::vector<std::wstring>& pre, const std::vector<std::wstri
 
 constexpr size_t kMaxDumpLines = 24;  // bound a REWRITE burst
 
-// SAT-console cross-surface fail-loud line count. The SAT command terminal's LogText is a
-// SEPARATE surface from the coords panel and the coord lines do not go there, so count its
-// lines: a zero then means "this terminal is empty", not "we are blind to it".
-// Returns line count; sets found=false when no live ui_console (so the caller
-// logs the distinction). Returns -1 on UNRESOLVED class/offset (fail loud).
-struct FStringView { wchar_t* data; int32_t num; int32_t max; };
+// SAT-console cross-surface fail-loud line count: the lines this machine's own terminal printed (its
+// consoleLine, where every writeToLog lands), a surface separate from the coords panel, so a zero
+// means "this terminal is empty", not "we are blind to it". The terminal is the desk's own, never one
+// the host keeps for a typist (coop/interactables/sat_console_sync). Returns the line count; sets
+// found=false when this machine has no live terminal. Returns -1 while the terminal's members are
+// unresolved (fail loud).
 int32_t SatConsoleLineCount(bool& found, bool& resolved) {
     found = false;
-    resolved = false;
-    static void* s_cls = nullptr;
-    static int32_t s_off = -1;
-    if (!s_cls) s_cls = R::FindClass(L"ui_console_C");
-    if (!s_cls) return -1;                 // class not loaded yet
-    if (s_off < 0) s_off = R::FindPropertyOffset(s_cls, L"LogText");
-    if (s_off < 0) return -1;              // offset UNRESOLVED -> fail loud
-    resolved = true;
-    for (void* obj : R::FindObjectsByClass(L"ui_console_C")) {
-        if (!obj || !R::IsLive(obj)) continue;
-        found = true;
-        auto* s = reinterpret_cast<FStringView*>(reinterpret_cast<uint8_t*>(obj) + s_off);
-        if (!s->data || s->num <= 1) return 0;
-        int32_t lines = 1;
-        for (int32_t i = 0; i < s->num && s->data[i]; ++i)
-            if (s->data[i] == L'\n') ++lines;
-        return lines;
-    }
-    return 0;                              // resolved but no live instance
+    resolved = ue_wrap::sat_console::EnsureResolved();
+    if (!resolved) return -1;
+    void* term = ue_wrap::sat_console::LocalTerminal();
+    if (!term) return 0;
+    found = true;
+    std::wstring log;
+    if (!ue_wrap::sat_console::ReadLog(term, log) || log.empty()) return 0;
+    int32_t lines = 1;
+    for (wchar_t ch : log)
+        if (ch == L'\n') ++lines;
+    return lines;
 }
 
 char RoleChar(coop::net::Session* s) {

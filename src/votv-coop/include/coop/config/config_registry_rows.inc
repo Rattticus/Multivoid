@@ -573,6 +573,13 @@ CFG_FLAG(drone_call_drill, "drone_call_drill", "dev", false, "VOTVCOOP_DRONE_CAL
     "presses its console for the client. A sack the first press brought is followed by a second press, and "
     "the client's DONE line says whether the drone flew on its copy; the host logs its drone's changes. "
     "Lines tagged [DRONE-CALL-DRILL].")
+CFG_STRING(sat_console_drill, "sat_console_drill", "dev", "", "VOTVCOOP_SAT_CONSOLE_DRILL", false,
+    "Drill (BOTH peers): run -- a client types sd.cal, sauce.get and sv.hash at its SAT console; the host runs "
+    "them on the terminal it keeps for that client and sends the lines back. rejoin -- the client leaves in the "
+    "middle of an sd.calall (run with --rejoin-marker) and, back, is told its terminal is busy and gets the "
+    "run's lines again. discard -- the only client leaves in the middle (run with --rejoin-marker and no observer): the "
+    "session ends and the host checks, in the next one, that the discarded terminal's run stopped and it went at a "
+    "GC. Lines tagged [SAT-DRILL].")
 CFG_STRING(server_upgrade_drill, "server_upgrade_drill", "dev", "", "VOTVCOOP_SERVER_UPGRADE_DRILL", false,
     "Drill (BOTH peers): a client installs an upgrade into a server box and takes one out. apply: the host "
     "applies both; refuse: the host refuses both, as if each had lost its race, and the client sees its install "
