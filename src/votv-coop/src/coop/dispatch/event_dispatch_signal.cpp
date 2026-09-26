@@ -358,7 +358,7 @@ bool HandleSignalEvent(net::Session& /*session*/,
         break;
     }
     case net::ReliableKind::DishCalib: {
-        // The symmetric calibration batch (apply + prime; host relays).
+        // The host's precision batch (a client holds the values; the host takes none).
         if (msg.payloadLen < sizeof(net::DishCalibPayload)) {
             UE_LOGW("event_feed: DishCalib payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::DishCalibPayload));
@@ -371,6 +371,22 @@ bool HandleSignalEvent(net::Session& /*session*/,
                 ? static_cast<uint8_t>(msg.senderPeerSlot)
                 : static_cast<uint8_t>(0xFF);
         coop::dish_calib_sync::OnDishCalib(cp2, c2slot);
+        break;
+    }
+    case net::ReliableKind::DishCalibIntent: {
+        // A client's own verb set these dishes' precision; the host performs it.
+        if (msg.payloadLen < sizeof(net::DishCalibPayload)) {
+            UE_LOGW("event_feed: DishCalibIntent payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::DishCalibPayload));
+            break;
+        }
+        net::DishCalibPayload ip{};
+        std::memcpy(&ip, msg.payload, sizeof(ip));
+        const uint8_t islot =
+            (msg.senderPeerSlot >= 0 && msg.senderPeerSlot < net::kMaxPeers)
+                ? static_cast<uint8_t>(msg.senderPeerSlot)
+                : static_cast<uint8_t>(0xFF);
+        coop::dish_calib_sync::OnDishCalibIntent(ip, islot);
         break;
     }
     case net::ReliableKind::ReelSlot: {

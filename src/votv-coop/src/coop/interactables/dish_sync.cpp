@@ -117,7 +117,6 @@ void ResetModuleState() {
     g_cueWatch = 0;
     g_parkedDisher = nullptr;
     g_parkedUncalib = nullptr;
-    coop::dish_calib_sync::Reset();
     for (int32_t i = 0; i < coop::net::kMaxDishes; ++i) {
         g_dishInterp[i] = DishInterp{};
     }
@@ -129,6 +128,7 @@ bool CheckGeneration() {
     if (inst == g_generation) return false;
     g_generation = inst;
     ResetModuleState();
+    coop::dish_calib_sync::OnDeskReplaced();
     return true;
 }
 
@@ -574,7 +574,6 @@ void OnDishSnapshot(const coop::net::DishSnapshotPayload& p, uint8_t senderSlot)
         // trust the explicit mask over the row-apply default.
         D::WriteActiveDish(i, r.activeDish != 0);
     }
-    coop::dish_calib_sync::ApplySnapshot(p, n);
     UE_LOGI("dish_sync: snapshot applied (%d dishes)", n);
 }
 
@@ -597,7 +596,6 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
             auto& w = p.rows[r.index];
             w.yawCdeg = coop::net::QuantDeg(r.yawZ);
             w.rollCdeg = coop::net::QuantDeg(r.rollY);
-            w.calibQ = coop::net::QuantCalib(r.calibration);
             w.isMoving = r.isMoving ? 1 : 0;
             bool active = false;
             D::ReadActiveDish(r.index, active);
@@ -683,6 +681,7 @@ void OnDisconnect() {
     }
     g_generation = nullptr;
     ResetModuleState();
+    coop::dish_calib_sync::OnSessionEnd();
 }
 
 }  // namespace coop::dish_sync

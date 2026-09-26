@@ -229,7 +229,7 @@ void Install(coop::net::Session& session) {
     coop::drive_rack_sync::Install(&session);  // rack storage lane (marks forwarded from drive_sync)
     coop::desk_sim_sync::Install(&session);  // download-SIM host-authoritative output stream (decoded/needle/rate/frData/poData/offsets; client overwrites)
     coop::dish_sync::Install(&session);  // host-auth dish pose mirror + host-polarity ARM edge (client sim parked)
-    coop::dish_calib_sync::Install(&session);  // the dishes' calibration: every peer's 1 Hz diff poll, relayed by the host
+    coop::dish_calib_sync::Install(&session);  // the dishes' precision: the host authors it, a client's own verbs are intents
     coop::dish_hashcode_sync::Install(&session);  // the dishes' hash codes: the host's rollover sends them, a client refuses its own
     coop::sat_console_sync::Install(&session);  // the SAT console: a client's shared commands run on a terminal the host keeps for it
     coop::tape_caddy_sync::Install(&session);  // caddy reel slots (presser edges) + host accrual corrector (client accrual NOT parked -- corrector-bounded)
@@ -336,6 +336,7 @@ void ConnectReplayForSlot(int slot) {
     coop::floppybox_sync::QueueConnectBroadcastForSlot(slot);  // one canonical per live box
     coop::props::container_contents_sync::QueueConnectBroadcastForSlot(slot);  // one slice per live world container (principle 8 anchor over the join snapshot)
     coop::dish_sync::QueueConnectBroadcastForSlot(slot);  // dish snapshot + (if armed) the DishArm row -- AFTER the desk rows + the kind=0 catch row (same ordered lane)
+    coop::dish_calib_sync::QueueConnectBroadcastForSlot(slot);  // every dish's precision, the joiner's seed
     coop::sleep_sync::QueueConnectBroadcastForSlot(slot);  // a joiner arrives awake -- end a running accelerate + re-tally
     coop::comp_sync::QueueConnectBroadcastForSlot(slot);  // decode-pane adopt (CompState + CompData)
     coop::voice_chat::ReplayPeerStatesToSlot(slot);  // voice mute/disabled states -> joiner
@@ -595,6 +596,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:sky"}; coop::sky_sync::Tick(); }  // night-sky: the eye gate's name (both roles), then the host's throttled push
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:power"}; coop::power_sync::Tick(); }  // base power panel: poll breaker edges + deferred-apply retry (symmetric)
     coop::power_grid::Tick();  // settle the decay tick's gate
+    coop::dish_calib_sync::Tick();  // settle the two precision verbs' watches
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:atv"}; coop::atv_sync::Tick(); }  // ATV: occupant streams its pose / mirror drives the interp (host+client)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:drone"}; coop::drone_sync::Tick(); }  // delivery drone: host streams transform / client suppresses tick + mirrors
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:turbine"}; coop::turbine_sync::Tick(); }  // wind turbines: host ~1 Hz driver-float poll / client deferred-apply retry

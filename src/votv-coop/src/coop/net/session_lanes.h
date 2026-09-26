@@ -194,6 +194,10 @@ inline Lane LaneForKind(ReliableKind k) {
     // waits for the bind, and the host resolves an intent by eid. The default, by decision.
     case ReliableKind::KerfusState:       return Lane::Normal;
     case ReliableKind::KerfusIntent:      return Lane::Normal;
+    // The precision family is ordered against nothing but itself: a joiner's seed and every later
+    // batch are one kind, and an intent is performed by dish index. The default, by decision.
+    case ReliableKind::DishCalib:         return Lane::Normal;
+    case ReliableKind::DishCalibIntent:   return Lane::Normal;
     default:                           return Lane::Normal;
     }
 }

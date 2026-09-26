@@ -35,7 +35,7 @@ namespace R  = ue_wrap::reflection;
 namespace sg = ue_wrap::script_gate;
 
 constexpr float    kFixture       = 0.4242f; // the host's lowered calibration, a value no dish rests at: 35 s back to full
-constexpr float    kFixtureNear   = 0.002f;  // the client knows the fixture dish by its value, quantised on the wire
+constexpr float    kFixtureNear   = 0.002f;  // the client knows the fixture dish by its value
 constexpr int      kRejoinDishes  = 5;       // rejoin: dishes lowered to nothing, a minute's ramp each
 constexpr float    kFull          = 0.999f;
 constexpr uint64_t kArmBoundMs    = 60000;   // the fixture crosses by the calibration lane's poll
@@ -143,11 +143,11 @@ int GiftBoxes() {
 
 // The dish the host lowered for the drill, known by its value, or -1 until the calibration lane brings it.
 int32_t FixtureDish(float& cal) {
-    D::DishRow rows[kDishes];
-    const int32_t n = D::ReadAllRows(rows, kDishes);
+    D::DishCalibration rows[kDishes];
+    const int32_t n = D::ReadCalibrations(rows, kDishes);
     for (int32_t i = 0; i < n; ++i) {
-        if (std::fabs(rows[i].calibration - kFixture) <= kFixtureNear) {
-            cal = rows[i].calibration;
+        if (std::fabs(rows[i].value - kFixture) <= kFixtureNear) {
+            cal = rows[i].value;
             return rows[i].index;
         }
     }
@@ -155,10 +155,10 @@ int32_t FixtureDish(float& cal) {
 }
 
 float CalibrationOf(int32_t index) {
-    D::DishRow rows[kDishes];
-    const int32_t n = D::ReadAllRows(rows, kDishes);
+    D::DishCalibration rows[kDishes];
+    const int32_t n = D::ReadCalibrations(rows, kDishes);
     for (int32_t i = 0; i < n; ++i)
-        if (rows[i].index == index) return rows[i].calibration;
+        if (rows[i].index == index) return rows[i].value;
     return -1.f;
 }
 
@@ -183,10 +183,10 @@ void ClientTick() {
         }
         if (Leaves()) {
             // sd.calall runs for minutes once a dish the host zeroed has reached this client.
-            D::DishRow rows[kDishes];
-            const int32_t n = D::ReadAllRows(rows, kDishes);
+            D::DishCalibration rows[kDishes];
+            const int32_t n = D::ReadCalibrations(rows, kDishes);
             bool zeroed = false;
-            for (int32_t i = 0; i < n && !zeroed; ++i) zeroed = rows[i].calibration <= kZeroed;
+            for (int32_t i = 0; i < n && !zeroed; ++i) zeroed = rows[i].value <= kZeroed;
             if (!zeroed) {
                 if (Expired(kArmBoundMs)) Abandon("no dish the host zeroed reached this client within 60 s");
                 return;
@@ -333,12 +333,12 @@ void HostArm(coop::net::Session* s) {
 void HostJudgeDiscard() {
     const uint64_t now = ::GetTickCount64();
     if (g_gcAtMs == 0) {
-        D::DishRow rows[kDishes];
-        const int32_t n = D::ReadAllRows(rows, kDishes);
+        D::DishCalibration rows[kDishes];
+        const int32_t n = D::ReadCalibrations(rows, kDishes);
         g_rose = 0;
         for (const Left& l : g_leftDishes)
             for (int32_t i = 0; i < n; ++i)
-                if (rows[i].index == l.index && rows[i].calibration > l.cal + kRise) ++g_rose;
+                if (rows[i].index == l.index && rows[i].value > l.cal + kRise) ++g_rose;
         ue_wrap::engine::ForceGarbageCollection();
         g_gcAtMs = now;
         return;
@@ -412,11 +412,11 @@ void OnDisconnect() {
             r.Set(kept[i]);
             g_discarded.push_back(r);
         }
-        D::DishRow rows[kDishes];
-        const int32_t m = D::ReadAllRows(rows, kDishes);
+        D::DishCalibration rows[kDishes];
+        const int32_t m = D::ReadCalibrations(rows, kDishes);
         g_leftDishes.clear();
         for (int32_t i = 0; i < m; ++i)
-            if (rows[i].calibration < 0.99f) g_leftDishes.push_back({rows[i].index, rows[i].calibration});
+            if (rows[i].value < 0.99f) g_leftDishes.push_back({rows[i].index, rows[i].value});
         g_discardPending = true;
         g_gcAtMs = 0;
         UE_LOGI("[SAT-DRILL] host: the session ends with %zu terminal(s) kept and %zu dish(es) below full precision",

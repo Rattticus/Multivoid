@@ -307,8 +307,6 @@ int32_t ReadAllRows(DishRow* out, int32_t cap) {
         if (!d) continue;
         out[n].index = i;
         out[n].isMoving = *(reinterpret_cast<uint8_t*>(d) + g_offIsMoving) != 0;
-        out[n].calibration = *reinterpret_cast<float*>(
-            reinterpret_cast<uint8_t*>(d) + g_offCalibration);
         // FRotator is {Pitch, Yaw, Roll} floats; raw READS are fine (only
         // writes need the K2 pipeline).
         out[n].yawZ = 0.f;
@@ -323,6 +321,21 @@ int32_t ReadAllRows(DishRow* out, int32_t cap) {
                 reinterpret_cast<uint8_t*>(ay) + g_offRelRot);
             out[n].rollY = r[2];
         }
+        ++n;
+    }
+    return n;
+}
+
+int32_t ReadCalibrations(DishCalibration* out, int32_t cap) {
+    TArrayView* a = Dishs();
+    if (!a || !g_l4Resolved || !out || cap <= 0) return 0;
+    if (a->num < 0 || a->num > 64) return 0;
+    int32_t n = 0;
+    for (int32_t i = 0; i < a->num && n < cap; ++i) {
+        void* d = DishAt(a, i);
+        if (!d) continue;
+        out[n].index = i;
+        out[n].value = *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(d) + g_offCalibration);
         ++n;
     }
     return n;

@@ -91,7 +91,12 @@ replayed on every peer (`coop/interactables/signal_catch_sync`); the unprimed ch
 authority, because a claim-gated detector lost a live catch to the hold's own release. The dish
 theater is host-only: the client's dish simulation is parked, the host replays the slew and
 streams the poses of all twenty-four dishes, the armed download's polarity is host-authored, and
-calibration is a symmetric per-dish batch (`coop/interactables/dish_calib_sync`).
+so is a dish's precision: the host sends its changed dishes' values and a joiner all of them, and a
+client's copy holds the host's values, whatever moved it off one (a mirrored lightning strike's hit,
+its own ping's slew) put back at its poll and before the gamemode averages the dishes into the rate
+its desk downloads with. A client player's own two verbs are the exception, the toolgun's
+calibration tool and the uncalibrator: they run on its copy and send what they changed to the host,
+which performs it and sends the result to all (`coop/interactables/dish_calib_sync`).
 
 ### The deck list, playback, the refiner
 
@@ -185,7 +190,8 @@ not built. The ATV's physical modules are on [vehicles.md](vehicles.md).
 | `DeskSimPose` (stream), `DeskCursorPose` (stream) | the host to all; the mover to all | the simulation outputs; the cursor |
 | `DeskSndFx` | the presser, relayed | an audio effect event |
 | `SkySignalState`, `SkySignalCatch`, `DishAimState` | the host; the catcher and the host; the occupant | the signal set; a catch; committed coordinates |
-| `DishArm`, `DishSnapshot`, `DishCalib`, `DishPose` (stream) | the host; the host to a joiner; any peer; the host | the armed download; all dishes for a joiner; a calibration batch; dish poses |
+| `DishArm`, `DishSnapshot`, `DishCalib`, `DishPose` (stream) | the host; the host to a joiner; the host, to all and to a joiner; the host | the armed download; every dish's pose for a joiner; the changed dishes' precision, the dishes an intent named, and every dish's for a joiner; dish poses |
+| `DishCalibIntent` | a client to the host | the dishes whose precision the client's player just set with the toolgun's calibration tool or the uncalibrator |
 | `SavedSignalAppend`, `SavedSignalDelete`, `MeadowAppend`, `MeadowDelete`, `MeadowOrder` | any peer, relayed; order from the host | list rows by content hash; the database's order |
 | `PlayDeckEvent`, `CompState`, `CompData` | the presser; the simulator | playback edges; the refiner's state and its loaded signal |
 | `DriveSlotState`, `DrivePayload`, `RackState`, `PhysModsState`, `FloppyBoxState` | any peer to the host; the host canonical | slot lines; payload rows; rack operations and arrays; the module set; the crate stack |
@@ -218,6 +224,8 @@ is discarded with it, its command stopping there. The upgrade levels arrive with
 | The red phone's ring is per-peer randomness with no lane | `[V]` no lane exists |
 | A SAT console command that spawns or destroys a class no lane carries (the rufus, the thiccfus, the llama's soul, the madness, the centipede, the murder kerfur) acts in the host's world only; its typist does not see it | `[V]` no lane exists for those classes |
 | Each player's SAT console screen and log are its own; another player's typing is not shown | `[V]` by design until decided |
+| A client's cheat menu (`uncalib`, `summonvirus`) and a virus its own save starts change only its copy of the dishes' precision, and the copy is put back at its next poll; the virus itself waits on a lane for the desk's `virusEvent` | `[V]` `coop/interactables/dish_calib_sync`; no lane carries `virusEvent` |
+| The fakeGrays event's level trigger (`trigger_fakeLmaos`) breaks its dish's server and zeroes the dish on the machine where an allowed actor enters its volume; on a client the zero is put back and the break stays that client's | `[V]` the chain: the eventer's fakeGrays event arms the volume, whose first object is the trigger; `[?]` whether a client's body on the host's copy fires it |
 
 ## Code map
 

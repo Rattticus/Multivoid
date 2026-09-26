@@ -69,9 +69,17 @@ struct DishRow {
     int32_t index = 0;
     bool    isMoving = false;
     float   yawZ = 0.f, rollY = 0.f;
-    float   calibration = 0.f;
 };
 int32_t ReadAllRows(DishRow* out, int32_t cap);
+
+// One dish's precision by its gamemode.dishs index.
+struct DishCalibration {
+    int32_t index = 0;
+    float   value = 0.f;
+};
+// Every live dish's calibration: the precision's one read, apart from the pose rows above. Game
+// thread.
+int32_t ReadCalibrations(DishCalibration* out, int32_t cap);
 
 // Mirror-write the pose: K2_SetRelativeRotation(axis_Z, {0,0,yaw}) +
 // (axis_Y, {roll,0,0}) -- the native loop's own frame + channel zeroing.
@@ -101,8 +109,10 @@ bool AnyCueActive(int32_t index, bool& ok);
 bool ReadActiveDish(int32_t index, bool& out);
 bool WriteActiveDish(int32_t index, bool active);
 
-// dish.calibration (float). Raw write (the field is natively raw-written by the slew-loop
-// decay, the ui_console calibrate machine, the tool and the virus event).
+// dish.calibration (float). Raw write, as its nine Blueprint writers do: the dish's own precision
+// loss in its slew loop, its loadData, a lightning strike's hit, the desk's virus event, the cheat
+// menu, the SAT console's calibration, the toolgun's calibration tool and the uncalibrator
+// (ue_wrap/desk/dish_writers), and a level trigger (trigger_fakeLmaos).
 bool WriteCalibration(int32_t index, float v);
 
 // dish.techName (FString) for identity logging ("[dish] 3 'Bonna'").
@@ -140,6 +150,11 @@ void* DishByIndex(int32_t index);
 // + camera aim + objectRenderer.begin() + signalFound). The L4 client ARM
 // apply calls it with activeDishes pre-cleared so the gate passes.
 bool CallCheckFordDishes();
+
+// mainGamemode.setPrec(): the average of every dish's calibration, written into the desk's
+// DL_precMult, from which the desk's download computes its rate every tick. A 10 s looping timer
+// runs it on every peer. The function's name, for a watch.
+inline constexpr const wchar_t* kSetPrec = L"setPrec";
 
 // ---- L4 ticker surface -----------------------------------------------------
 // Both tickers are gamemode-BeginPlay singletons (one per world per peer).

@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 195;
+inline constexpr uint16_t kProtocolVersion = 196;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -527,11 +527,12 @@ enum class ReliableKind : uint8_t {
     // DishArmPayload.
     DishArm = 99,
 
-    // Host to one joiner: every dish's pose, calibration and the active mask. DishSnapshotPayload.
+    // Host to one joiner: every dish's pose and the active mask. DishSnapshotPayload.
     DishSnapshot = 100,
 
-    // Any peer, relayed: absolute calibration values for the dishes whose local values changed.
-    // DishCalibPayload.
+    // Host to all: the precision of the dishes whose values changed on the host, all of them when
+    // its baseline primes, and the dishes a client's intent named, as the host then holds them; host
+    // to one joiner: all of them at its world-ready. A client sends none. DishCalibPayload.
     DishCalib = 101,
 
     // From the presser, relayed: a wall-unit reel slot insert or eject. ReelSlotPayload.
@@ -872,6 +873,11 @@ enum class ReliableKind : uint8_t {
     // terminal prints, and each change of its busy flag. Never relayed; a joiner
     // has nothing to replay. BlobChunkPayload: [u8 op] then the op's fields (sat_console_sync).
     SatConsole = 157,
+
+    // Client to host: the dishes whose precision this client's player just set with a verb of its
+    // own (the toolgun's calibration tool, the uncalibrator), their new values; the host performs
+    // them and sends every named dish's value to all in a DishCalib. Never relayed. DishCalibPayload.
+    DishCalibIntent = 158,
 };
 
 #pragma pack(push, 1)
@@ -2756,9 +2762,8 @@ static_assert(sizeof(RackStateHead) == 8, "RackStateHead must be 8 bytes");
 inline constexpr int32_t kMaxDishes = 24;
 
 // Angles ride as unsigned centidegrees normalized to [0, 36000) -- 0.01 deg
-// resolution against the loop's own 1.0 deg arrival tolerance; calibration as
-// value*65535 (0..1). Keeps the full-24 packets inside kMaxPacketBytes /
-// kMaxReliablePayload.
+// resolution against the loop's own 1.0 deg arrival tolerance. Keeps the full-24
+// packets inside kMaxPacketBytes / kMaxReliablePayload.
 inline uint16_t QuantDeg(float deg) {
     if (!(deg > -1.0e6f && deg < 1.0e6f)) return 0;  // NaN/inf/absurd -> 0 (UB-safe int cast)
     float n = deg - 360.f * static_cast<float>(static_cast<int>(deg / 360.f));
@@ -2767,12 +2772,6 @@ inline uint16_t QuantDeg(float deg) {
     return static_cast<uint16_t>(n * 100.f + 0.5f);
 }
 inline float DequantDeg(uint16_t q) { return static_cast<float>(q) * 0.01f; }
-inline uint16_t QuantCalib(float v) {
-    if (v < 0.f) v = 0.f;
-    if (v > 1.f) v = 1.f;
-    return static_cast<uint16_t>(v * 65535.f + 0.5f);
-}
-inline float DequantCalib(uint16_t q) { return static_cast<float>(q) / 65535.f; }
 
 struct DishPoseRow {
     uint8_t  index;      // 1 -- gamemode.dishs index
@@ -2806,39 +2805,39 @@ struct DishArmPayload {
 };
 static_assert(sizeof(DishArmPayload) == 12, "DishArmPayload must be 12 bytes");
 
-// The joiner's dish seed (DishSnapshot).
+// The joiner's dish seed (DishSnapshot). The precision has a seed of its own (DishCalib).
 struct DishSnapshotRow {
     uint16_t yawCdeg;      // 2
     uint16_t rollCdeg;     // 2
-    uint16_t calibQ;       // 2 -- calibration * 65535 (0..1)
     uint8_t  isMoving;     // 1
     uint8_t  activeDish;   // 1 -- gamemode.activeDishes[i]
 };
-static_assert(sizeof(DishSnapshotRow) == 8, "DishSnapshotRow must be 8 bytes");
+static_assert(sizeof(DishSnapshotRow) == 6, "DishSnapshotRow must be 6 bytes");
 
 struct DishSnapshotPayload {
     uint8_t         count;             // 1 -- used rows (dish i = rows[i])
     uint8_t         _pad[3];           // 3
-    DishSnapshotRow rows[kMaxDishes];  // 192
+    DishSnapshotRow rows[kMaxDishes];  // 144
 };
-static_assert(sizeof(DishSnapshotPayload) == 196, "DishSnapshotPayload must be 196 bytes");
+static_assert(sizeof(DishSnapshotPayload) == 148, "DishSnapshotPayload must be 148 bytes");
 static_assert(sizeof(DishSnapshotPayload) <= 256 - 20 - 8,
               "DishSnapshotPayload must fit in one reliable datagram");
 
-// The calibration batch (DishCalib): absolute values from the peer whose local values changed.
+// The precision of the dishes named (DishCalib from the host, DishCalibIntent from a client), each
+// the dish's value itself: the toolgun's calibration tool writes any float, not only 0..1.
 struct DishCalibEntry {
-    uint8_t  index;      // 1
-    uint8_t  _pad;       // 1
-    uint16_t valueQ;     // 2 -- calibration * 65535 (0..1)
+    uint8_t index;       // 1 -- gamemode.dishs index
+    uint8_t _pad[3];     // 3
+    float   value;       // 4
 };
-static_assert(sizeof(DishCalibEntry) == 4, "DishCalibEntry must be 4 bytes");
+static_assert(sizeof(DishCalibEntry) == 8, "DishCalibEntry must be 8 bytes");
 
 struct DishCalibPayload {
     uint8_t        count;               // 1
     uint8_t        _pad[3];             // 3
-    DishCalibEntry entries[kMaxDishes]; // 96
+    DishCalibEntry entries[kMaxDishes]; // 192
 };
-static_assert(sizeof(DishCalibPayload) == 100, "DishCalibPayload must be 100 bytes");
+static_assert(sizeof(DishCalibPayload) == 196, "DishCalibPayload must be 196 bytes");
 static_assert(sizeof(DishCalibPayload) <= 256 - 20 - 8,
               "DishCalibPayload must fit in one reliable datagram");
 

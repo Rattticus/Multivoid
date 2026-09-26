@@ -2,7 +2,7 @@
 //
 // THE ROOT, measured: every dish slew runs a per-peer Blueprint frame loop with per-slew RNG
 // in its start delays and speed; the download ARM rolls per-peer RNG polarity when it
-// initialises the signal; and calibration has four independent writers. So dish poses, an
+// initialises the signal; and calibration has random writers on every peer. So dish poses, an
 // armed download's polarity and the calibration all DIVERGE across peers on their own.
 //
 // So each axis gets ONE author. POSES: a client's dish simulation is PARKED -- both its
@@ -11,8 +11,8 @@
 // interpolation window, so the stream's rate is not visible as stepping. That applier serves
 // the stream rows and the join seed alike, and skips a dish whose own local loop is still
 // live. ARM: the host's raw poll is the only author, and a client applies the host's polarity
-// rather than rolling its own. CALIBRATION is a lane of its own (coop/interactables/
-// dish_calib_sync), polled from this lane's slow tick and seeded by its join snapshot.
+// rather than rolling its own. CALIBRATION: the host authors it too, in a lane of its own
+// (coop/interactables/dish_calib_sync), polled from this lane's slow tick, with its own join seed.
 
 #pragma once
 
@@ -36,7 +36,7 @@ void Tick();
 void OnDishArm(const coop::net::DishArmPayload& p, uint8_t senderSlot);
 void OnDishSnapshot(const coop::net::DishSnapshotPayload& p, uint8_t senderSlot);
 
-// HOST: the joiner's connect-replay rows -- DishSnapshot (poses/calibration/
+// HOST: the joiner's connect-replay rows -- DishSnapshot (poses and
 // activeDishes) and, when the host machine is armed, a DishArm row (AFTER the
 // desk rows + the kind=0 catch row on the same ordered lane).
 void QueueConnectBroadcastForSlot(int peerSlot);
