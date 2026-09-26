@@ -363,12 +363,18 @@ inline constexpr size_t UCapsuleComponent_CapsuleHalfHeight = 0x0468;  // float 
 // PoseSnapshot.stateBits bit 0 so the receiver clears useLegIK during jumps (the puppet's CMC
 // tick is parked, so it never leaves the ground itself).
 inline constexpr size_t UCharacterMovement_MovementMode = 0x0168;
+// UMovementComponent::UpdatedComponent @ +0x00B0 (Engine.hpp:15425): the component a movement moves,
+// whose IsSimulatingPhysics a CharacterMovementComponent's tick asks before it moves anything.
+inline constexpr size_t UMovementComponent_UpdatedComponent = 0x00B0;
 inline constexpr uint8_t kMOVE_Falling = 3;
 
 // USceneComponent::AttachParent @ +0x00C0 (Engine.hpp:17900). The puppet spawn's diagnostic dump
 // checks mesh_playerVisible's parent: a propagating hide on ACharacter::Mesh would cascade to
 // the body if that is the parent.
 inline constexpr size_t USceneComponent_AttachParent      = 0x00C0;
+// USceneComponent::AttachChildren @ +0x00D0 (Engine.hpp:17902), TArray<USceneComponent*>: the walk
+// that finds the Characters attached to a prop, as AActor::GetAttachedActors finds attached actors.
+inline constexpr size_t USceneComponent_AttachChildren    = 0x00D0;
 // USceneComponent flag bytes: bVisible is bit 4 of 0x14C, bHiddenInGame bit 2 of 0x14D
 // (Engine.hpp:17917 ordering); logged raw, masked at the read site.
 inline constexpr size_t USceneComponent_VisFlagsByte      = 0x014C;  // bVisible @ bit 4

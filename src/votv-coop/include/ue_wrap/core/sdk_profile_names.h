@@ -332,6 +332,7 @@ inline constexpr const wchar_t* SetTintColorAndOpacityFn = L"SetTintColorAndOpac
 inline constexpr const wchar_t* RequestRedrawFn = L"RequestRedraw";                  // sets bRedrawRequested
 inline constexpr const wchar_t* RequestRenderUpdateFn = L"RequestRenderUpdate";      // forces render-state/RT refresh
 inline constexpr const wchar_t* SetComponentTickEnabledFn = L"SetComponentTickEnabled";  // on UActorComponent -- a runtime-added WidgetComponent doesn't tick -> never draws its RT
+inline constexpr const wchar_t* IsComponentTickEnabledFn = L"IsComponentTickEnabled";  // on UActorComponent -- a park restarts only a movement it stopped
 inline constexpr const wchar_t* NameplateSetTextFn = L"SetText";                     // UTextBlock::SetText(FText)
 inline constexpr const wchar_t* TextBlockClass = L"TextBlock";
 inline constexpr const wchar_t* ImageClass = L"Image";                              // UImage -- every frame, fill and scrim we build

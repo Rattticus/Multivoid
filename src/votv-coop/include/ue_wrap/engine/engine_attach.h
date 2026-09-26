@@ -17,6 +17,19 @@ bool AttachActorToComponentSocket(void* actor, void* component, const wchar_t* s
 
 bool DetachActorFromParent(void* actor);
 
+// A Character attached to an actor: the Character, its CharacterMovementComponent, and the component that
+// movement moves (UpdatedComponent, its capsule). A field that does not read is null.
+struct AttachedCharacter {
+    void* character = nullptr;
+    void* movement = nullptr;
+    void* updated = nullptr;
+};
+
+// Up to `max` Characters attached to `actor`, into `out`; returns how many. Found as AActor::GetAttachedActors
+// finds attached actors: down the AttachChildren of `actor`'s own components from its root, where a child
+// another actor owns names that actor, whose own attachments are not walked. Game thread.
+int AttachedCharactersOf(void* actor, AttachedCharacter* out, int max);
+
 // ---- Generic actor root-physics substrate ----
 // Root-component primitives through K2_GetRootComponent, never the Aprop_C mesh offset, so they
 // work on the non-Aprop_C trash clump. Game thread; each IsLive-gates its arguments.

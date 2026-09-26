@@ -15,10 +15,14 @@
 #include "ue_wrap/core/fname_utils.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/sdk_profile.h"
+
+#include <cstdint>
 
 namespace ue_wrap::engine {
 namespace {
 
+namespace P = profile;
 namespace R = reflection;
 
 // Cached UFunctions (resolve once; re-resolve if the owning class is freed). Plain
@@ -39,6 +43,9 @@ void* g_getPhysMatFn = nullptr;  // MaterialInterface::GetPhysicalMaterial
 void* g_primCompClass = nullptr;  // the PrimitiveComponent UClass (root-type gate)
 void* g_attachCompFn = nullptr;  // Actor::K2_AttachToComponent
 void* g_detachFn     = nullptr;  // Actor::K2_DetachFromActor
+
+constexpr int     kMaxWalk     = 64;    // components a walk visits: a Kerfus carries about twenty
+constexpr int32_t kMaxChildren = 256;   // an AttachChildren count past this is not a count
 
 void* ActorFn(void** cache, const wchar_t* name) {
     if (!*cache) {
@@ -63,6 +70,10 @@ void* RootComponentOf(void* actor) {
     if (!Call(actor, f)) return nullptr;
     void* root = f.Get<void*>(L"ReturnValue");
     return (root && R::IsLive(root)) ? root : nullptr;
+}
+
+void* ReadPtrAt(const void* obj, size_t off) {
+    return *reinterpret_cast<void* const*>(static_cast<const uint8_t*>(obj) + off);
 }
 
 }  // namespace
@@ -257,6 +268,41 @@ bool DetachActorFromParent(void* actor) {
     f.Set<uint8_t>(L"RotationRule", uint8_t{1});       // KeepWorld
     f.Set<uint8_t>(L"ScaleRule",    uint8_t{1});       // KeepWorld
     return Call(actor, f);
+}
+
+int AttachedCharactersOf(void* actor, AttachedCharacter* out, int max) {
+    if (!out || max <= 0) return 0;
+    void* root = RootComponentOf(actor);
+    if (!root) return 0;
+    void* stack[kMaxWalk];
+    int top = 0, visited = 0, n = 0;
+    stack[top++] = root;
+    while (top > 0 && visited < kMaxWalk) {
+        const uint8_t* comp = static_cast<const uint8_t*>(stack[--top]);
+        ++visited;
+        void* const* children = *reinterpret_cast<void* const* const*>(comp + P::off::USceneComponent_AttachChildren);
+        const int32_t num = *reinterpret_cast<const int32_t*>(comp + P::off::USceneComponent_AttachChildren + 8);
+        if (!children || num <= 0 || num > kMaxChildren) continue;
+        for (int32_t i = 0; i < num; ++i) {
+            void* child = children[i];
+            if (!child || !R::IsLive(child)) continue;
+            void* owner = R::OuterOf(child);
+            if (owner == actor) {
+                if (top < kMaxWalk) stack[top++] = child;
+                continue;
+            }
+            // Another actor's component: that actor is attached here. A Character, the one that has a movement,
+            // is listed once.
+            void* movement = owner ? GetCharacterMovementComponent(owner) : nullptr;
+            if (!movement) continue;
+            bool listed = false;
+            for (int j = 0; j < n; ++j) listed = listed || out[j].character == owner;
+            if (listed || n >= max) continue;
+            void* updated = ReadPtrAt(movement, P::off::UMovementComponent_UpdatedComponent);
+            out[n++] = AttachedCharacter{owner, movement, (updated && R::IsLive(updated)) ? updated : nullptr};
+        }
+    }
+    return n;
 }
 
 }  // namespace ue_wrap::engine

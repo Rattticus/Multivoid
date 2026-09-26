@@ -330,14 +330,15 @@ bool SetComponentMaterial(void* component, int32_t elementIndex, void* material)
 
 
 void* GetCharacterMovementComponent(void* characterPawn) {
-    if (!characterPawn) return nullptr;
-    for (const auto& c : R::ChildObjectsOf(characterPawn)) {
-        if (c.className == L"CharacterMovementComponent") {
-            return c.object;
-        }
-    }
-    UE_LOGW("engine: GetCharacterMovementComponent -- no CMC subobject on %p", characterPawn);
-    return nullptr;
+    // ACharacter::CharacterMovement at its native offset: one field read, on any Character subclass.
+    static void* sCharacterClass = nullptr;  // native, RF_Native: never collected
+    if (!sCharacterClass) sCharacterClass = R::FindClass(L"Character");
+    if (!characterPawn || !R::IsLive(characterPawn) || !sCharacterClass ||
+        !R::IsDescendantOfAny(R::ClassOf(characterPawn), &sCharacterClass, 1))
+        return nullptr;
+    void* cmc = *reinterpret_cast<void* const*>(static_cast<const uint8_t*>(characterPawn) +
+                                               P::off::ACharacter_CharacterMovement);
+    return (cmc && R::IsLive(cmc)) ? cmc : nullptr;
 }
 
 void* GetStaticMeshComponent(void* actor) {
@@ -365,6 +366,18 @@ bool SetComponentTickEnabled(void* component, bool enabled) {
     ParamFrame f(sFn);
     f.Set<bool>(L"bEnabled", enabled);
     return Call(component, f);
+}
+
+bool IsComponentTickEnabled(void* component) {
+    if (!component || !R::IsLive(component)) return false;
+    static void* sFn = nullptr;
+    if (!sFn) {
+        void* acc = R::FindClass(P::name::ActorComponentClass);
+        if (acc) sFn = R::FindFunction(acc, P::name::IsComponentTickEnabledFn);
+    }
+    if (!sFn) return false;
+    ParamFrame f(sFn);
+    return Call(component, f) && f.Get<bool>(L"ReturnValue");
 }
 
 }  // namespace ue_wrap::engine

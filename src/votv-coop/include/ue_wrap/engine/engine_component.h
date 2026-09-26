@@ -11,7 +11,8 @@
 
 namespace ue_wrap::engine {
 
-// The UCharacterMovementComponent subobject of a Character; nullptr if none.
+// A Character's CharacterMovementComponent (ACharacter::CharacterMovement); null when `characterPawn` is not a
+// live Character or its movement does not read.
 void* GetCharacterMovementComponent(void* characterPawn);
 
 // The UStaticMeshComponent subobject of `actor` (a reflection child walk); nullptr if none. Game
@@ -21,6 +22,9 @@ void* GetStaticMeshComponent(void* actor);
 // UActorComponent::SetComponentTickEnabled; the puppet's CMC is parked at spawn so it does not
 // fight the pose drive. Game thread.
 bool SetComponentTickEnabled(void* component, bool enabled);
+
+// UActorComponent::IsComponentTickEnabled; false when it does not read. Game thread.
+bool IsComponentTickEnabled(void* component);
 
 // USceneComponent world location (K2_GetComponentLocation) and forward vector; (0,0,0) on failure.
 FVector GetComponentLocation(void* component);
