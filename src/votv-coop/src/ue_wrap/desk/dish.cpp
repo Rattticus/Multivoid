@@ -14,7 +14,6 @@ namespace ue_wrap::dish {
 namespace {
 
 namespace R = ue_wrap::reflection;
-namespace E = ue_wrap::engine;
 
 struct TArrayView { uint8_t* data; int32_t num; int32_t max; };
 
@@ -45,7 +44,6 @@ void* g_isActiveFn = nullptr;   // UActorComponent::IsActive() -> bool
 
 // Tickers: singletons the gamemode's BeginPlay creates.
 void* g_disherCls = nullptr;
-void* g_uncalibCls = nullptr;
 void* g_disherBeginPlayFn = nullptr;   // ticker_disher_C::ReceiveBeginPlay (BP override)
 void* g_kismetSysCdo = nullptr;
 void* g_clearTimerFn = nullptr;        // KismetSystemLibrary::K2_ClearTimer
@@ -98,7 +96,6 @@ void ResolvePass() {
         }
     }
     if (!g_disherCls) g_disherCls = R::FindClass(L"ticker_disher_C");
-    if (!g_uncalibCls) g_uncalibCls = R::FindClass(L"ticker_dishUncalib_C");
     if (g_disherCls && !g_disherBeginPlayFn)
         g_disherBeginPlayFn = R::FindFunction(g_disherCls, L"ReceiveBeginPlay");
     if (!g_kismetSysCdo) g_kismetSysCdo = R::FindClassDefaultObject(L"KismetSystemLibrary");
@@ -110,11 +107,11 @@ void ResolvePass() {
                     g_offMoveCue >= 0 && g_offCue >= 0 && g_offCalibration >= 0 &&
                     g_offTechName >= 0 && g_stopFn && g_offRelRot >= 0 && g_setRelRotFn &&
                     g_activateFn && g_deactivateFn && g_isActiveFn && g_disherCls &&
-                    g_uncalibCls && g_disherBeginPlayFn && g_clearTimerFn;
+                    g_disherBeginPlayFn && g_clearTimerFn;
     if (l4 && !g_l4Resolved) {
         g_l4Resolved = true;
         UE_LOGI("dish: L4 surface resolved (axes=0x%X/0x%X cues=0x%X/0x%X activeDishes=0x%X "
-                "calib=0x%X stop=yes tickers=yes)",
+                "calib=0x%X stop=yes ticker=yes)",
                 g_offAxisZ, g_offAxisY, g_offMoveCue, g_offCue, g_offActiveDishes,
                 g_offCalibration);
     }
@@ -201,7 +198,6 @@ void* SingletonOf(void* cls, const wchar_t* clsName, SingletonCache& cache) {
 }
 
 SingletonCache g_disherCache;
-SingletonCache g_uncalibCache;
 
 }  // namespace
 
@@ -517,11 +513,6 @@ void* DisherInstance() {
     return SingletonOf(g_disherCls, L"ticker_disher_C", g_disherCache);
 }
 
-void* UncalibInstance() {
-    ResolvePass();
-    return SingletonOf(g_uncalibCls, L"ticker_dishUncalib_C", g_uncalibCache);
-}
-
 bool ParkDisher(void* inst) {
     if (!inst || !g_clearTimerFn || !g_kismetSysCdo) return false;
     // K2_ClearTimer(Object, FunctionName="do") -- the exact inverse of the blueprint's one-shot
@@ -543,16 +534,6 @@ bool RestoreDisher(void* inst) {
     // never called, and the engine keys a dynamic timer by object and function name, so a second
     // arm re-arms that timer instead of stacking another.
     return inst && CallNoArg(inst, g_disherBeginPlayFn);
-}
-
-bool ParkUncalib(void* inst) {
-    if (!inst) return false;
-    return E::SetActorTickEnabled(inst, false);
-}
-
-bool RestoreUncalib(void* inst) {
-    if (!inst) return false;
-    return E::SetActorTickEnabled(inst, true);
 }
 
 }  // namespace ue_wrap::dish

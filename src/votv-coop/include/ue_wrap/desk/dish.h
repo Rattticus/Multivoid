@@ -1,6 +1,6 @@
 // ue_wrap/desk/dish.h -- standalone engine access for the satellite dishes
 // (Adish_C, level-placed immortal actors), the gamemode's dishs/activeDishes
-// arrays, and the two dish tickers (ticker_disher_C / ticker_dishUncalib_C).
+// arrays, and the dish-moving ticker (ticker_disher_C).
 // Principle-7 engine-wrapper layer -- NO network logic; coop/signal_catch_sync
 // and coop/dish_sync (the L4 pose/arm/calibration lanes) drive it through here.
 //
@@ -157,23 +157,18 @@ bool CallCheckFordDishes();
 inline constexpr const wchar_t* kSetPrec = L"setPrec";
 
 // ---- L4 ticker surface -----------------------------------------------------
-// Both tickers are gamemode-BeginPlay singletons (one per world per peer).
-// disher: one-shot self-re-arming K2_SetTimerDelegate("do") chain -- kill =
+// The disher is a gamemode-BeginPlay singleton (one per world per peer): a
+// one-shot self-re-arming K2_SetTimerDelegate("do") chain -- kill =
 // K2_ClearTimer, restore = PE ReceiveBeginPlay (the native initializer:
 // gamemode gate -> BindDelegate(local) -> Random(1800,3600) ->
 // SetTimerDelegate -> parent; bytecode-verified re-fire-safe).
-// dishUncalib: actor tick -- kill/restore = SetActorTickEnabled, zero
-// staleness (interval re-rolled at the top of every tick).
 
-// Current live ticker instances (nullptr when not yet spawned / unresolved).
-// Fresh instances after a level reload get fresh pointers -- the caller keys
-// its park latch on these.
+// The current live ticker instance (nullptr when not yet spawned / unresolved).
+// A fresh instance after a level reload gets a fresh pointer -- the caller keys
+// its park latch on it.
 void* DisherInstance();
-void* UncalibInstance();
 
 bool ParkDisher(void* inst);     // K2_ClearTimer(inst, "do")
 bool RestoreDisher(void* inst);  // PE ReceiveBeginPlay(inst)
-bool ParkUncalib(void* inst);    // SetActorTickEnabled(false)
-bool RestoreUncalib(void* inst); // SetActorTickEnabled(true)
 
 }  // namespace ue_wrap::dish

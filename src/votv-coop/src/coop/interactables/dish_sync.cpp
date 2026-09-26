@@ -86,9 +86,8 @@ bool g_shadowMoving[coop::net::kMaxDishes] = {};
 // Dishes whose cues we touched (the kill sweep, the mirror edges); the 1 Hz cue reconciler
 // probes only these (the pending-latent cue leak class).
 uint32_t g_cueWatch = 0;
-// The park latch: the parked ticker instances (fresh instances re-park).
+// The park latch: the parked ticker instance (a fresh instance re-parks).
 void* g_parkedDisher = nullptr;
-void* g_parkedUncalib = nullptr;
 
 // Per-dish receiver-side interpolation state (game thread only), the same window shape as
 // the player and NPC mirrors (position plus angles).
@@ -116,7 +115,6 @@ void ResetModuleState() {
     std::memset(g_shadowMoving, 0, sizeof(g_shadowMoving));
     g_cueWatch = 0;
     g_parkedDisher = nullptr;
-    g_parkedUncalib = nullptr;
     for (int32_t i = 0; i < coop::net::kMaxDishes; ++i) {
         g_dishInterp[i] = DishInterp{};
     }
@@ -381,14 +379,6 @@ void ClientParkLatch() {
             if (D::ParkDisher(disher)) {
                 g_parkedDisher = disher;
                 UE_LOGI("dish_sync: client ticker_disher parked (timer cleared)");
-            }
-        }
-    }
-    if (void* uncalib = D::UncalibInstance()) {
-        if (uncalib != g_parkedUncalib) {
-            if (D::ParkUncalib(uncalib)) {
-                g_parkedUncalib = uncalib;
-                UE_LOGI("dish_sync: client ticker_dishUncalib parked (tick off)");
             }
         }
     }
@@ -658,7 +648,7 @@ void OnDisconnect() {
             D::WriteActiveDish(i, false);
             D::DeactivateCues(i);
         }
-        // The ticker restores (the suppression loan comes due; every session-end path funnels
+        // The ticker restore (the suppression loan comes due; every session-end path funnels
         // through this fan-out). Re-look-up instead of trusting the parked pointer: the instance
         // getters run the live-checked cache, so a ticker destroyed in the session-end race
         // declines instead of dispatching into freed memory.
@@ -668,14 +658,6 @@ void OnDisconnect() {
                     UE_LOGI("dish_sync: ticker_disher restored (native BeginPlay re-arm)");
             } else {
                 UE_LOGW("dish_sync: ticker_disher restore declined -- no live instance");
-            }
-        }
-        if (g_parkedUncalib) {
-            if (void* u = D::UncalibInstance()) {
-                if (D::RestoreUncalib(u))
-                    UE_LOGI("dish_sync: ticker_dishUncalib restored (tick on)");
-            } else {
-                UE_LOGW("dish_sync: ticker_dishUncalib restore declined -- no live instance");
             }
         }
     }

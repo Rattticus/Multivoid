@@ -5,8 +5,8 @@
 // initialises the signal; and calibration has random writers on every peer. So dish poses, an
 // armed download's polarity and the calibration all DIVERGE across peers on their own.
 //
-// So each axis gets ONE author. POSES: a client's dish simulation is PARKED -- both its
-// tickers stopped, with paired restores on the teardown fanout -- and the host streams
+// So each axis gets ONE author. POSES: a client's dish simulation is PARKED -- its
+// dish-moving ticker stopped, with a paired restore on the teardown fanout -- and the host streams
 // movers-only rows plus a settle tail, which one applier drives kinematically through an
 // interpolation window, so the stream's rate is not visible as stepping. That applier serves
 // the stream rows and the join seed alike, and skips a dish whose own local loop is still
@@ -49,8 +49,8 @@ void QueueConnectBroadcastForSlot(int peerSlot);
 void KillOwnPingSlews();
 
 // Teardown fanout: the wire-residue sweep (clear OUR mirrored isMoving/
-// activeDishes/cues on every shadow-true dish) THEN the ticker restores
-// (disher = PE ReceiveBeginPlay, uncalib = TickEnabled true), then module
+// activeDishes/cues on every shadow-true dish) THEN the ticker restore
+// (disher = PE ReceiveBeginPlay), then module
 // state reset.
 void OnDisconnect();
 

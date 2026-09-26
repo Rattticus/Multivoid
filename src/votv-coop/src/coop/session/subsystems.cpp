@@ -514,7 +514,7 @@ DisconnectStats DisconnectAll() {
     coop::dev::dev_lanes::RearmSelftests();  // [dev] the selftests re-arm for the next session
     coop::desk_cursor_sync::OnDisconnect();
     coop::desk_sim_sync::OnDisconnect();
-    coop::dish_sync::OnDisconnect();  // wire-residue sweep + ticker restores (the suppression loan)
+    coop::dish_sync::OnDisconnect();  // wire-residue sweep + the disher's restore (the suppression loan)
     coop::dish_hashcode_sync::OnDisconnect();
     coop::sat_console_sync::OnDisconnect();  // the terminals it keeps, and a busy flag mirrored here
     coop::tape_caddy_sync::OnDisconnect();  // poll baselines + IsRecent stamps + the singleton cache (no suppression -- nothing to restore)
