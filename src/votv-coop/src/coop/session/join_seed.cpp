@@ -24,6 +24,10 @@ void Seeder::Capture(int peerSlot) {
             snap.counts.size());
 }
 
+bool Seeder::Captured(int peerSlot) const {
+    return peerSlot >= 0 && peerSlot < kMaxPeers && snaps_[peerSlot].valid;
+}
+
 void Seeder::Cancel(int peerSlot) {
     if (peerSlot <= 0 || peerSlot >= kMaxPeers) return;
     snaps_[peerSlot] = SlotSnap{};

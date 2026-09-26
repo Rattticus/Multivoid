@@ -69,4 +69,8 @@ void NoteIncomingSnapshot(std::vector<ue_wrap::space_renderer::SignalRow>& rows)
 
 void OnDisconnect();
 
+// The catches this peer detected and relayed since its session began: a drill's readiness that a caught
+// signal it wrote is on the wire, ahead of anything it sends after. Game thread.
+uint64_t LocalCatchesRelayed();
+
 }  // namespace coop::signal_catch_sync

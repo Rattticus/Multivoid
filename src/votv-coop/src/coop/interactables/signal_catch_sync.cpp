@@ -48,6 +48,7 @@ bool IdentityEq(const Identity& a, const Identity& b) {
 
 Clock::time_point g_nextPoll{};
 bool g_announced = false;
+uint64_t g_localCatches = 0;
 
 // The catch detector's baseline: the full identity of the desk's signal data at the last poll
 // (the tuple and the name, the change-edge signature).
@@ -252,6 +253,7 @@ void RunDetectors(coop::net::Session* s, const CD::CoordSignal& sig, bool haveSi
                 BuildCatchPayload(sig, 0, p);
                 RegisterRecent(id);
                 SendOut(s, p, /*exceptSlot*/ -1);  // host: all clients; client: the host
+                ++g_localCatches;
                 UE_LOGI("signal_catch: local catch detected ('%ls' at %.0f,%.0f,%.0f; "
                         "slewValid=%u) -- relayed",
                         sig.objectName.c_str(), sig.x, sig.y, sig.z,
@@ -400,6 +402,8 @@ void NoteIncomingSnapshot(std::vector<SR::SignalRow>& rows) {
         }
     }
 }
+
+uint64_t LocalCatchesRelayed() { return g_localCatches; }
 
 void OnDisconnect() {
     g_prevId = {};

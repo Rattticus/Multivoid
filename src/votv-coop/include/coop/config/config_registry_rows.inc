@@ -602,6 +602,15 @@ CFG_STRING(power_decay_drill, "power_decay_drill", "dev", "", "VOTVCOOP_POWER_DE
     "Drill (BOTH peers): the generators' 30 s decay tick. watch: each peer says every tick's verdict, a client "
     "refusing its own and the host running its own, and the client's second tick prints the DONE line; red: a "
     "client runs its own tick, the negative control. Lines tagged [POWER-DECAY].")
+CFG_STRING(desk_verb_drill, "desk_verb_drill", "dev", "", "VOTVCOOP_DESK_VERB_DRILL", false,
+    "Drill (BOTH peers): the main desk's save family pressed by the client through its own input. run: the host "
+    "arms a caught signal formed from a sky signal's object, downloaded and detected, and the client, walked to the "
+    "desk, presses SAVE; then DELETE on a second one, the deck's send on the saved row, the deck's drive button "
+    "both ways and the refiner's upload. Both peers count the "
+    "game's own entries into the functions those branches call; the host says it entered them, the client that it "
+    "entered none, that SAVE's gloss reached its profile and the row its photo. join: the host saves a row as the "
+    "client joins, and the client finds it with its photo. Lines tagged [DESK-VERB-DRILL]; 'client DONE PASS|FAIL' "
+    "ends it; ABANDONED is a step that could not run.")
 CFG_STRING(grid_drill, "grid_drill", "dev", "", "VOTVCOOP_GRID_DRILL", false,
     "Drill (BOTH peers): the power grid. run: the client walks to the panel and presses its light lever twice, "
     "the host breaks the drill's generator (the one nearest the panel) after the first, then the client repairs "

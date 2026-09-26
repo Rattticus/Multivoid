@@ -36,6 +36,8 @@ void Install(coop::net::Session* session);
 void CaptureJoinSnapshot(int peerSlot);
 void CancelJoinSnapshot(int peerSlot);
 void QueueConnectBroadcastForSlot(int peerSlot);
+// HOST: `peerSlot`'s snapshot is taken and its seed still to come, so a row appended now rides the seed.
+bool JoinSnapshotCaptured(int peerSlot);
 
 // Slot teardown (roster row transition): drop the leaver's half-assemblies +
 // seed bracket so a recycled occupant can never inherit them.

@@ -63,6 +63,10 @@ public:
     // re-runs the replay with no snapshot.
     void SeedForSlot(coop::net::Session* s, int peerSlot);
 
+    // Whether `peerSlot`'s snapshot is taken and not yet seeded: a row authored now reaches that joiner by the
+    // seed, not in its save.
+    bool Captured(int peerSlot) const;
+
     void Reset();  // whole-session teardown
 
 private:
