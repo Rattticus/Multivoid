@@ -103,6 +103,33 @@ Clock::time_point g_nextStats{};
 std::atomic<uint64_t> g_cMarksSlot{0}, g_cMarksPayload{0};
 uint64_t g_cSlotSent = 0, g_cSlotApplied = 0, g_cPayloadSent = 0, g_cPayloadApplied = 0;
 uint64_t g_cLatchCompleted = 0;
+uint64_t g_cGrabKept = 0;  // this player's grab left alone inside a replayed insert
+
+// ---- the local player is never the subject of a replayed insert ----
+// The slot's putDriveIn, and the eraser's handler of the slot's driveIn, end the grab of the machine's
+// own player (getMainPlayer()->dropGrabObject()): in single player that is the inserter, letting go of
+// the drive the slot takes. A replayed insert is another player's, so while one runs here this
+// player's dropGrabObject is refused and its grab stays. The scope is the replay's own, not the gate's
+// IsBodyActive(putDriveIn): this player's own insert runs the same body, and there the grab must end.
+// It restores what it found, so a nested replay cannot close an outer one. Game thread.
+constexpr int kReplayDropTag = 0x44524750;  // 'DRGP'
+bool g_replayingInsert = false;
+struct ReplayingInsert {
+    ReplayingInsert() : outer_(g_replayingInsert) { g_replayingInsert = true; }
+    ~ReplayingInsert() { g_replayingInsert = outer_; }
+    ReplayingInsert(const ReplayingInsert&) = delete;
+    ReplayingInsert& operator=(const ReplayingInsert&) = delete;
+private:
+    bool outer_;
+};
+
+sg::Verdict OnDropGrabPre(const sg::Call&) {
+    if (!g_replayingInsert) return sg::Verdict::Run;
+    if (g_cGrabKept++ == 0)
+        UE_LOGI("drive_sync: a replayed insert left this player's grab alone -- its dropGrabObject refused (first "
+                "refusal; the rest are counted)");
+    return sg::Verdict::Cancel;
+}
 
 // --------------------------------------------------------------------------
 // helpers
@@ -399,6 +426,7 @@ void OnSlotLine(const coop::net::DriveSlotStatePayload& p, uint8_t senderSlot, b
             // The slot takes the drive out of whoever's hand held it, ending that hold: closed
             // here, so a pose of it still in flight cannot pull the drive back out of the slot.
             coop::remote_prop::EndAnyHoldOn(drive);
+            ReplayingInsert replaying;
             DC::CallPutDriveIn(slot, drive);
             g_slotBase[p.role] = {true, true, p.driveEid};
         }
@@ -507,10 +535,12 @@ void Install(coop::net::Session* session) {
         sg::WatchName(L"getDrive",        kVerbRackTake,   &OnVerbEntry, nullptr) &&
         sg::WatchName(L"saveSignal",      kVerbPayload,    &OnVerbEntry, nullptr) &&
         sg::WatchName(L"deleteSignal",    kVerbPayload,    &OnVerbEntry, nullptr) &&
-        sg::WatchName(L"comp_uploadData", kVerbPayload,    &OnVerbEntry, nullptr);
+        sg::WatchName(L"comp_uploadData", kVerbPayload,    &OnVerbEntry, nullptr) &&
+        sg::WatchClassName(L"mainPlayer_C", L"dropGrabObject", kReplayDropTag, &OnDropGrabPre, nullptr);
     if (ok) {
         g_verbsRegistered = true;
-        UE_LOGI("drive_sync: 6 verb watches live (dirty-marks armed at the script-body gate)");
+        UE_LOGI("drive_sync: 6 verb watches live (dirty-marks armed at the script-body gate), and the replayed "
+                "insert's grab guard");
     }
 }
 
@@ -551,12 +581,12 @@ void Tick() {
     if (now >= g_nextStats) {
         g_nextStats = now + std::chrono::seconds(60);
         UE_LOGI("drive_sync: 60s marks slot=%llu payload=%llu | sent slot=%llu "
-                "payload=%llu | applied slot=%llu payload=%llu | latchFix=%llu pending=%zu",
+                "payload=%llu | applied slot=%llu payload=%llu | latchFix=%llu pending=%zu grabKept=%llu",
                 (unsigned long long)g_cMarksSlot.load(std::memory_order_relaxed),
                 (unsigned long long)g_cMarksPayload.load(std::memory_order_relaxed),
                 (unsigned long long)g_cSlotSent, (unsigned long long)g_cPayloadSent,
                 (unsigned long long)g_cSlotApplied, (unsigned long long)g_cPayloadApplied,
-                (unsigned long long)g_cLatchCompleted, g_pending.size());
+                (unsigned long long)g_cLatchCompleted, g_pending.size(), (unsigned long long)g_cGrabKept);
     }
 }
 
@@ -629,6 +659,8 @@ void OnDisconnect() {
     g_notedBirths.clear();
     g_primed = false;
     g_wasConnected = false;
+    g_replayingInsert = false;
+    g_cGrabKept = 0;
     g_session.store(nullptr, std::memory_order_release);
     UE_LOGI("drive_sync: teardown (slot/payload baselines + pending + noted births cleared)");
 }
