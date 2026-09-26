@@ -388,6 +388,7 @@ set(VOTVCOOP_SOURCES
     src/coop/interactables/drive_rack_sync.cpp
     src/coop/interactables/desk_snd_fx.cpp
     src/coop/interactables/desk_sim_sync.cpp
+    src/coop/interactables/dish_hashcode_sync.cpp
     src/coop/interactables/dish_sync.cpp
     src/coop/interactables/tape_caddy_sync.cpp
     src/coop/interactables/laptop_sync.cpp

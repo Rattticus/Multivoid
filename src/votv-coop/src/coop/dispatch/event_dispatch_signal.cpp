@@ -12,6 +12,7 @@
 #include "coop/interactables/deck_play_sync.h"    // PlayDeckEvent
 #include "coop/interactables/desk_input_sync.h"
 #include "coop/interactables/desk_snd_fx.h"
+#include "coop/interactables/dish_hashcode_sync.h"
 #include "coop/interactables/dish_sync.h"
 #include "coop/interactables/laptop_sync.h"      // LaptopState, LaptopBlob
 #include "coop/interactables/laptop_buffer_sync.h"  // LaptopQuad
@@ -287,6 +288,22 @@ bool HandleSignalEvent(net::Session& /*session*/,
                 ? static_cast<uint8_t>(msg.senderPeerSlot)
                 : static_cast<uint8_t>(0xFF);
         coop::floppy_slot_sync::OnChunk(fs, fsslot);
+        break;
+    }
+    case net::ReliableKind::DishHashcodes: {
+        // The host's dish hash codes (host->clients; the receiver takes slot 0's alone).
+        if (msg.payloadLen < sizeof(net::BlobChunkPayload)) {
+            UE_LOGW("event_feed: DishHashcodes payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::BlobChunkPayload));
+            break;
+        }
+        net::BlobChunkPayload hc{};
+        std::memcpy(&hc, msg.payload, sizeof(hc));
+        const uint8_t hcslot =
+            (msg.senderPeerSlot >= 0 && msg.senderPeerSlot < net::kMaxPeers)
+                ? static_cast<uint8_t>(msg.senderPeerSlot)
+                : static_cast<uint8_t>(0xFF);
+        coop::dish_hashcode_sync::OnChunk(hc, hcslot);
         break;
     }
     case net::ReliableKind::DishArm: {

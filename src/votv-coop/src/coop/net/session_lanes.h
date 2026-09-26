@@ -94,6 +94,9 @@ inline Lane LaneForKind(ReliableKind k) {
     // mid-build.
     case ReliableKind::SnapshotBegin:    return Lane::Bulk;
     case ReliableKind::SnapshotComplete: return Lane::Bulk;
+    // A joiner's dish codes are sent at its world-ready, ahead of its bracket's Begin; in this lane a
+    // set that goes whole lands before the bracket's Complete.
+    case ReliableKind::DishHashcodes:    return Lane::Bulk;
     // The save blob is phase-ordered before the bracket (the client sends ClientWorldReady only
     // after loading the save), so Bulk costs nothing, and Begin must precede its chunks in-lane.
     case ReliableKind::SaveTransferBegin: return Lane::Bulk;
