@@ -162,7 +162,7 @@ bool ListedState();
 void SetPlayerCountSource(int (*fn)());
 
 // Announce the current, already-started env-configured host session to the master as a hidden
-// lobby: the heartbeat keeps it alive and the credentials fresh, but the browser never lists it
+// lobby: the heartbeat keeps it alive, but the browser never lists it
 // (script and test lobbies must not pollute the list; joiners connect by IP). Best-effort on a
 // worker: a master that is down is logged and hosting continues. The lobby is briefly listed
 // between the announce and the async visibility flip.

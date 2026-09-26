@@ -13,6 +13,7 @@
 #include "coop/element/element.h"
 #include "coop/net/peer_identity.h"    // GuidForPublicKey -- the proved storage name
 #include "coop/player/players_registry.h"
+#include "ice_config.h"         // co-located: TickTurnCredential
 #include "session_lanes.h"      // co-located private header (src tree, not include/)
 #include "signaling_client.h"   // co-located: complete type for the shared_ptr<SignalingClient> dtor + Poll()
 #include "ue_wrap/core/log.h"
@@ -477,6 +478,9 @@ void Session::NetThread() {
         // with step 4.
         const auto now = std::chrono::steady_clock::now();
         SendStreamsTick(now, sendInterval, nextSend, nextDeskSimSend, sendFails);
+        // A P2P session's TURN credential count (ice_config.h): signaling_ is set exactly for P2P,
+        // the one kind of session that applies a credential.
+        if (signaling_) TickTurnCredential(NowMs());
 
         // 3b) Drain the reliable-send backlogs, one pass per live slot; the GNS return is the
         // headroom read, and the reserve keeps the unreliable pose and voice streams flowing during

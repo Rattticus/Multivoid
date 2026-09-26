@@ -316,9 +316,8 @@ JoinInfo LobbyClient::Join(const std::string& masterUrl, const std::string& lobb
         return info;
     }
     // Length-cap the identities, URLs and tokens: a hostile or on-path master must not feed
-    // oversized strings into the transport config. The TURN user and password go through the
-    // credential field reader: a comma or whitespace there would inject an extra element into the
-    // transport's parallel comma-separated TURN lists and desync them.
+    // oversized strings into the transport config. The TURN block is read as the host's announce
+    // reads it (json_util.h).
     info.sessionId      = J::StrN(j, "sessionId", 64);
     // 80, not 64: a durable identity renders as a prefix plus 64 hex, 68 chars, and a cap of 64
     // would truncate it into a name that dials nobody, which reads as P2P being broken rather than
@@ -329,12 +328,7 @@ JoinInfo LobbyClient::Join(const std::string& masterUrl, const std::string& lobb
     info.signalingUrl   = J::StrN(j, "signalingUrl", 128);
     info.signalingToken = J::StrN(j, "signalingToken", 128);
     info.stun           = J::StrN(j, "stun", 128);
-    auto turn = j.find("turn");
-    if (turn != j.end() && turn->is_object()) {
-        info.turnUri  = J::FirstTurnUri(*turn);      // comma/ws-rejected inside
-        info.turnUser = J::CredField(*turn, "user", 256);
-        info.turnPass = J::CredField(*turn, "pass", 256);
-    }
+    info.turn           = J::ParseTurnCredential(j);
     // The host identity to dial and a signaling endpoint are the minimum to start P2P.
     info.ok = !info.hostIdentity.empty() && !info.signalingUrl.empty();
     if (!info.ok) {

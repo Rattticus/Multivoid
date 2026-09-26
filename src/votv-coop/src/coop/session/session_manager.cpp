@@ -143,9 +143,9 @@ uint16_t PlayerListenPort() {
 
 // A master lobby's P2P session Config, for the host and the joiner alike: the master's answer
 // names the rendezvous (its signaling relay and token) and the ICE servers (STUN, the TURN
-// credentials it minted for this peer). lobby::HostInfo and lobby::JoinInfo carry the same six
-// fields. The candidate policy is the player's, read at every session start
-// (coop/net/ice_policy.h).
+// credential it minted for this peer). lobby::HostInfo and lobby::JoinInfo carry the three fields
+// and the credential this reads alike. The candidate policy is the player's, read at every session
+// start (coop/net/ice_policy.h).
 template <typename MasterAnswer>
 net::Config LobbyP2PConfig(net::Role role, const MasterAnswer& info) {
     net::Config cfg;
@@ -154,9 +154,10 @@ net::Config LobbyP2PConfig(net::Role role, const MasterAnswer& info) {
     cfg.signalingUrl = info.signalingUrl;
     cfg.signalingToken = info.signalingToken;
     cfg.stunList = info.stun;
-    cfg.turnList = info.turnUri;
-    cfg.turnUser = info.turnUser;
-    cfg.turnPass = info.turnPass;
+    cfg.turnList = info.turn.uri;
+    cfg.turnUser = info.turn.user;
+    cfg.turnPass = info.turn.pass;
+    cfg.turnTtlS = info.turn.ttlS;
     return cfg;
 }
 

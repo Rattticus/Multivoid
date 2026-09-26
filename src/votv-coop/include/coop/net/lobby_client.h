@@ -9,6 +9,8 @@
 
 #pragma once
 
+#include "coop/net/turn_credential.h"
+
 #include <cstdint>
 #include <mutex>
 #include <string>
@@ -54,9 +56,7 @@ struct JoinInfo {
     std::string signalingUrl;    // "host:port"
     std::string signalingToken;  // the shared signaling bearer
     std::string stun;            // "host:port" or ""
-    std::string turnUri;         // "turn:host:port" (first uri, transport stripped) or ""
-    std::string turnUser;
-    std::string turnPass;
+    TurnCredential turn;         // the relay credential minted for this joiner, or empty
 };
 
 // The master's latest-released-mod record. ok=false when the master is unreachable or has no

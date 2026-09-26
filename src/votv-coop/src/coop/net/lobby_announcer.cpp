@@ -67,12 +67,7 @@ HostInfo LobbyAnnouncer::Host(const std::string& masterUrl, const std::string& n
     info.signalingUrl   = J::Str(j, "signalingUrl");
     info.signalingToken = J::Str(j, "signalingToken");
     info.stun           = J::Str(j, "stun");
-    auto turn = j.find("turn");
-    if (turn != j.end() && turn->is_object()) {
-        info.turnUri  = J::FirstTurnUri(*turn);
-        info.turnUser = J::Str(*turn, "user");
-        info.turnPass = J::Str(*turn, "pass");
-    }
+    info.turn           = J::ParseTurnCredential(j);
     info.ok = !info.sessionId.empty() && !info.token.empty() &&
               !info.hostIdentity.empty() && !info.signalingUrl.empty();
     if (!info.ok) { UE_LOGW("lobby: host announce -- response missing session/token/identity"); return info; }
@@ -100,7 +95,7 @@ HostInfo LobbyAnnouncer::Host(const std::string& masterUrl, const std::string& n
 
 void LobbyAnnouncer::HeartbeatLoop() {
     // The master stamped last_seen at /v1/host, so the first beat is one interval out.
-    // 30s < the master's TURN-cred TTL/2 (60s) and << the 300s lobby expiry (design 7/8).
+    // 30 s: three beats to the master's 90 s lobby expiry, so one lost beat does not delist.
     // Sleep in 0.5s slices so Stop()/shutdown is responsive; bail on global shutdown so
     // we never issue HTTP into a tearing-down process.
     while (!stop_.load() && !coop::shutdown::IsShuttingDown()) {

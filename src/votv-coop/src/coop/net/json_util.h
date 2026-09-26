@@ -10,6 +10,8 @@
 
 #pragma once
 
+#include "coop/net/turn_credential.h"
+
 #include <nlohmann/json.hpp>
 
 #include <string>
@@ -109,6 +111,20 @@ inline std::string FirstTurnUri(const Json& turn) {
         u.find_first_of(" \t\r\n") != std::string::npos)
         return std::string();
     return u;
+}
+
+// A master answer's `turn` block, read the same way on every path that takes one: the first uri,
+// the user and the password through the credential reader, and the stated lifetime clamped to a
+// week. Empty when the answer has no block.
+inline TurnCredential ParseTurnCredential(const Json& answer) {
+    TurnCredential c;
+    auto turn = answer.find("turn");
+    if (turn == answer.end() || !turn->is_object()) return c;
+    c.uri  = FirstTurnUri(*turn);
+    c.user = CredField(*turn, "user", 256);
+    c.pass = CredField(*turn, "pass", 256);
+    c.ttlS = IntClamped(*turn, "ttl", 0, 7 * 24 * 3600);
+    return c;
 }
 
 }  // namespace coop::net::jsonu

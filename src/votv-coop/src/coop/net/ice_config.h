@@ -11,6 +11,7 @@
 
 #pragma once
 
+#include <cstdint>
 #include <string>
 
 namespace coop::net {
@@ -20,6 +21,7 @@ struct IceConfig {
     std::string turnList;   // "turn:host:port,..."   -- "" disables TURN (rung 3)
     std::string turnUser;   // parallel to turnList (coturn REST creds)
     std::string turnPass;   // parallel to turnList
+    int         turnTtlS = 0;  // the credential's lifetime its master stated; 0 when none was
     // Which candidates to gather and share: every kind (private, public, relay: rungs 1-3), or the
     // TURN relay's alone, so the peer is shown the relay's address instead of ours.
     bool        relayOnly = false;
@@ -33,5 +35,12 @@ struct IceConfig {
 // GameNetworkingSockets_Init and before CreateListenSocketP2P / Connect, on a thread where
 // SteamNetworkingUtils() is valid (post-init).
 bool ApplyGlobalIceConfig(const IceConfig& ice);
+
+// The applied TURN credential's lifetime, counted from its apply: prints once, on the first call at
+// or past the lapse, that a connection whose ICE starts from then on gets no relay candidate from
+// it. A later apply starts a new count; a credential with no stated lifetime never lapses here.
+// Any thread; the net thread calls it every pass with NowMs (net_clock.h), so it is one relaxed load
+// until the moment.
+void TickTurnCredential(uint64_t nowMs);
 
 }  // namespace coop::net

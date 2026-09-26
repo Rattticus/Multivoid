@@ -342,6 +342,7 @@ bool Session::StartP2P(bool relayOnly) {
     ice.turnList = cfg_.turnList;
     ice.turnUser = cfg_.turnUser;
     ice.turnPass = cfg_.turnPass;
+    ice.turnTtlS = cfg_.turnTtlS;
     // The candidate policy is the player's own setting, read by Start at each session start, so
     // every door a session comes through honours it: a lobby host or join, or a dial with no
     // master. The servers above are the session's (a lobby's come from its master); the policy is

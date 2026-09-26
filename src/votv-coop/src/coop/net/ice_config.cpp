@@ -2,7 +2,10 @@
 
 #include "ice_config.h"
 
+#include "coop/net/net_clock.h"  // NowMs, the net layer's one steady clock
 #include "ue_wrap/core/log.h"
+
+#include <atomic>
 
 #pragma warning(push)
 #pragma warning(disable: 4100 4127 4191 4244 4245 4267 4310 4324 4458)
@@ -11,6 +14,14 @@
 #pragma warning(pop)
 
 namespace coop::net {
+namespace {
+
+// The applied credential's lapse on NowMs, and its stated lifetime for the line; 0 when the applied
+// TURN list has no credential with a stated lifetime. Process-global, as the values GNS holds are.
+std::atomic<uint64_t> g_turnLapseAtMs{0};
+std::atomic<int>      g_turnTtlS{0};
+
+}  // namespace
 
 bool ApplyGlobalIceConfig(const IceConfig& ice) {
     auto* utils = SteamNetworkingUtils();
@@ -53,7 +64,26 @@ bool ApplyGlobalIceConfig(const IceConfig& ice) {
             ice.relayOnly ? "relay" : "all",
             ice.stunList.empty() ? "(none)" : ice.stunList.c_str(),
             ice.turnList.empty() ? "(none)" : ice.turnList.c_str());
+    // Counted from here, not from the mint: the mint came first, so a lapse printed by this count
+    // is never early.
+    const bool timed = !ice.turnList.empty() && ice.turnTtlS > 0;
+    g_turnTtlS.store(timed ? ice.turnTtlS : 0, std::memory_order_relaxed);
+    g_turnLapseAtMs.store(timed ? NowMs() + uint64_t(ice.turnTtlS) * 1000 : 0,
+                          std::memory_order_relaxed);
+    if (timed)
+        UE_LOGI("ice: turn credential valid %d s", ice.turnTtlS);
+    else if (!ice.turnList.empty())
+        UE_LOGI("ice: turn credential with no stated lifetime");
     return true;
+}
+
+void TickTurnCredential(uint64_t nowMs) {
+    uint64_t at = g_turnLapseAtMs.load(std::memory_order_relaxed);
+    if (at == 0 || nowMs < at) return;
+    // The exchange makes the line once per apply, whichever thread gets there first.
+    if (!g_turnLapseAtMs.compare_exchange_strong(at, 0, std::memory_order_relaxed)) return;
+    UE_LOGI("ice: turn credential lapsed, %d s after its apply -- a connection whose ICE starts "
+            "from now gets no relay candidate from it", g_turnTtlS.load(std::memory_order_relaxed));
 }
 
 }  // namespace coop::net

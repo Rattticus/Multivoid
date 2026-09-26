@@ -2,8 +2,8 @@
 //
 // MTA is the precedent: CMasterServerAnnouncer and CMasterServer announce on host start, then keep
 // the lobby alive with a periodic heartbeat. We diverge in three ways: one master rather than a
-// redundant list, a 30 s heartbeat -- under the master's 120 s TURN-credential lifetime and its 300
-// s lobby expiry -- and an explicit leave on stop.
+// redundant list, a 30 s heartbeat -- three to the master's 90 s lobby expiry -- and an explicit
+// leave on stop.
 //
 //   POST /v1/host        sessionId, an opaque lobbyId, the host token, identities and ICE
 //   POST /v1/heartbeat   every 30 s: keep the lobby alive, refresh the current player count
@@ -15,6 +15,8 @@
 // thread reads them while SetListed writes listed_.
 
 #pragma once
+
+#include "coop/net/turn_credential.h"
 
 #include <atomic>
 #include <mutex>
@@ -35,9 +37,7 @@ struct HostInfo {
     std::string signalingUrl;    // "host:port"
     std::string signalingToken;  // shared signaling bearer
     std::string stun;            // "host:port" or ""
-    std::string turnUri;         // "turn:host:port" or ""
-    std::string turnUser;
-    std::string turnPass;
+    TurnCredential turn;         // the relay credential minted for this host, or empty
 };
 
 class LobbyAnnouncer {

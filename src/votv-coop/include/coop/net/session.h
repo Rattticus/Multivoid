@@ -90,6 +90,7 @@ struct Config {
     std::string turnList;    // "turn:host:port,..."
     std::string turnUser;    // parallel to turnList
     std::string turnPass;    // parallel to turnList
+    int         turnTtlS = 0;  // the TURN credential's lifetime a master stated; 0 when none was
     // No candidate policy here: it is the player's net.ice setting, which Start reads for every
     // session whichever door it came through (coop/net/ice_policy.h).
 
