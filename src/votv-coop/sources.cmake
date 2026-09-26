@@ -78,6 +78,7 @@ set(VOTVCOOP_SOURCES
     src/ue_wrap/devices/garage.cpp
     src/ue_wrap/devices/appliance.cpp
     src/ue_wrap/devices/power_control.cpp
+    src/ue_wrap/devices/generator.cpp
     src/ue_wrap/devices/atv.cpp
     src/ue_wrap/devices/atv_condition.cpp
     src/ue_wrap/devices/drone.cpp
@@ -207,8 +208,8 @@ set(VOTVCOOP_SOURCES
     src/coop/world/time_sync.cpp
     src/coop/world/day_edge.cpp
     src/coop/world/sky_sync.cpp
-    src/coop/interactables/power_sync.cpp
     src/coop/world/power_grid.cpp
+    src/coop/world/power_panel.cpp
     src/coop/interactables/atv_sync.cpp
     src/coop/interactables/atv_condition_sync.cpp
     src/coop/interactables/atv_corrector.cpp

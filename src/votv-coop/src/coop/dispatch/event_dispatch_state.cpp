@@ -18,7 +18,7 @@
 #include "coop/creatures/kerfur_convert_client.h"
 #include "coop/creatures/kerfus_state.h"  // HOST->CLIENT a Kerfus's on, charging and energy
 #include "coop/interactables/keypad_sync.h"
-#include "coop/interactables/power_sync.h"
+#include "coop/world/power_panel.h"
 #include "coop/props/container_contents_sync.h"  // the container stack slice lane
 #include "coop/props/trash_pile_sync.h"
 #include "coop/interactables/turbine_sync.h"
@@ -122,11 +122,8 @@ bool HandleStateEvent(net::Session& session,
         break;
     }
     case net::ReliableKind::PowerControlState: {
-        // The base power-panel breakers. Symmetric: any peer polls its panels' press bools and
-        // broadcasts on a change, and the host relays a client edge. The receiver writes the bools
-        // and refreshes the panel's own visual; the base power effects sync through their own door,
-        // light and server channels. Five bools per actor, so its own module rather than the
-        // one-bool toggle channel.
+        // The base power panel: a client's press (client to host) or the host's canonical (host to
+        // all). Role, reach and trust gates live in power_panel::OnReliable.
         if (msg.payloadLen < sizeof(net::PowerPanelPayload)) {
             UE_LOGW("event_feed: PowerControlState payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::PowerPanelPayload));
@@ -138,7 +135,7 @@ bool HandleStateEvent(net::Session& session,
             (msg.senderPeerSlot >= 0 && msg.senderPeerSlot < net::kMaxPeers)
                 ? static_cast<uint8_t>(msg.senderPeerSlot)
                 : static_cast<uint8_t>(0xFF);
-        coop::power_sync::OnReliable(pp, senderSlot);
+        coop::power_panel::OnReliable(pp, senderSlot);
         break;
     }
     case net::ReliableKind::AtvState: {

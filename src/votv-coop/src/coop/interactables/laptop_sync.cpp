@@ -221,7 +221,7 @@ void ApplyPowerTarget(coop::net::Session* s) {
     if (!L::ReadPower(ps)) return;
     if (ps.isOpened == g_wantOpened) { g_wantValid = false; return; }  // converged
     if (ps.anim) return;               // boot/shutdown latent running -- retry next poll
-    if (!ps.powered && g_wantOpened) return;  // wall power lags power_sync -- retry
+    if (!ps.powered && g_wantOpened) return;  // wall power lags the panel's canonical -- retry
     if (L::CallPowerToggle())
         UE_LOGI("laptop_sync: power replay dispatched (target isOpened=%u)",
                 static_cast<unsigned>(g_wantOpened));

@@ -83,8 +83,8 @@
 #include "coop/interactables/upgrade_sync.h"
 #include "coop/interactables/turbine_sync.h"
 #include "coop/interactables/keypad_sync.h"
-#include "coop/interactables/power_sync.h"
 #include "coop/world/power_grid.h"
+#include "coop/world/power_panel.h"
 #include "coop/world/sky_sync.h"
 #include "coop/world/time_sync.h"
 #include "coop/interactables/window_stroke_sync.h"
@@ -184,8 +184,8 @@ void Install(coop::net::Session& session) {
     coop::keypad_sync::Install(&session);  // the password keypads' index and wire (its own module)
     coop::time_sync::Install(&session);  // host-authoritative world clock (time-of-day / dark-world fix)
     coop::sky_sync::Install(&session);  // host-authoritative night-sky orientation, moon phase and eye
-    coop::power_sync::Install(&session);  // base power-panel breakers (its own module -- 5 bools)
-    coop::power_grid::Install(&session);  // the grid runs on the host: a client refuses its own decay tick
+    coop::power_panel::Install(&session);  // the power panel: presses to the host, its canonical to every peer
+    coop::power_grid::Install(&session);  // the grid runs on the host: its generators' rows, a client's ops
     coop::atv_sync::Install(&session);  // ATV body pose (occupant-authoritative keyed stream)
     coop::drone_sync::Install(&session);  // delivery drone body pose (host-authoritative singleton)
     coop::order_sync::Install(&session);  // delivery-drone economy: client->host shop-order forward
@@ -314,7 +314,8 @@ void ConnectReplayForSlot(int slot) {
     coop::interactable_sync::QueueConnectBroadcastForSlot(slot);  // door/light/container states
     coop::keypad_sync::QueueConnectBroadcastForSlot(slot);  // keypad states
     coop::sky_sync::QueueConnectBroadcastForSlot(slot);  // night-sky orientation, moon phase, eye
-    coop::power_sync::QueueConnectBroadcastForSlot(slot);  // base power-panel breakers
+    coop::power_grid::QueueConnectBroadcastForSlot(slot);  // the generators' rows, before the panel they gate
+    coop::power_panel::QueueConnectBroadcastForSlot(slot);  // the panel's canonical
     coop::atv_sync::QueueConnectBroadcastForSlot(slot);  // ATV body pose (adopt=1)
     coop::drone_sync::QueueConnectBroadcastForSlot(slot);  // delivery drone pose (adopt=1)
     coop::order_queue_sync::QueueConnectBroadcastForSlot(slot);  // the delivery order queue: a reset + every queued order
@@ -430,6 +431,8 @@ void DisconnectSlot(coop::net::Session& session, int slot) {
     coop::comp_sync::OnPeerDisconnect(static_cast<uint8_t>(slot));  // pause the mirror if the decode simulator left
     coop::served_player::OnPeerLeft(static_cast<uint8_t>(slot));  // robots serving the leaver read the host
     coop::kerfur_command::OnPeerLeft(static_cast<uint8_t>(slot));  // and its waiting kerfur commands go
+    coop::power_panel::OnPeerLeft(static_cast<uint8_t>(slot));  // and its presses that wait for its body
+    coop::power_grid::OnPeerLeft(static_cast<uint8_t>(slot));  // and its generator ops
     coop::voice_chat::OnDisconnectSlot(slot);  // drop the leaver's voice channel + icon state
     coop::sleep_sync::OnDisconnectForSlot(slot);  // drop the leaver from the sleep tally (re-gate)
     coop::owner_entity_sync::OnPeerLeftSlot(slot);  // destroy the leaver's owner-entity mirrors (its eyer dies with it)
@@ -478,7 +481,7 @@ DisconnectStats DisconnectAll() {
     coop::keypad_sync::OnDisconnect();
     coop::time_sync::OnDisconnect();
     coop::sky_sync::OnDisconnect();
-    coop::power_sync::OnDisconnect();
+    coop::power_panel::OnDisconnect();
     coop::power_grid::OnDisconnect();
     coop::atv_sync::OnDisconnect();
     coop::drone_sync::OnDisconnect();
@@ -594,8 +597,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:keypad"}; coop::keypad_sync::Tick(); }  // a keypad state that arrived before its keypad was indexed
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:time"}; coop::time_sync::Tick(); }  // the world clock: the host hands the net thread a sample when one is due; the client applies at its cycle's own tick
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:sky"}; coop::sky_sync::Tick(); }  // night-sky: the eye gate's name (both roles), then the host's throttled push
-    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:power"}; coop::power_sync::Tick(); }  // base power panel: poll breaker edges + deferred-apply retry (symmetric)
-    coop::power_grid::Tick();  // settle the decay tick's gate
+    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:power"}; coop::power_panel::Tick(); coop::power_grid::Tick(); }  // the panel's and the grid's gates settle; what came before the panel or the generators resolved is taken
     coop::dish_calib_sync::Tick();  // settle the two precision verbs' watches
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:atv"}; coop::atv_sync::Tick(); }  // ATV: occupant streams its pose / mirror drives the interp (host+client)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:drone"}; coop::drone_sync::Tick(); }  // delivery drone: host streams transform / client suppresses tick + mirrors

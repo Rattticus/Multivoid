@@ -201,10 +201,6 @@ void ScalarsToPayload(const CD::Scalars& sc, uint8_t adopt,
     p.playSelectIndex = sc.playSelectIndex;
     p.dlActiveFrFilter = sc.dlActiveFrFilter ? 1 : 0;
     p.dlActivePoFilter = sc.dlActivePoFilter ? 1 : 0;
-    p.activePlay = sc.activePlay ? 1 : 0;
-    p.activeDownload = sc.activeDownload ? 1 : 0;
-    p.activeCoords = sc.activeCoords ? 1 : 0;
-    p.activeComp = sc.activeComp ? 1 : 0;
     p.coordIsPing = sc.coordIsPing ? 1 : 0;
     p.adopt = adopt;
 }
@@ -224,10 +220,6 @@ CD::Scalars PayloadToScalars(const coop::net::DeskStatePayload& p) {
     sc.playSelectIndex = p.playSelectIndex;
     sc.dlActiveFrFilter = p.dlActiveFrFilter != 0;
     sc.dlActivePoFilter = p.dlActivePoFilter != 0;
-    sc.activePlay = p.activePlay != 0;
-    sc.activeDownload = p.activeDownload != 0;
-    sc.activeCoords = p.activeCoords != 0;
-    sc.activeComp = p.activeComp != 0;
     // coordIsPing is never adopted: it is the ping machine's run flag, and adopting true would wake
     // a phantom simulation on the joiner. The wire field stays as diagnostic truth; a joiner's own
     // desk cannot be mid-ping.

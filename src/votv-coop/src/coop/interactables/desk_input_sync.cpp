@@ -62,17 +62,6 @@ void SendScan(coop::net::Session* s, float observed) {
         s->SendReliableToSlot(0, coop::net::ReliableKind::DeskScanEvent, &p, sizeof(p));
 }
 
-// Which unit index (0..3) an active_* field id maps to (ApplyActiveToggleEffects).
-int ActiveUnitOf(DeskInputField f) {
-    switch (f) {
-    case DeskInputField::ActivePlay:     return 0;
-    case DeskInputField::ActiveDownload: return 1;
-    case DeskInputField::ActiveCoords:   return 2;
-    case DeskInputField::ActiveComp:     return 3;
-    default:                             return -1;
-    }
-}
-
 // Patch ONE field's value into a Scalars struct (pure; no engine access).
 // Shared by the wire apply and the echo-prime baseline advance.
 bool PatchScalar(const coop::net::DeskInputPayload& p, CD::Scalars& sc) {
@@ -85,10 +74,6 @@ bool PatchScalar(const coop::net::DeskInputPayload& p, CD::Scalars& sc) {
     case DeskInputField::PlayVolume:      sc.playVolume = p.intVal; break;
     case DeskInputField::PlaySelectIndex: sc.playSelectIndex = p.intVal; break;
     case DeskInputField::CompMaxLevel:    sc.compMaxLevel = p.intVal; break;
-    case DeskInputField::ActivePlay:      sc.activePlay = p.boolVal != 0; break;
-    case DeskInputField::ActiveDownload:  sc.activeDownload = p.boolVal != 0; break;
-    case DeskInputField::ActiveCoords:    sc.activeCoords = p.boolVal != 0; break;
-    case DeskInputField::ActiveComp:      sc.activeComp = p.boolVal != 0; break;
     // CoordIsPing is deliberately absent: it is the ping FSM's run-flag, and patching
     // it into a scalar set that reaches WriteScalars would wake the phantom sim.
     // OnDeskInput intercepts it as bookkeeping before ApplyField.
@@ -108,13 +93,9 @@ uint32_t PaintersFor(DeskInputField f) {
     switch (f) {
     case DeskInputField::FrFilterActive:
     case DeskInputField::PoFilterActive:  return CD::kPaintToggles;
-    case DeskInputField::ActiveDownload:  return CD::kPaintToggles | CD::kPaintPolarityLights;
     case DeskInputField::PolarityDir:     return CD::kPaintPolarity | CD::kPaintPolarityLights;
     case DeskInputField::PlayVolume:      return CD::kPaintVolume;
-    case DeskInputField::ActiveCoords:    return CD::kPaintCoordLights;
-    case DeskInputField::ActivePlay:      return CD::kPaintPlaybackLights;
-    case DeskInputField::CompMaxLevel:
-    case DeskInputField::ActiveComp:      return CD::kPaintMaxLevelLights;
+    case DeskInputField::CompMaxLevel:    return CD::kPaintMaxLevelLights;
     // Read by no painter: the filter speeds, the play index, and the cooldown charge.
     case DeskInputField::FrFilterSpeed:
     case DeskInputField::PoFilterSpeed:
@@ -125,12 +106,10 @@ uint32_t PaintersFor(DeskInputField f) {
 }
 
 // Apply ONE field onto the local desk: patch the scalar set + run that field's painters, then the
-// field's native setter side effects where they don't cover them (hums, lights, live volume).
+// live volume the painters do not set.
 bool ApplyField(const coop::net::DeskInputPayload& p, CD::Scalars& sc) {
     if (!PatchScalar(p, sc)) return false;
     if (!CD::WriteScalars(sc, PaintersFor(static_cast<DeskInputField>(p.field)))) return false;
-    const int unit = ActiveUnitOf(static_cast<DeskInputField>(p.field));
-    if (unit >= 0) CD::ApplyActiveToggleEffects(unit, p.boolVal != 0);
     if (static_cast<DeskInputField>(p.field) == DeskInputField::PlayVolume)
         CD::ApplyPlayVolumeEffects(p.intVal);
     return true;
@@ -163,14 +142,6 @@ void PollOnce(coop::net::Session* s) {
         SendDelta(s, DeskInputField::PlaySelectIndex, 0, cur.playSelectIndex, false);
     if (cur.compMaxLevel != g_baseline.compMaxLevel)
         SendDelta(s, DeskInputField::CompMaxLevel, 0, cur.compMaxLevel, false);
-    if (cur.activePlay != g_baseline.activePlay)
-        SendDelta(s, DeskInputField::ActivePlay, 0, 0, cur.activePlay);
-    if (cur.activeDownload != g_baseline.activeDownload)
-        SendDelta(s, DeskInputField::ActiveDownload, 0, 0, cur.activeDownload);
-    if (cur.activeCoords != g_baseline.activeCoords)
-        SendDelta(s, DeskInputField::ActiveCoords, 0, 0, cur.activeCoords);
-    if (cur.activeComp != g_baseline.activeComp)
-        SendDelta(s, DeskInputField::ActiveComp, 0, 0, cur.activeComp);
     if (cur.coordIsPing != g_baseline.coordIsPing) {
         SendDelta(s, DeskInputField::CoordIsPing, 0, 0, cur.coordIsPing);
         if (s->role() == coop::net::Role::Host) {

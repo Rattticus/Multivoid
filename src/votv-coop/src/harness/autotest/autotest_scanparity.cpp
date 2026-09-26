@@ -34,7 +34,6 @@
 #include "ue_wrap/devices/grime.h"
 #include "ue_wrap/devices/lightswitch.h"
 #include "ue_wrap/devices/passwordlock.h"
-#include "ue_wrap/devices/power_control.h"
 #include "ue_wrap/devices/windturbine.h"
 
 #include <atomic>
@@ -58,7 +57,7 @@ struct ProbeRow {
     bool portable;         // the interactable channels index under a portable identity where one exists
 };
 
-// The 13 consumers' OLD-shape filters -- the independent control, calling each consumer's public
+// The 12 consumers' OLD-shape filters -- the independent control, calling each consumer's public
 // wrapper predicate directly and never the hub registry. The key is the consumer's real rule:
 // the channels replace the game's key by the portable identity where one exists.
 const ProbeRow kRows[] = {
@@ -69,7 +68,6 @@ const ProbeRow kRows[] = {
     {"appliance",  &ue_wrap::appliance::IsAppliance,    &ue_wrap::appliance::GetKeyString,   true, true},
     {"doorbox",    &ue_wrap::door_box::IsDoorBox,       &ue_wrap::door_box::GetNameKey,      true, true},
     {"keypad",     &ue_wrap::passwordlock::IsPasswordLock, &ue_wrap::passwordlock::GetKeyString, true, false},
-    {"power",      &ue_wrap::power_control::IsPowerControl, &ue_wrap::power_control::GetKeyString, true, false},
     {"window",     &ue_wrap::base_window::IsBaseWindow, &ue_wrap::base_window::GetKeyString, true, false},
     // turbine: skipDefaultCdo=true although the OLD walk had no Default__ skip -- the first
     // WorldOf-term run PROVED the old index carried a phantom 5th entry, the turbine CDO

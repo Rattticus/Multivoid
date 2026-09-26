@@ -143,25 +143,14 @@ int32_t g_offAtlasUiCoords = -1;     // atlas.ui_coordinates
 // its instance chain is AtlasUiCoordsSlot below.
 void* g_intComsUnfocusedFn = nullptr;   // the desk's unfocus verb, the reset-on-release target
 
-// The desk-input apply surface (the desk input sync). The active-toggle setter events' side
-// effects replicated per field: the hum and light components, the per-unit extra verbs, the
-// scan effects.
+// The desk-input apply surface (the desk input sync): the scan charge's target, the playback
+// volume's component, and the verbs the playback and scan mirrors replay.
 int32_t g_offMaxCooldown = -1;       // coord_maxCooldown (the scan-charge target)
 int32_t g_offPrecMult = -1;          // DL_precMult (the dishes' average precision, setPrec's)
-int32_t g_offActiveConsole = -1;     // active_console (bool; the comp setter mirrors active_comp)
-int32_t g_offHumPlay = -1;           // computerHum_play   (UAudioComponent*)
-int32_t g_offHumDownl = -1;          // computerHum_downl
-int32_t g_offHumCoords = -1;         // computerHum_coords
-int32_t g_offLightPlay = -1;         // light_play  (scene component -- SetVisibility)
-int32_t g_offLightDown = -1;         // light_down
-int32_t g_offLightCoord = -1;        // light_coord
-int32_t g_offLightComp = -1;         // light_comp
 int32_t g_offSignalSound = -1;       // signalSound (UAudioComponent* -- playback volume)
-void* g_stopSoundFn = nullptr;           // desk stopSound() (the active_play setter runs it)
+void* g_stopSoundFn = nullptr;           // desk stopSound()
 void* g_playSignalFn = nullptr;          // desk playSignal (the deck-playback mirror replay)
 void* g_finFn = nullptr;                 // desk fin (the audio-finished delegate callback)
-void* g_downloadPlaySignallFn = nullptr; // desk download_playSignall() (the active_download setter)
-void* g_setMatsFn = nullptr;             // desk setMats() (screen materials -- the comp setter)
 void* g_spawnDirsFn = nullptr;           // desk spawnDirs() (the scan arrows)
 
 std::chrono::steady_clock::time_point g_nextResolve{};
@@ -217,21 +206,10 @@ void ResolvePass() {
     // The desk-input apply surface.
     if (g_offMaxCooldown < 0) g_offMaxCooldown = R::FindPropertyOffset(g_cls, L"coord_maxCooldown");
     if (g_offPrecMult < 0)   g_offPrecMult = R::FindPropertyOffset(g_cls, L"DL_precMult");
-    if (g_offActiveConsole < 0) g_offActiveConsole = R::FindPropertyOffset(g_cls, L"active_console");
-    if (g_offHumPlay < 0)    g_offHumPlay = R::FindPropertyOffset(g_cls, L"computerHum_play");
-    if (g_offHumDownl < 0)   g_offHumDownl = R::FindPropertyOffset(g_cls, L"computerHum_downl");
-    if (g_offHumCoords < 0)  g_offHumCoords = R::FindPropertyOffset(g_cls, L"computerHum_coords");
-    if (g_offLightPlay < 0)  g_offLightPlay = R::FindPropertyOffset(g_cls, L"light_play");
-    if (g_offLightDown < 0)  g_offLightDown = R::FindPropertyOffset(g_cls, L"light_down");
-    if (g_offLightCoord < 0) g_offLightCoord = R::FindPropertyOffset(g_cls, L"light_coord");
-    if (g_offLightComp < 0)  g_offLightComp = R::FindPropertyOffset(g_cls, L"light_comp");
     if (g_offSignalSound < 0) g_offSignalSound = R::FindPropertyOffset(g_cls, L"signalSound");
     if (!g_stopSoundFn) g_stopSoundFn = R::FindFunction(g_cls, L"stopSound");
     if (!g_playSignalFn) g_playSignalFn = R::FindFunction(g_cls, L"playSignal");
     if (!g_finFn) g_finFn = R::FindFunction(g_cls, L"fin");
-    if (!g_downloadPlaySignallFn)
-        g_downloadPlaySignallFn = R::FindFunction(g_cls, L"download_playSignall");
-    if (!g_setMatsFn)  g_setMatsFn = R::FindFunction(g_cls, L"setMats");
     if (!g_spawnDirsFn) g_spawnDirsFn = R::FindFunction(g_cls, L"spawnDirs");
 
     if (all && !g_coreResolved) {
@@ -341,10 +319,6 @@ bool WriteScalars(const Scalars& in, uint32_t painters) {
     *OffPtr<int32_t>(d, g_offPlaySelectIndex) = in.playSelectIndex;
     *OffPtr<bool>(d, g_offDlActiveFrFilter) = in.dlActiveFrFilter;
     *OffPtr<bool>(d, g_offDlActivePoFilter) = in.dlActivePoFilter;
-    *OffPtr<bool>(d, g_offActivePlay)       = in.activePlay;
-    *OffPtr<bool>(d, g_offActiveDownload)   = in.activeDownload;
-    *OffPtr<bool>(d, g_offActiveCoords)     = in.activeCoords;
-    *OffPtr<bool>(d, g_offActiveComp)       = in.activeComp;
     *OffPtr<bool>(d, g_offCoordIsPing)      = in.coordIsPing;
     // Repaint through the blueprint's own painters -- only the ones the caller named. The comp-pane
     // repaint lives in ue_wrap/desk/comp_pane.
@@ -656,44 +630,6 @@ bool ReadPrecMult(float& out) {
     if (!d || g_offPrecMult < 0) return false;
     out = *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(d) + g_offPrecMult);
     return true;
-}
-
-bool ApplyActiveToggleEffects(int unit, bool value) {
-    void* d = Instance();
-    if (!d || !g_coreResolved) return false;
-    // The native setter events' side-effect blocks, replicated per field. The fused native
-    // setter runs all five units' blocks including an unconditional stop-sound, too broad for
-    // one field.
-    switch (unit) {
-    case 0: {  // active_play: stopSound() + light_play + computerHum_play
-        ue_wrap::component_calls::CallParamless(d, g_stopSoundFn);
-        ue_wrap::component_calls::SetVisibility(DeskAudioComponent(g_offLightPlay), value);
-        ue_wrap::component_calls::SetActive(DeskAudioComponent(g_offHumPlay), value);
-        return true;
-    }
-    case 1: {  // active_download: download_playSignall() + light_down + computerHum_downl
-        ue_wrap::component_calls::CallParamless(d, g_downloadPlaySignallFn);
-        ue_wrap::component_calls::SetVisibility(DeskAudioComponent(g_offLightDown), value);
-        ue_wrap::component_calls::SetActive(DeskAudioComponent(g_offHumDownl), value);
-        return true;
-    }
-    case 2: {  // active_coords: light_coord + computerHum_coords
-        ue_wrap::component_calls::SetVisibility(DeskAudioComponent(g_offLightCoord), value);
-        ue_wrap::component_calls::SetActive(DeskAudioComponent(g_offHumCoords), value);
-        return true;
-    }
-    case 3: {  // active_comp: light_comp + active_console mirror + setMats()
-        ue_wrap::component_calls::SetVisibility(DeskAudioComponent(g_offLightComp), value);
-        if (g_offActiveConsole >= 0)
-            *reinterpret_cast<bool*>(reinterpret_cast<uint8_t*>(d) + g_offActiveConsole) = value;
-        ue_wrap::component_calls::CallParamless(d, g_setMatsFn);
-        // The computer-working cue transitions stay owned by the comp sync's cue edges; not
-        // duplicated here.
-        return true;
-    }
-    default:
-        return false;
-    }
 }
 
 bool ApplyPlayVolumeEffects(int32_t value) {

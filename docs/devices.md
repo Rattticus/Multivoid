@@ -150,12 +150,32 @@ an ordinary press of the door.
 
 ### Power, turbine, windows, grime
 
-The power panel carries five latched breakers, so it has its own lane with a five-bit mask, any
-peer flips a breaker, and the receiver mirrors the panel's own levers and LEDs; the effects on
-servers, doors and lights are synced by their own channels (`coop/interactables/power_sync`).
-The generators behind the panel wear on a 30 s decay tick that rolls its own dice; the host runs
-it and a client in its announced world refuses its own at the body, so a generator breaks only
-where the host's dice broke it (`coop/world/power_grid`).
+The power panel's five latched breakers have one author, the host (`coop/world/power_panel`). A
+press on any peer, a lever or the laptop's breaker page, runs as its prediction, and a client's
+reaches the host as the breakers it flipped, caught where the panel's own apply runs. The host takes
+presses in arrival order, a few a second, from a presser within reach of the lever or of the
+terminal it worked the page through (the laptop, or a portable PC); it runs a lever press as the
+game's own press by the presser's puppet, tutorial gate and click included, and applies a page
+press's flip, whose wait the presser already served. It sends every peer the breakers and the
+panel's lockout with the last press it took from each, and a refused press to its author alone. A
+client puts its own untaken presses on top and runs the panel's apply only when that differs from
+what its panel shows, so each machine's own setPower drives its base: the desk's units, the laptop,
+the lights, the servers and the sockets follow the grid everywhere. The desk virus's 60 s lockout
+runs on the host alone: a client refuses its own, switches its servers off as the host's lockout
+starts, and as it ends switches them on with the calc breaker and plays the turn-on cue. The
+generators behind the panel wear on a 30 s decay tick that rolls its own dice; the host runs it,
+and a client refuses its own tick, break, wear and fullFix at the body. The host sends every
+generator's row after the outermost of its generator verbs and its Activate presses, so a break's
+rows follow the blackout canonical it produced; a client runs the same edges from the rows and then
+puts its breakers back to the canonical, since a break's own blackout rewrote them
+(`coop/world/power_grid`). A client's player acts on a generator as ops, a few a second: its repair
+and its service at the Activate button (its own copy of the puzzle solved) and its upgrade install,
+with an upgrade in hand, run on the client first and are reconciled like the panel's presses, and
+its hit is the host's to run, with a held item that swings. The host takes an op from a player
+within reach. A repair, the host's of a client's op and a client's of the host's rows alike, runs
+as the game's repair with the puzzle solved followed by the Activate route's turn-on at the
+generator and its completion trigger; until the puzzle itself crosses, the host repairs on the
+presser's word.
 The wind turbine's heading integrator is not saved and chases the synced wind at a degree per
 second, so the host mirrors six driver floats about once a second and the turbine's own tick
 interpolates (`coop/interactables/turbine_sync`). The base window's dirt and the wall grime are
@@ -360,7 +380,8 @@ own re-take is touched and an ejecting peer behaves exactly as it does in single
 | State | Owner | Shape |
 |---|---|---|
 | a door, a light group | the host | each is sent at its own verbs; a client's own door verb is an intent the host runs, and its own group writes are refused |
-| a light switch, a lid, the garage, an appliance, an oven's repair, a locker, the power panel | any peer | symmetric state edges, relayed |
+| a light switch, a lid, the garage, an appliance, an oven's repair, a locker | any peer | symmetric state edges, relayed |
+| the power panel, the generators | the host | a client's press, repair, service, upgrade install and hit are ops the host takes from a player within reach; the host sends the breakers after its panel's apply and every generator's row after its verbs |
 | a keypad | the host | its verbs replayed on every client and its settled state after each chain; a client's own entries are an intent the host runs |
 | the turbine | the host | six floats a second |
 | a window, the grime | any peer, minimum wins | monotone decreases |
@@ -380,7 +401,9 @@ own re-take is touched and an ejecting peer behaves exactly as it does in single
 | `DoorVerbIntent` | a client to the host | a door's key, the verb, a hit's damage |
 | `KeypadState` | the host to all | a verb the host's keypad ran, or the state a chain settled on: the buffer, the verdict, the set-new-code mode, the password, and whether the chain handed the verdict on |
 | `KeypadIntent` | a client to the host | a keypad's key and the entry: a digit, a submit, a cancel, a keycard's verdict, a reset |
-| `PowerControlState`, `TurbineState`, `WindowCleanState`, `GrimeState` | each peer or the host | the mask; the driver floats; a decrease |
+| `PowerControlState` | a client to the host; the host to all | the breakers a press flipped; the breakers, the lockout, a lever's click and each slot's last press taken |
+| `PowerGridState` | the host to all; a client to the host | every generator's row and each slot's last op taken; a repair, a service, an upgrade install or a hit |
+| `TurbineState`, `WindowCleanState`, `GrimeState` | each peer or the host | the driver floats; a decrease |
 | `DroneState` | the host to all | the drone's transform and flags |
 | `DroneFlyIntent` | a client to the host | the face pressed, the keyboard; the host finds the console by the sender's reach |
 | `BalanceSync` | the host to all | the absolute balance |
@@ -417,7 +440,8 @@ an error line.
 
 | Limit | Evidence |
 |---|---|
-| A refused coin-gun sale has already destroyed the prop on the client, and no heal re-asserts it: the one place a client authors a shared-world destruction before the arbiter answers. The host rebuilds its key index periodically, so a refusal is rare | `[V]` `coop/items/coingun_sync` |
+| A refused coin-gun sale has already destroyed the prop on the client, and no heal re-asserts it: one of two places a client authors a shared-world destruction before the arbiter answers. The host rebuilds its key index periodically, so a refusal is rare | `[V]` `coop/items/coingun_sync` |
+| The other: a client's generator upgrade install spends the held upgrade before the host answers, so two players installing at a generator's last free place leave the second's item spent. The refund waits on a pairing proof that a refused install did spend an upgrade | `coop/world/power_grid` |
 | The coin collect has two entries; the interceptor sits on the overlap entry, and the E-press entry dispatches inside the Blueprint where it cannot fire, so a coin a client collects by pressing is credited on the client only and the host's next balance broadcast erases it | `[V]` `coop/items/coingun_sync` |
 | A client's earnings from anything but the drone and the coin gun (a point sack, a chest, an achievement) reach only its own machine and are erased by the host's next broadcast | `[V]` `coop/world/balance_sync` is one-way |
 | A client's light-group index has been reported dropping to zero after a join; not reproduced | `[?]` [issue 11](https://github.com/VOTV-MP/Multivoid/issues/11) |
@@ -429,7 +453,7 @@ an error line.
 |---|---|
 | the engine and the adapters | `coop/interactables/interactable_channel.h`, `coop/interactables/interactable_sync`, `coop/interactables/door_verb_intent`, `coop/interactables/door_state_verbs`, `coop/interactables/toggle_verbs`, `coop/interactables/verb_lanes`, `ue_wrap/devices/door`, `ue_wrap/devices/door_box`, `ue_wrap/devices/lightswitch`, `ue_wrap/devices/garage`, `ue_wrap/devices/appliance` |
 | keypads | `coop/interactables/keypad_sync`, `ue_wrap/devices/passwordlock` |
-| power, turbine, windows, grime | `coop/interactables/power_sync`, `coop/interactables/turbine_sync`, `coop/interactables/window_sync`, `coop/interactables/grime_sync`, `ue_wrap/devices/power_control`, `ue_wrap/devices/windturbine`, `ue_wrap/devices/base_window`, `ue_wrap/devices/grime` |
+| power, turbine, windows, grime | `coop/world/power_panel`, `coop/world/power_grid`, `ue_wrap/devices/generator`, `coop/interactables/turbine_sync`, `coop/interactables/window_sync`, `coop/interactables/grime_sync`, `ue_wrap/devices/power_control`, `ue_wrap/devices/windturbine`, `ue_wrap/devices/base_window`, `ue_wrap/devices/grime` |
 | the drone | `coop/interactables/drone_sync`, `coop/interactables/drone_call_intent`, `ue_wrap/devices/drone`, `ue_wrap/devices/drone_console` |
 | the floppy slot | `coop/interactables/floppy_slot_sync`, `ue_wrap/devices/floppy_slot`, `ue_wrap/devices/serverbox`, `ue_wrap/devices/laptop` |
 | the inbox | `coop/world/email_sync`, `ue_wrap/world/email`, `coop/session/join_seed` |

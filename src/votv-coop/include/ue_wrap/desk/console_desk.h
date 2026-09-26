@@ -35,6 +35,8 @@ struct Scalars {
   int32_t playSelectIndex = 0;  // play_selectIndex
   bool  dlActiveFrFilter = false;  // DL_activeFrFilter
   bool  dlActivePoFilter = false;  // DL_activePoFilter
+  // The four unit power flags are read here and never written: each peer's own setPower writes them
+  // through the desk's powerChanged, the one writer the game has.
   bool  activePlay = false;  // active_play
   bool  activeDownload = false;  // active_download
   bool  activeCoords = false;  // active_coords
@@ -78,12 +80,12 @@ bool ReadScalars(Scalars& out);
 // read-only; not on the DeskState wire. False if unresolved.
 bool ReadFreqPolData(float& frData, float& poData);
 
-// Raw-write the scalar set, then run the desk's own refresh verbs named by `painters` (the
-// Painter bits above) so the screens and LEDs repaint from the new fields. `kPaintAll` is right
-// for a whole-set apply such as a join adopt; a caller that changed ONE field names only that
-// field's painters, because the chain is not side-effect free -- see the Painter comment and the
-// chain itself in console_desk.cpp. `kPaintNone` writes the fields and paints nothing, which is
-// the correct answer for a scalar no verb reads. Game thread.
+// Raw-write the scalar set but the four unit power flags, then run the desk's own refresh verbs
+// named by `painters` (the Painter bits above) so the screens and LEDs repaint from the new fields.
+// `kPaintAll` is right for a whole-set apply such as a join adopt; a caller that changed ONE field
+// names only that field's painters, because the chain is not side-effect free -- see the Painter
+// comment and the chain itself in console_desk.cpp. `kPaintNone` writes the fields and paints
+// nothing, which is the correct answer for a scalar no verb reads. Game thread.
 bool WriteScalars(const Scalars& in, uint32_t painters);
 
 // The tail (the last maxChars) of the live coords-screen event log, the PING and FOUND lines
@@ -219,15 +221,6 @@ bool ReadMaxCooldown(float& out);
 // DL_precMult, the average of the dishes' precision that mainGamemode.setPrec writes and the
 // download's rate is computed from. False if unresolved.
 bool ReadPrecMult(float& out);
-
-// Apply one power toggle with its native setter-event side effects, replicated reflected: the
-// hum's activation, the light's visibility, and per unit the play stop, the download's
-// play-signal refresh, or the refiner's console flag and materials. The native fused setter
-// runs all five units' blocks including an unconditional sound stop, too broad for a
-// per-field apply, hence the replication. Raw-write the field through WriteScalars first;
-// this adds only the side effects. Units: 0 play, 1 download, 2 coords, 3 refiner. Game
-// thread.
-bool ApplyActiveToggleEffects(int unit, bool value);
 
 // Live-apply the play volume the way the atlas's volume setter does: the raw field write is
 // the caller's (WriteScalars); this adds the sound's volume multiplier, the value over 10

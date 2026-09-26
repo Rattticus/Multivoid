@@ -35,12 +35,9 @@ uint64_t NowMs() {
 }
 
 // ---- resolved state ----
-void*   g_cls          = nullptr;  // laptop_C
 int32_t g_offPowered = -1, g_offIsOpened = -1, g_offAnim = -1;
 int32_t g_offReadWrites = -1, g_offFloppyData = -1;
 int32_t g_offWidget = -1;
-void*   g_fnAction = nullptr;      // actionOptionIndex
-void*   g_fnUpdButton = nullptr;   // updButton
 // The buffer fields.
 int32_t g_offFloppyBuffer = -1;     // laptop.floppyBuffer (TArray<FString>)
 int32_t g_offFloppyBufUids = -1;    // laptop.floppyBufferUIDs (TArray<int32>)
@@ -52,6 +49,7 @@ uint64_t g_nextResolveTryMs = 0;
 // the dispatch cache, which climbs to the declaring class (RemoveFromParent is UWidget's).
 R::InstanceOffset g_widgetBufferSlots{L"bufferSlots"};  // ui_laptop.bufferSlots (TArray<UUserWidget*>)
 R::InstanceOffset g_bufRowData{L"data"};                // ui_bufferDatablock_C.data (FString)
+R::InstanceOffset g_widgetNearestActor{L"nearestActor"};  // ui_laptop.nearestActor (AActor*)
 
 void* WidgetOf(void* inst) {
     if (g_offWidget < 0) return nullptr;
@@ -91,10 +89,8 @@ bool EnsureResolved() {
             *r.slot = r.fallback;
         }
     }
-    g_fnAction    = R::FindFunction(cls, L"actionOptionIndex");
-    g_fnUpdButton = R::FindFunction(cls, L"updButton");
-    if (!g_fnAction)
-        UE_LOGW("laptop: actionOptionIndex not found -- power replay disabled");
+    const bool action = R::FindDispatchFunctionCached(cls, L"actionOptionIndex") != nullptr;
+    if (!action) UE_LOGW("laptop: actionOptionIndex not found -- power replay disabled");
 
     // The buffer fields.
     g_offFloppyBuffer  = R::FindPropertyOffset(cls, L"floppyBuffer");
@@ -102,16 +98,24 @@ bool EnsureResolved() {
     if (g_offFloppyBuffer < 0)  { UE_LOGW("laptop: floppyBuffer offset -- fallback 0x4B8"); g_offFloppyBuffer = 0x4B8; }
     if (g_offFloppyBufUids < 0) { UE_LOGW("laptop: floppyBufferUIDs offset -- fallback 0x4D8"); g_offFloppyBufUids = 0x4D8; }
 
-    g_cls = cls;
     g_resolved = true;
-    UE_LOGI("laptop: resolved (isOpened=0x%X floppyData=0x%X readWrites=0x%X action=%p)",
-            g_offIsOpened, g_offFloppyData, g_offReadWrites, g_fnAction);
+    UE_LOGI("laptop: resolved (isOpened=0x%X floppyData=0x%X readWrites=0x%X action=%d)",
+            g_offIsOpened, g_offFloppyData, g_offReadWrites, action ? 1 : 0);
     return true;
 }
 
 void* Instance() {
     if (!g_resolved) return nullptr;
     return world_singleton::Find(L"laptop_C");
+}
+
+void* TerminalInUse() {
+    void* l = Instance();
+    void* widget = l ? WidgetOf(l) : nullptr;
+    const int32_t off = (widget && R::IsLive(widget)) ? g_widgetNearestActor.Of(widget) : -1;
+    if (off < 0) return nullptr;
+    void* a = *reinterpret_cast<void* const*>(reinterpret_cast<const uint8_t*>(widget) + off);
+    return (a && R::IsLive(a)) ? a : nullptr;
 }
 
 bool ReadPower(PowerState& out) {
@@ -126,11 +130,12 @@ bool ReadPower(PowerState& out) {
 
 bool CallPowerToggle() {
     void* l = Instance();
-    if (!l || !g_fnAction) return false;
+    void* fn = l ? R::FindDispatchFunctionCached(R::ClassOf(l), L"actionOptionIndex") : nullptr;
+    if (!fn) return false;
     // Empty frame: player=null, hit zeroed, action=b8 semantics ride the
     // 'action' byte param; lookAt null. In-game precedent: beginplayTurnOn's
     // auto-press (uber@815) invokes the same handler with no player context.
-    ParamFrame f(g_fnAction);
+    ParamFrame f(fn);
     if (!f.valid()) return false;
     const uint8_t b8 = 8;
     if (!f.SetRaw(L"action", &b8, sizeof(b8))) {

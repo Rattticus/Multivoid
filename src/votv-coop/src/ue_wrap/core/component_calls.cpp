@@ -16,7 +16,6 @@ void* g_setTextFn = nullptr;             // UTextBlock::SetText(FText)
 const wchar_t* g_setTextParam = nullptr;
 void* g_setSoundFn = nullptr;            // UAudioComponent::SetSound(USoundBase*)
 void* g_activateFn = nullptr;            // UActorComponent::Activate(bool bReset)
-void* g_setActiveFn = nullptr;           // UActorComponent::SetActive(bNewActive, bReset)
 void* g_setVisibilityFn = nullptr;       // USceneComponent::SetVisibility(bNewVisibility, bPropagate)
 
 }  // namespace
@@ -64,19 +63,13 @@ bool Activate(void* comp) {
     return ue_wrap::Call(comp, f);
 }
 
-// UActorComponent::SetActive(bNewActive, bReset) -- the hum loops' native
-// switch (uber [1116/1150/1155] uses SetActive(value, true)).
-bool SetActive(void* comp, bool value) {
-    if (!comp) return false;
-    if (!g_setActiveFn) {
-        if (void* cls = R::ClassOf(comp))
-            g_setActiveFn = R::FindFunction(cls, L"SetActive");
-    }
-    if (!g_setActiveFn) return false;
-    ue_wrap::ParamFrame f(g_setActiveFn);
+bool SetActive(void* comp, bool value, bool reset) {
+    void* fn = comp ? R::FindDispatchFunctionCached(R::ClassOf(comp), L"SetActive") : nullptr;
+    if (!fn) return false;
+    ue_wrap::ParamFrame f(fn);
     if (!f.valid()) return false;
     f.Set<bool>(L"bNewActive", value);
-    f.Set<bool>(L"bReset", true);
+    f.Set<bool>(L"bReset", reset);
     return ue_wrap::Call(comp, f);
 }
 

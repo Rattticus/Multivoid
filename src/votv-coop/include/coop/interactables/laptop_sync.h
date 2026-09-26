@@ -24,8 +24,8 @@ void Install(coop::net::Session* session);
 //   POWER   the isOpened edge, polled because every entry verb is EX-invisible. A
 //           receiver replays the native actionOptionIndex(b8) under the wire-apply
 //           echo guard when local differs from wire; one whose powered or anim gate
-//           declines retries until it converges, and power_sync converges the
-//           wall-power input.
+//           declines retries until it converges, and coop/world/power_panel converges
+//           the wall-power input (every peer's setPower runs from the host's canonical).
 //   FLOPPY  floppyType change edges, insert and eject, plus the slot scalars and
 //           content strings.
 // The portable PC (prop_portablePc_C) is a remote terminal to THIS laptop: its lid is

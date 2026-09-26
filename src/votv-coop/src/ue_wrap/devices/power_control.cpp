@@ -1,60 +1,53 @@
-// ue_wrap/devices/power_control.cpp -- see ue_wrap/devices/power_control.h. Engine access for the
-// base POWER PANEL (ApowerControl_C). Offsets and verbs are resolved from the live class by
-// reflection (version-portable); the Alpha 0.9.0-n values are logged fallbacks.
-//
-// The apply mirrors the panel's OWN visual -- the lever positions and the LED particles -- and
-// nothing downstream. The native buttonsVisibility() the blueprint calls on a real press also
-// fans out to servers, lightRoots, blackout doors and wall cords plus gamemode.setPower, all of
-// which ride their own coop channels (ApplianceState for the serverBox, LightState for the
-// lightRoots, DoorState for the doors). Re-running that fan-out on a remote peer would
-// double-drive and fight those channels, so we never call buttonsVisibility(), powerChanged(),
-// sendPower() or setPowered(): we call the visual-only moveLevers() and drive the eff_*_on/off
-// particle visibility directly, which is the LED half of buttonsVisibility, for a panel mirror
-// with zero fan-out.
+// ue_wrap/devices/power_control.cpp -- see ue_wrap/devices/power_control.h. Offsets are the class's layout, the
+// same in every world, and resolve once by name; verbs and classes are looked up where they are used.
 
 #include "ue_wrap/devices/power_control.h"
 
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/call.h"
-#include "ue_wrap/engine/engine.h"        // SetSceneComponentVisibility (the LED particles)
+#include "ue_wrap/core/component_calls.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/sdk_profile_names.h"
+#include "ue_wrap/engine/engine.h"            // TryGetActorLocation
+#include "ue_wrap/engine/engine_audio.h"      // PlaySoundAtLocation
+#include "ue_wrap/engine/engine_component.h"  // GetComponentLocation
+#include "ue_wrap/engine/hit_result.h"
+#include "ue_wrap/world/world_singleton.h"
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 
 namespace ue_wrap::power_control {
 namespace {
 
 namespace R = reflection;
+namespace P = profile;
 
-// One descriptor per breaker subsystem. `bit` is the PowerPanelPayload mask bit, in field order --
-// NOT the powerChanged() arg order, since we never call powerChanged. The `eff_*_on/off` are the
-// LED particle components, whose visibility is the lit indicator; note the blueprint's typo
-// "eef_calc_*" for the calc subsystem.
+// The five breakers, `bit` their place in the mask, in field order.
 struct Sys {
     int            bit;
     const wchar_t* pressName;
-    const wchar_t* effOnName;
-    const wchar_t* effOffName;
-    // resolved lazily (game-thread serial):
-    int32_t pressOff;
-    int32_t effOnOff;
-    int32_t effOffOff;
+    const wchar_t* leverName;  // the lever component the press compares its trace against
+    int32_t        pressOff;   // resolved lazily (game-thread serial)
+    int32_t        leverOff;
 };
 
 Sys g_sys[] = {
-    { 0, L"press_coord", L"eff_coords_on", L"eff_coords_off", -1, -1, -1 },
-    { 1, L"press_downl", L"eff_downl_on",  L"eff_downl_off",  -1, -1, -1 },
-    { 2, L"press_play",  L"eff_play_on",   L"eff_play_off",   -1, -1, -1 },
-    { 3, L"press_calc",  L"eef_calc_on",   L"eef_calc_off",   -1, -1, -1 },
-    { 4, L"press_light", L"eff_light_on",  L"eff_light_off",  -1, -1, -1 },
+    { 0, L"press_coord", L"power_coordinates", -1, -1 },
+    { 1, L"press_downl", L"power_downloading", -1, -1 },
+    { 2, L"press_play",  L"power_playing",     -1, -1 },
+    { 3, L"press_calc",  L"power_calculating", -1, -1 },
+    { 4, L"press_light", L"power_light",       -1, -1 },
 };
-
 std::atomic<bool> g_resolved{false};
-bool    g_layoutRefused = false;  // the class loaded but a field did not: permanent for this build
-void*   g_cls = nullptr;          // powerControl_C UClass
-int32_t g_keyOff = -1;            // AtriggerBase_C::Key
-void*   g_moveLeversFn = nullptr; // moveLevers() -- visual-only lever animation
+bool     g_layoutRefused = false;  // the class loaded but a field did not: permanent for this build
+uint64_t g_nextTryMs = 0;
+int32_t  g_disabledOff = -1;
+int32_t  g_waterloggedOff = -1;
+int32_t  g_offPanel = -1;          // mainGamemode_C.powerControl
 
 // A TArray<AActor*> member of the panel: its data, then its count and capacity.
 struct ActorArray {
@@ -89,114 +82,178 @@ struct ArrayMember {
 };
 ArrayMember g_lightRoots{L"lighRoots"};
 ArrayMember g_blackoutDoors{L"doorsOpen"};
+ArrayMember g_servers{L"servers"};
+
+// The stationTurnon sound, an asset held while its slot and serial still hold it.
+CachedObjRef g_turnOnCue;
+
+uint64_t NowMs() {
+    return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count());
+}
+
+bool& BoolAt(void* p, int32_t off) { return *reinterpret_cast<bool*>(reinterpret_cast<char*>(p) + off); }
+
+void* ObjectField(void* obj, const wchar_t* name) {
+    const int32_t off = obj ? R::FindPropertyOffset(R::ClassOf(obj), name) : -1;
+    void* v = off < 0 ? nullptr : *reinterpret_cast<void* const*>(reinterpret_cast<const uint8_t*>(obj) + off);
+    return (v && R::IsLive(v)) ? v : nullptr;
+}
+
+// The hum: an AmbientSound actor, whose root, and the component the panel switches, is its AudioComponent.
+void* HumComponent(void* p) { return ObjectField(ObjectField(p, L"serversSound"), L"AudioComponent"); }
+
+bool CallVerb(void* p, const wchar_t* verb) {
+    return p && g_resolved.load(std::memory_order_acquire) && component_calls::CallParamlessNamed(p, verb);
+}
 
 }  // namespace
 
 bool EnsureResolved() {
     if (g_resolved.load(std::memory_order_acquire)) return true;
     if (g_layoutRefused) return false;
+    const uint64_t now = NowMs();
+    if (now < g_nextTryMs) return false;
+    g_nextTryMs = now + 1000;
 
-    void* cls = R::FindClass(L"powerControl_C");
-    if (!cls) return false;  // the blueprint has not streamed in yet; retried next tick
+    void* cls = object_index::ClassByName(L"powerControl_C");
+    void* gmCls = object_index::ClassByName(P::name::GamemodeClass);
+    if (!cls || !gmCls) return false;  // not streamed in yet; retried a second later
 
-    // Every offset is resolved BY NAME, and a miss refuses the lane rather than falling back on
-    // the address this build happens to use. The apply writes a bool and dereferences a component
-    // pointer at these offsets, so a recook that moves a field would turn a fallback into a blind
-    // write into whatever now lives there. The class IS loaded by this point, so a miss is a fact
-    // about this game build and not a timing race: it is latched, and reported once.
+    // Every offset and the apply verb resolve BY NAME, and a miss refuses the wrapper rather than falling back
+    // on an address this build happens to use: the lane writes bools at these offsets, so a recook that moved a
+    // field would turn a fallback into a blind write. The class IS loaded here, so a miss is a fact about this
+    // game build, latched and said once.
     auto refuse = [&](const wchar_t* what) {
         g_layoutRefused = true;
-        UE_LOGE("power: %ls did not resolve on a loaded powerControl_C -- the base power-panel lane "
-                "is OFF for this game build (no blind writes at a stale offset)", what);
+        UE_LOGE("power: %ls did not resolve on a loaded powerControl_C -- the power panel lane is OFF for this "
+                "game build (no blind writes at a stale offset)", what);
         return false;
     };
-
-    // Key is declared on the AtriggerBase_C base, which the property lookup climbs to.
-    const int32_t keyOff = R::FindPropertyOffset(cls, L"Key");
-    if (keyOff < 0) return refuse(L"triggerBase_C::Key");
 
     for (auto& s : g_sys) {
         s.pressOff = R::FindPropertyOffset(cls, s.pressName);
         if (s.pressOff < 0) return refuse(s.pressName);
-        s.effOnOff = R::FindPropertyOffset(cls, s.effOnName);
-        if (s.effOnOff < 0) return refuse(s.effOnName);
-        s.effOffOff = R::FindPropertyOffset(cls, s.effOffName);
-        if (s.effOffOff < 0) return refuse(s.effOffName);
+        s.leverOff = R::FindPropertyOffset(cls, s.leverName);  // the host runs a client's lever press through it
+        if (s.leverOff < 0) return refuse(s.leverName);
     }
+    const int32_t disabledOff = R::FindPropertyOffset(cls, L"disabled");
+    if (disabledOff < 0) return refuse(L"disabled");
+    const int32_t waterloggedOff = R::FindPropertyOffset(cls, L"waterlogged");
+    if (waterloggedOff < 0) return refuse(L"waterlogged");
+    if (!R::FindDispatchFunctionCached(cls, L"buttonsVisibility")) return refuse(L"buttonsVisibility()");
+    if (!R::FindDispatchFunctionCached(cls, L"playSND"))
+        UE_LOGW("power: playSND not found -- a lever press mirrored from another peer is silent");
+    const int32_t offPanel = R::FindPropertyOffset(gmCls, L"powerControl");
+    if (offPanel < 0) return refuse(L"mainGamemode_C::powerControl");
 
-    // The one best-effort resolve: moveLevers is a VERB, not an address. Without it the mirror
-    // still drives the LEDs, so its absence degrades the visual instead of corrupting the object.
-    void* moveLevers = R::FindFunction(cls, L"moveLevers");
-    if (!moveLevers)
-        UE_LOGW("power: moveLevers UFunction not found -- mirror levers won't animate (LEDs still mirror)");
-
-    g_cls = cls;
-    g_keyOff = keyOff;
-    g_moveLeversFn = moveLevers;
+    g_offPanel = offPanel;
+    g_disabledOff = disabledOff;
+    g_waterloggedOff = waterloggedOff;
     g_resolved.store(true, std::memory_order_release);
-    UE_LOGI("power: resolved powerControl_C=%p Key@0x%04X moveLevers=%p", cls, keyOff, moveLevers);
+    UE_LOGI("power: resolved powerControl_C disabled@0x%04X waterlogged@0x%04X gamemode.powerControl@0x%04X",
+            disabledOff, waterloggedOff, offPanel);
     return true;
 }
 
 bool IsPowerControl(void* obj) {
-    if (!obj || !g_cls) return false;
+    if (!obj || !g_resolved.load(std::memory_order_acquire)) return false;
     void* cls = R::ClassOf(obj);
-    if (!cls) return false;
-    void* bases[1] = { g_cls };
-    return R::IsDescendantOfAny(cls, bases, 1);
+    void* bases[1] = { object_index::ClassByName(L"powerControl_C") };
+    return cls && bases[0] && R::IsDescendantOfAny(cls, bases, 1);
 }
 
-std::wstring GetKeyString(void* p) {
-    if (!p || g_keyOff < 0) return std::wstring();
-    const R::FName& key = *reinterpret_cast<const R::FName*>(
-        reinterpret_cast<const char*>(p) + g_keyOff);
-    return R::ToString(key);
+void* Panel() {
+    if (!g_resolved.load(std::memory_order_acquire)) return nullptr;
+    void* gm = world_singleton::Gamemode();
+    if (!gm) return nullptr;
+    void* p = *reinterpret_cast<void* const*>(reinterpret_cast<const uint8_t*>(gm) + g_offPanel);
+    return (p && R::IsLive(p) && IsPowerControl(p)) ? p : nullptr;
 }
 
 bool ReadPress(void* p, uint8_t& mask) {
     if (!p || !g_resolved.load(std::memory_order_acquire)) return false;
     uint8_t m = 0;
-    for (auto& s : g_sys) {
-        if (s.pressOff < 0) continue;
-        if (*reinterpret_cast<const bool*>(reinterpret_cast<const char*>(p) + s.pressOff))
-            m |= static_cast<uint8_t>(1u << s.bit);
-    }
+    for (auto& s : g_sys)
+        if (BoolAt(p, s.pressOff)) m |= static_cast<uint8_t>(1u << s.bit);
     mask = m;
     return true;
 }
 
-bool ApplyPress(void* p, uint8_t mask) {
+bool WritePress(void* p, uint8_t mask) {
     if (!p || !g_resolved.load(std::memory_order_acquire)) return false;
+    for (auto& s : g_sys) BoolAt(p, s.pressOff) = (mask & (1u << s.bit)) != 0;
+    return true;
+}
 
-    // 1. Write the 5 latched press_ bools (the authoritative state we poll + mirror).
-    for (auto& s : g_sys) {
-        if (s.pressOff < 0) continue;
-        *reinterpret_cast<bool*>(reinterpret_cast<char*>(p) + s.pressOff) =
-            (mask & (1u << s.bit)) != 0;
-    }
+bool ReadDisabled(void* p, bool& disabled) {
+    if (!p || !g_resolved.load(std::memory_order_acquire)) return false;
+    disabled = BoolAt(p, g_disabledOff);
+    return true;
+}
 
-    // 2. moveLevers() -- animate lever_0..4 from press_ (visual-only; no field writes, no
-    //    fan-out -- RE @4074/@1201). Safe to call on the mirror.
-    if (g_moveLeversFn) {
-        ParamFrame f(g_moveLeversFn);
-        if (f.valid()) Call(p, f);
-    }
+bool WriteDisabled(void* p, bool disabled) {
+    if (!p || !g_resolved.load(std::memory_order_acquire)) return false;
+    BoolAt(p, g_disabledOff) = disabled;
+    return true;
+}
 
-    // 3. LEDs: set the eff_<sys>_on/off particle visibility DIRECTLY -- the visual half of
-    // buttonsVisibility -- and never buttonsVisibility() itself, which would fan out to servers,
-    // lightRoots, blackout doors and cords plus gamemode.setPower, all of them synced by their own
-    // channels. This drives ONLY the panel's own LED indicators. The powerblock face-material bulbs
-    // and the isOn scalar are still a visual-polish follow-up; the particles and levers are the
-    // primary indicator.
-    for (auto& s : g_sys) {
-        const bool on = (mask & (1u << s.bit)) != 0;
-        if (s.effOnOff >= 0)
-            if (void* c = *reinterpret_cast<void**>(reinterpret_cast<char*>(p) + s.effOnOff))
-                engine::SetSceneComponentVisibility(c, on, false);
-        if (s.effOffOff >= 0)
-            if (void* c = *reinterpret_cast<void**>(reinterpret_cast<char*>(p) + s.effOffOff))
-                engine::SetSceneComponentVisibility(c, !on, false);
+bool ReadWaterlogged(void* p, bool& waterlogged) {
+    if (!p || !g_resolved.load(std::memory_order_acquire)) return false;
+    waterlogged = BoolAt(p, g_waterloggedOff);
+    return true;
+}
+
+void* Lever(void* p, int bit) {
+    if (!p || bit < 0 || bit > 4 || !g_resolved.load(std::memory_order_acquire) || g_sys[bit].leverOff < 0)
+        return nullptr;
+    return *reinterpret_cast<void* const*>(reinterpret_cast<const uint8_t*>(p) + g_sys[bit].leverOff);
+}
+
+bool PressLever(void* p, void* player, int bit) {
+    void* lever = Lever(p, bit);
+    void* fn = p ? R::FindDispatchFunctionCached(R::ClassOf(p), L"actionOptionIndex") : nullptr;
+    if (!lever || !fn || !player) return false;
+    const FVector at = engine::GetComponentLocation(lever);
+    ParamFrame f(fn);
+    return f.valid() && f.Set<void*>(L"player", player) && hit_result::Write(f, L"hit", p, lever, at) &&
+           f.Set<void*>(L"lookAtComponent", lever) && Call(p, f);
+}
+
+bool ButtonsVisibility(void* p) { return CallVerb(p, L"buttonsVisibility"); }
+
+bool PlayLeverSound(void* p, bool on) {
+    if (!p || !g_resolved.load(std::memory_order_acquire)) return false;
+    void* fn = R::FindDispatchFunctionCached(R::ClassOf(p), L"playSND");
+    ParamFrame f(fn);
+    return fn && f.valid() && f.Set(L"activated", on) && Call(p, f);
+}
+
+bool SetServersActive(void* p, bool on) {
+    std::vector<void*> servers;
+    if (!g_servers.Read(p, servers)) return false;
+    bool ok = true;
+    for (void* sv : servers) {
+        // Every server is a serverBox_C; its setActive resolves on the first and is cached for the class.
+        void* fn = R::FindDispatchFunctionCached(R::ClassOf(sv), L"setActive");
+        ParamFrame f(fn);
+        ok = fn && f.valid() && f.Set<bool>(L"bNewActive", on) && Call(sv, f) && ok;
     }
+    if (void* hum = HumComponent(p)) ok = component_calls::SetActive(hum, on, false) && ok;
+    return ok;
+}
+
+bool PlayTurnOnCue(void* p) {
+    if (!p) return false;
+    void* cue = g_turnOnCue.Get();
+    if (!cue) {
+        cue = R::FindObject(L"stationTurnon", P::name::SoundWaveClass);
+        if (!cue) return false;
+        g_turnOnCue.Set(cue);
+    }
+    FVector at{};
+    if (!engine::TryGetActorLocation(p, at)) return false;
+    engine::PlaySoundAtLocation(p, cue, at, nullptr);  // no attenuation: heard as the game's 2D cue is
     return true;
 }
 

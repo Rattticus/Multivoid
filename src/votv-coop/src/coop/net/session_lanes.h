@@ -140,6 +140,11 @@ inline Lane LaneForKind(ReliableKind k) {
     // the lines it falls between; pinned. Not relayable: a line is addressed to the host, and its
     // answers to its typist alone.
     case ReliableKind::SatConsole: return Lane::Normal;
+    // The power grid's two kinds share a lane: the blackout canonical a generator's break produced reaches a
+    // client before that break's rows, and one client's presses and ops reach the host in the order it made them.
+    // Not relayable: a press goes to the host alone, and the host authors the canonical and the rows.
+    case ReliableKind::PowerControlState:  return Lane::Normal;
+    case ReliableKind::PowerGridState:     return Lane::Normal;
     // The drive-chain trio assumes in-lane order between a slot line, the payload row it references
     // and a rack pair; pinned together.
     case ReliableKind::DriveSlotState: return Lane::Normal;
@@ -218,14 +223,14 @@ inline bool IsClientRelayableReliableKind(ReliableKind k) {
     case ReliableKind::PropRelease:
     case ReliableKind::PropStickState:    // a client's wall-attachable stick
     // DoorState is not relayable: the host authors it, and a client's own door verbs reach the host
-    // as DoorVerbIntent, an intent addressed to the host alone.
+    // as DoorVerbIntent, an intent addressed to the host alone. PowerControlState likewise: a press
+    // reaches the host alone and the host authors the canonical.
     case ReliableKind::LightState:
     case ReliableKind::ContainerState:
     case ReliableKind::GarageDoorState:   // symmetric
     case ReliableKind::ApplianceState:    // symmetric
     case ReliableKind::OvenRepairState:   // symmetric, one way
     case ReliableKind::LockerDoorState:   // symmetric
-    case ReliableKind::PowerControlState: // symmetric
     case ReliableKind::AtvState:          // occupant- or grabber-authoritative
     case ReliableKind::AtvRelease:        // the grabber's release edge
     // DeskState is not relayable: adopt-only, host to joiner; live desk input rides DeskInput.

@@ -57,7 +57,8 @@ host validates and commits contested writes), `local` (never shared).
 |---|---|---|---|---|
 | Doors, keypads, locks | a door's state, sent at its own verbs; a keypad's verbs, replayed from the host, and the state each chain settles on; a client's own door press, hit and pry and its keypad entries run on the host | host | snapshot | tested; a pry, a keycard and a pass changer built |
 | Lights and light groups | switch state; the group's live state | presser; host for the group | snapshot | built |
-| Power panels, turbine, grime, windows, appliances | the mask, the float, the decrease-only cleanliness, the one-bit states | presser or host | snapshot | built; windows tested |
+| The power grid | the panel's breakers and lockout; each generator's break, wear and upgrades | host; a client's presses, repairs, services, installs and hits are ops | snapshot | built |
+| Turbine, grime, windows, appliances | the float, the decrease-only cleanliness, the one-bit states | presser or host | snapshot | built; windows tested |
 | The bay window's dirt | each sponge dab on its render target: the pixel, the edge, the brush's opacity and colour | presser, relayed by the host | the host's transferred save | built |
 | Device occupancy | who is using a device | arbiter | snapshot of the table | works |
 | Desk input and console | field-granular input deltas, cooldown charges, the console text | presser; host relays | seed | works, five known breaks |

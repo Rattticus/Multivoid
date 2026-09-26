@@ -16,6 +16,7 @@
 #include "coop/world/event_cue_sync.h"
 #include "coop/world/event_fire_sync.h"
 #include "coop/world/firefly_sync.h"
+#include "coop/world/power_grid.h"
 #include "coop/items/inventory_pickup_sync.h"
 #include "coop/world/sky_sync.h"
 #include "coop/world/weather_lightning.h"
@@ -185,6 +186,23 @@ bool HandleWorldEvent(net::Session& session,
                 ? static_cast<uint8_t>(msg.senderPeerSlot)
                 : static_cast<uint8_t>(0xFF);
         coop::server_upgrade_sync::OnState(up, upslot);
+        break;
+    }
+    case net::ReliableKind::PowerGridState: {
+        // The base's generators: the host's rows (host to all) or a client's op on one, a repair, a service, an
+        // upgrade or a hit (client to host). Role, reach and trust gates live in power_grid::OnReliable.
+        if (msg.payloadLen < sizeof(net::PowerGridPayload)) {
+            UE_LOGW("event_feed: PowerGridState payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::PowerGridPayload));
+            break;
+        }
+        net::PowerGridPayload gp{};
+        std::memcpy(&gp, msg.payload, sizeof(gp));
+        const uint8_t gslot =
+            (msg.senderPeerSlot >= 0 && msg.senderPeerSlot < net::kMaxPeers)
+                ? static_cast<uint8_t>(msg.senderPeerSlot)
+                : static_cast<uint8_t>(0xFF);
+        coop::power_grid::OnReliable(gp, gslot);
         break;
     }
     case net::ReliableKind::RoachState: {

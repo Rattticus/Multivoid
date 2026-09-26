@@ -1,22 +1,44 @@
-// coop/world/power_grid.h -- the base's power grid, whose simulation runs on the host. The generators wear on
-// the dice of generatorFuckuper's 30 s decay tick: the host rolls them, and a client in its announced world
-// refuses its own tick at the body, so a generator breaks only where the host's dice broke it. Every peer still
-// arms the timers and runs the 5 s sendElec tick, which only draws the pole arcs of a broken generator; the
-// coordinate towers' timer belongs to the towers.
+// coop/world/power_grid.h -- the base's power grid, whose simulation runs on the host (PowerGridState). The
+// generators wear on the dice of generatorFuckuper's 30 s decay tick, which a client in its announced world
+// refuses at the body; a client refuses its own generator break, wear and fullFix too, so a generator breaks,
+// wears and mends only on the host, whose rows every client applies by running the same edges itself, a repair as
+// the Activate route runs one, after the panel canonical the verbs produced. A client's player acts on a generator
+// as ops to the host, taken a few a second from a player within reach; a refused op is answered to its author
+// alone. Its repair and its service at the Activate button (its own copy of the puzzle solved) and its upgrade
+// install run on the client first and are reconciled like the panel's presses (coop/world/power_panel.h), the rows
+// carrying the last op taken from each slot: the element-data shape. Its hit is the host's to run, the
+// request-and-confirm shape, since a break blacks the whole base out:
+// reference/mtasa-blue/Client/mods/deathmatch/logic/CClientPed.cpp:6711-6737 sends and waits,
+// reference/mtasa-blue/Server/mods/deathmatch/logic/CGame.cpp:3079 validates. Every peer still arms the timers and
+// draws the pole arcs of a broken generator; the coordinate towers' timer belongs to the towers.
 
 #pragma once
 
-namespace coop::net { class Session; }
+#include <cstdint>
+
+namespace coop::net { class Session; struct PowerGridPayload; }
 
 namespace coop::power_grid {
 
-// Register the decay tick's gate. Idempotent. Session install.
+// Register the decay tick's and the generators' gates. Idempotent. Session install.
 void Install(coop::net::Session* session);
 
-// Settle the gate's registration and say once whether it is live. Game thread, per frame.
+// Settle the gates' registration and say once whether they are live; take the ops that waited for the generators,
+// their sender's body or their turn, apply rows that arrived before the generators resolved, and send a joiner the
+// rows its world-ready was owed. Game thread, per frame.
 void Tick();
 
-// Say the session's refusals and runs, and start the counts again. Session end.
+// PowerGridState from the wire (router: event_dispatch_world.cpp): the rows on a client, an op on the host.
+// Game thread.
+void OnReliable(const coop::net::PowerGridPayload& payload, uint8_t senderSlot);
+
+// HOST: the rows to a joiner at its world-ready, or as soon as the generators resolve. Game thread.
+void QueueConnectBroadcastForSlot(int slot);
+
+// HOST: a leaver's waiting ops go with it. Game thread.
+void OnPeerLeft(uint8_t slot);
+
+// Say the session's counts and start them again. Session end.
 void OnDisconnect();
 
 }  // namespace coop::power_grid

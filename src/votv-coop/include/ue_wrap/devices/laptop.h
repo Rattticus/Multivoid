@@ -28,6 +28,11 @@ bool EnsureResolved();
 // The single placed stationary laptop (cached ptr + IsLiveByIndex re-check).
 void* Instance();
 
+// The actor the laptop's interface is shown on: the laptop itself, or a portable PC a player works it through as
+// its remote terminal (the interface widget's nearestActor, which each writes as a player enters it); null before
+// any has. Game thread.
+void* TerminalInUse();
+
 // ---- power/boot axis ----
 struct PowerState {
     bool powered  = false;  // wall power (mirrors gamemode.powerChanged)

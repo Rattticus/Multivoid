@@ -18,8 +18,9 @@ bool SetSound(void* comp, void* sound);
 // UActorComponent::Activate(bReset=true).
 bool Activate(void* comp);
 
-// UActorComponent::SetActive(bNewActive, bReset=true) -- the audio-loop switch.
-bool SetActive(void* comp, bool value);
+// UActorComponent::SetActive(bNewActive, bReset), resolved on the component's class through the dispatch cache,
+// which climbs to UActorComponent, where the function is declared.
+bool SetActive(void* comp, bool value, bool reset);
 
 // USceneComponent::SetVisibility(bNewVisibility, bPropagateToChildren=false).
 bool SetVisibility(void* comp, bool value);

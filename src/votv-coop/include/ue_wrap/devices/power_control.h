@@ -1,45 +1,65 @@
-// ue_wrap/devices/power_control.h -- standalone engine access for the VOTV base POWER PANEL
-// (ApowerControl_C). Principle-7 engine-wrapper layer (no network/coop state).
-// coop::power_sync drives the cross-peer sync through here.
+// ue_wrap/devices/power_control.h -- engine access for the base's power panel (ApowerControl_C). Principle-7
+// engine-wrapper layer: no network or coop state; coop/world/power_panel drives the lane through here.
 //
-// The panel carries 5 LATCHED breaker bools (one per base subsystem) -- it is NOT a 2-state
-// toggle, so it does not fit the generic interactable_sync Channel; coop::power_sync is its
-// own module (the keypad_sync precedent). This wrapper exposes the breaker state as a single
-// 5-bit MASK so the module stays state-shape-agnostic: bit0 press_coord (coordinates), bit1
-// press_downl (downloading), bit2 press_play (playing), bit3 press_calc (calculating), bit4
-// press_light (lights) -- the press_ FIELD order, which power_control.cpp resolves by name.
-//
-// Identity = the inherited AtriggerBase_C::Key (save-persistent, cross-peer stable; the property
-// lookup climbs to the base that declares it). The base power EFFECTS (servers/doors/lightRoots)
-// are synced by their OWN channels -- this wrapper mirrors the PANEL's own breaker/LED visual.
+// The panel holds five latched breakers, read and written here as one mask in field order: bit0 press_coord,
+// bit1 press_downl, bit2 press_play, bit3 press_calc, bit4 press_light. The base has one, gamemode.powerControl.
+// ButtonsVisibility is the panel's own full apply, the verb every press ends in: the panel's repaint, its
+// fan-out to the servers, the light groups, the base sockets and the wall cords (each run only when its breaker
+// differs from the value the last fan-out cached), and gamemode.setPower while the panel is not disabled and the
+// generators are fine. Verbs resolve on the panel in hand, since a Blueprint class can be a new object in a new
+// world.
 
 #pragma once
 
 #include <cstdint>
 #include <vector>
-#include <string>
 
 namespace ue_wrap::power_control {
 
-// Resolve ApowerControl_C + the Key offset + the 5 press-bool offsets + the apply/refresh
-// UFunction(s). Idempotent; true once resolved. Game thread.
+// Resolve powerControl_C's five breakers, disabled, waterlogged and the apply verb, all by name; a miss on a loaded
+// class refuses the wrapper for the process (no write at a stale offset). Idempotent; a class not loaded yet is
+// asked again a second later. Game thread.
 bool EnsureResolved();
 
 // True iff `obj`'s class is powerControl_C or a subclass. False if not yet resolved.
 bool IsPowerControl(void* obj);
 
-// The panel's AtriggerBase_C::Key as a wide string ("" on failure, L"None" if unkeyed).
-std::wstring GetKeyString(void* p);
+// The base's panel, gamemode.powerControl, or null before the game mode holds it. Game thread.
+void* Panel();
 
-// Read the 5 press bools into `mask` (bit0=coord .. bit4=light, field order). False if the
-// read could not be made (null / not resolved); leaves `mask` untouched on failure.
+// The five breakers as the mask above. False on null or unresolved; `mask` untouched then.
 bool ReadPress(void* p, uint8_t& mask);
 
-// Drive the panel to `mask` (bit0=coord .. bit4=light): write the 5 press bools, call
-// moveLevers() to animate the levers, and set the LED particle visibility directly. Mirrors
-// the PANEL only -- it does NOT re-drive the base subsystems (those are synced by their own
-// channels). MUST run on the game thread. False on null / unresolved.
-bool ApplyPress(void* p, uint8_t mask);
+// Write the five breakers from the mask, raw: nothing repaints or powers until ButtonsVisibility. Game thread.
+bool WritePress(void* p, uint8_t mask);
+
+// The panel's `disabled` (the desk virus's 60 s lockout, virus_pb) and `waterlogged` (the basement drain's flood
+// flag, which the laptop's breaker page refuses on). Game thread.
+bool ReadDisabled(void* p, bool& disabled);
+bool WriteDisabled(void* p, bool disabled);
+bool ReadWaterlogged(void* p, bool& waterlogged);
+
+// The lever component of breaker `bit` (the mask's order), which a player's trace takes and E presses, or null.
+// Game thread.
+void* Lever(void* p, int bit);
+
+// Press breaker `bit`'s lever as the player's E dispatch does: actionOptionIndex(player, a hit on the lever, the
+// lever), whose own route gates on the tutorial, flips the breaker, clicks and applies. Game thread.
+bool PressLever(void* p, void* player, int bit);
+
+// Run the panel's buttonsVisibility() as the game runs it. Game thread.
+bool ButtonsVisibility(void* p);
+
+// Play the lever's click as a press plays it, playSND(on): heard only while the panel is powered. Game thread.
+bool PlayLeverSound(void* p, bool on);
+
+// Switch the panel's servers and their ambient hum, when it has one, on or off: each server's setActive(on) and the
+// hum's SetActive(on, false), as the desk virus's lockout (virus_pb) does at its start and, with the calc breaker,
+// at its end. Game thread.
+bool SetServersActive(void* p, bool on);
+
+// The lockout's end cue: stationTurnon, 2D, as the panel's own end plays it. Game thread.
+bool PlayTurnOnCue(void* p);
 
 // The panel's light groups and the doors it opens in a blackout (its lighRoots and doorsOpen): what its
 // solar() turns off and opens. The live ones, in the panel's order; false when the member does not

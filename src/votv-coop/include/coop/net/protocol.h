@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 196;
+inline constexpr uint16_t kProtocolVersion = 197;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -256,8 +256,10 @@ enum class ReliableKind : uint8_t {
     // to its field and refresh verb. KeyedTogglePayload.
     ApplianceState = 35,
 
-    // Any peer, relayed by the host: the power panel's five breakers as a bitmask, keyed by the
-    // panel's Key. PowerPanelPayload.
+    // The base's power panel, gamemode.powerControl. Client to host: my player pressed breakers (a lever,
+    // or the laptop's breaker page), the ones it flipped. Host to all: the breakers and `disabled`, the
+    // canonical, each time the panel's own apply runs with them changed or a press taken, and at a joiner's
+    // world-ready; a refused press is answered to its author alone. Never relayed. PowerPanelPayload.
     PowerControlState = 36,
 
     // The ATV's pose, velocity and condition from its author: the seated driver or the grabbing
@@ -878,6 +880,14 @@ enum class ReliableKind : uint8_t {
     // own (the toolgun's calibration tool, the uncalibrator), their new values; the host performs
     // them and sends every named dish's value to all in a DishCalib. Never relayed. DishCalibPayload.
     DishCalibIntent = 158,
+
+    // The base's generators. Host to all: every generator's row (broken, wear, upgrades) by its
+    // gamemode.generators place, after each of the host's break, repair, wear and upgrade verbs, and at a
+    // joiner's world-ready; a client runs the verbs itself from the rows and never breaks or repairs a
+    // generator on its own. Client to host: my player repaired or serviced a generator at its Activate
+    // button, installed an upgrade into one, or hit one; a refused op is answered to its author alone.
+    // Never relayed. PowerGridPayload.
+    PowerGridState = 159,
 };
 
 #pragma pack(push, 1)
@@ -1609,14 +1619,10 @@ struct DeskStatePayload {
     int32_t playSelectIndex;    // 4
     uint8_t dlActiveFrFilter;   // 1
     uint8_t dlActivePoFilter;   // 1
-    uint8_t activePlay;         // 1
-    uint8_t activeDownload;     // 1
-    uint8_t activeCoords;       // 1
-    uint8_t activeComp;         // 1
     uint8_t coordIsPing;        // 1 -- diagnostic only; receivers never adopt it (it is the ping machine's run flag)
     uint8_t adopt;              // 1
 };
-static_assert(sizeof(DeskStatePayload) == 52, "DeskStatePayload must be 52 bytes");
+static_assert(sizeof(DeskStatePayload) == 48, "DeskStatePayload must be 48 bytes");
 static_assert(sizeof(DeskStatePayload) <= 256 - 20 - 8,
               "DeskStatePayload must fit in one reliable datagram");
 
@@ -1935,14 +1941,60 @@ static_assert(sizeof(KeypadSyncPayload) == 72, "KeypadSyncPayload must be 72 byt
 static_assert(sizeof(KeypadSyncPayload) <= 256 - 20 - 8,
               "KeypadSyncPayload must fit in one reliable datagram");
 
-// The power panel's breakers (PowerControlState) as a bitmask in field order (coord, downl, play,
-// calc, light). The setter's argument order differs, so the wrapper maps bit to argument by name.
+// The power panel (PowerControlState), its breakers a mask in field order: bit0 coord, 1 downl, 2 play, 3 calc,
+// 4 light. Op 0, a client's press: `bits` the breakers it flipped, `flags` bit0 set when the laptop's breaker
+// page pressed them, `terminal` for a page press the portable PC it was made through, by element id (none: the
+// laptop itself), `seq` the press's number, counted per session. Op 1, the host's canonical: `bits` the
+// breakers, `flags` bit0 the panel's `disabled`, `leverBits` the breakers a lever just flipped and `leverSlot`
+// whose lever (every other peer plays its click), `ack` per slot the last press seq the host has taken.
+inline constexpr uint8_t kPowerPanelOpPress = 0;
+inline constexpr uint8_t kPowerPanelOpCanonical = 1;
 struct PowerPanelPayload {
-    WireKey  key;        // 32 -- the panel's AtriggerBase_C::Key FName (string)
-    uint8_t  pressMask;  // 1  -- bit0=coord,1=downl,2=play,3=calc,4=light (the panel's press_* bools)
-    uint8_t  _pad[7];    // 7  -- 8-byte alignment / reserved
+    uint8_t  op;         // 1
+    uint8_t  bits;       // 1
+    uint8_t  flags;      // 1
+    uint8_t  leverBits;  // 1
+    uint8_t  leverSlot;  // 1  -- whose lever made leverBits (0xFF when none)
+    uint8_t  _pad;       // 1
+    uint16_t seq;        // 2
+    uint16_t ack[4];     // 8  -- by slot (kMaxPeers)
+    uint32_t terminal;   // 4  -- op 0, a page press: the portable PC's element id, 0xFFFFFFFF for the laptop
 };
-static_assert(sizeof(PowerPanelPayload) == 40, "PowerPanelPayload must be 40 bytes");
+static_assert(sizeof(PowerPanelPayload) == 20, "PowerPanelPayload must be 20 bytes");
+// A page press through a portable PC that has no element id yet: the host cannot say where it stands.
+inline constexpr uint32_t kPowerPanelTerminalUnnamed = 0xFFFFFFFEu;
+
+// The base's generators (PowerGridState) in gamemode.generators order; a slot past `count` is unused. Op 0, the
+// host's rows, with `ack` per slot the last predicted op it took. A client's ops name generator `index`: 1 its
+// repair at the Activate button (its own copy of the puzzle solved), 2 an upgrade its insert spent, 4 its service
+// at the Activate button (a whole generator's wear restored), each predicted and counted by `seq` per session;
+// 3 its player's hit (`damage`), which only the host runs.
+inline constexpr int kPowerGridGenerators = 4;
+inline constexpr uint8_t kPowerGridOpRows = 0;
+inline constexpr uint8_t kPowerGridOpRepair = 1;
+inline constexpr uint8_t kPowerGridOpUpgrade = 2;
+inline constexpr uint8_t kPowerGridOpHit = 3;
+inline constexpr uint8_t kPowerGridOpService = 4;
+struct PowerGridRow {
+    uint8_t broken;        // 1
+    uint8_t cyc;           // 1
+    uint8_t upgradeLevel;  // 1  -- 0..6
+    uint8_t present;       // 1  -- 0 when the host's slot holds no live generator
+    int32_t cycle;         // 4  -- the wear, 100 new, 0 broken
+};
+struct PowerGridPayload {
+    uint8_t      op;       // 1
+    uint8_t      count;    // 1  -- rows: gamemode.generators.Num at send, capped
+    uint8_t      index;    // 1  -- ops 1..4: the generator's place
+    uint8_t      _pad;     // 1
+    uint16_t     seq;      // 2  -- ops 1, 2, 4
+    uint16_t     ack[4];   // 8  -- op 0, by slot (kMaxPeers)
+    float        damage;   // 4  -- op 3
+    uint8_t      _pad2[2]; // 2
+    PowerGridRow rows[kPowerGridGenerators];  // 32
+};
+static_assert(sizeof(PowerGridRow) == 8, "PowerGridRow must be 8 bytes");
+static_assert(sizeof(PowerGridPayload) == 52, "PowerGridPayload must be 52 bytes");
 
 // The ATV's rig pose, velocity and condition (AtvState), keyed by its Key. A receiver keeps its own
 // physics running and is corrected: the velocity is written from the wire every packet, the
@@ -2654,10 +2706,6 @@ enum class DeskInputField : uint8_t {
     PlayVolume = 5,      // int32   play_volume (+ live signalSound.SetVolumeMultiplier)
     PlaySelectIndex = 6, // int32   play_selectIndex
     CompMaxLevel = 7,    // int32   comp_maxLevel
-    ActivePlay = 8,      // bool    active_play    (+ hum/light side effects)
-    ActiveDownload = 9,  // bool    active_download (+ hum/light side effects)
-    ActiveCoords = 10,   // bool    active_coords  (+ hum/light side effects)
-    ActiveComp = 11,     // bool    active_comp    (+ light/console-glow side effects)
     CoordIsPing = 12,    // bool    coord_isPing edge notification (rising = the presser's ENTER); receivers
                          //         never write it, it is the ping machine's run flag; bookkeeping only
     CooldownCharge = 13, // float   coord_cooldown -- UPWARD jumps only (a press charge; decay is
