@@ -125,6 +125,10 @@ void LobbyAnnouncer::HeartbeatLoop() {
         b["token"] = tok;
         b["players_cur"] = pc;
         b["listed"] = listed;
+        if (LobbyLinks (*const linksFn)() = linksFn_.load(std::memory_order_acquire)) {
+            const LobbyLinks l = linksFn();
+            b["links"] = J::Json{{"relayed", l.relayed}, {"direct", l.direct}, {"lan", l.lan}};
+        }
         if (ours) b["turn_user"] = held;
         const http::Response resp = http::Post(url, "/v1/heartbeat", J::Dump(b), 8000);
         if (!resp.ok || resp.status != 200) {

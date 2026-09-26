@@ -161,6 +161,10 @@ bool ListedState();
 // would install. Without it the announcer's fallback reported one player in every lobby.
 void SetPlayerCountSource(int (*fn)());
 
+// Install the source of the lobby's players counted by the link the host measures on each, published on
+// every heartbeat beside the count, under the same contract: the heartbeat worker thread calls it.
+void SetLinksSource(net::lobby::LobbyLinks (*fn)());
+
 // Announce the current, already-started env-configured host session to the master as a hidden
 // lobby: the heartbeat keeps it alive, but the browser never lists it
 // (script and test lobbies must not pollute the list; joiners connect by IP). Best-effort on a

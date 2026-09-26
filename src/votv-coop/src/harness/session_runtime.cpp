@@ -273,6 +273,22 @@ int LobbyPlayerCount() {
     return g_session.connectedPeerCount() + 1;
 }
 
+// The host's players counted by the link it measures on each (the host's own slot is none), for the lobby
+// heartbeat beside the count; a read of each connection's status, which the transport allows off its thread.
+coop::net::lobby::LobbyLinks LobbyLinkCounts() {
+    coop::net::lobby::LobbyLinks l;
+    if (!g_session.running()) return l;
+    for (int slot = 1; slot < coop::net::kMaxPeers; ++slot) {
+        switch (g_session.LinkKindForSlot(slot)) {
+            case coop::net::LinkKind::Relayed: ++l.relayed; break;
+            case coop::net::LinkKind::Direct:  ++l.direct; break;
+            case coop::net::LinkKind::Lan:     ++l.lan; break;
+            default: break;
+        }
+    }
+    return l;
+}
+
 // Is a gameplay world up RIGHT NOW? Asked of the module that owns world identity rather than of a
 // boot parameter, because the two are not the same question and a launch that reaches gameplay
 // later answers them differently. Free to ask: the memo behind it refreshes at 10 Hz on the game
@@ -305,8 +321,9 @@ void FailRefusedMenuJoin_(const coop::net::Refusal& why) {
 
 }  // namespace
 
-void InstallLobbyPlayerCountSource() {
+void InstallLobbyHeartbeatSources() {
     coop::session_manager::SetPlayerCountSource(&LobbyPlayerCount);
+    coop::session_manager::SetLinksSource(&LobbyLinkCounts);
 }
 
 void RunPlayLoop(bool bootedIntoGameplay) {

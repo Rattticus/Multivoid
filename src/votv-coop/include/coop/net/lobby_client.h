@@ -9,6 +9,7 @@
 
 #pragma once
 
+#include "coop/net/lobby_links.h"
 #include "coop/net/turn_credential.h"
 
 #include <cstdint>
@@ -38,6 +39,11 @@ struct LobbyRow {
     // is at the host's own admission, not at the listing.
     bool locked = false;
     bool direct = false;    // a port-forwarded UDP host (a browser badge; join returns ip:port, not relay credentials)
+    // How the host's players reach it, as the host measures them: one word ("relay", "direct", "lan", or
+    // empty when the host has measured no one -- nobody has joined, or the host or its master predates the
+    // counts; a DIRECT lobby says "direct" from its mode) and the counts behind it.
+    std::string link;
+    LobbyLinks links;
 };
 
 // Everything a joining client needs to dial the host, returned by the join POST. ok=false on

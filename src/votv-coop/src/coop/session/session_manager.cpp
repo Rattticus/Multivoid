@@ -827,6 +827,8 @@ void SetPlayerCountSource(int (*fn)()) {
     Announcer().SetPlayerCountFn(fn);
 }
 
+void SetLinksSource(net::lobby::LobbyLinks (*fn)()) { Announcer().SetLinksFn(fn); }
+
 void EndHostedLobby() {
     // Clear the host-side lobby state before the blocking delist: Stop() blocks up to ~13 s, and a
     // re-host landing inside that window writes fresh pending state a post-Stop clear would wipe.

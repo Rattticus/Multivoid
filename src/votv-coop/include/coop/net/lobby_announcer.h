@@ -1,22 +1,21 @@
 // coop/net/lobby_announcer.h -- the host side of the master plane.
 //
-// MTA is the precedent: CMasterServerAnnouncer and CMasterServer announce on host start, then keep
-// the lobby alive with a periodic heartbeat. We diverge in three ways: one master rather than a
-// redundant list, a 30 s heartbeat -- three to the master's 90 s lobby expiry -- and an explicit
-// leave on stop.
+// MTA is the precedent: CMasterServerAnnouncer and CMasterServer announce on host start, then keep the
+// lobby alive with a periodic heartbeat. We diverge in three ways: one master rather than a redundant list,
+// a 30 s heartbeat -- three to the master's 90 s lobby expiry -- and an explicit leave on stop.
 //
 //   POST /v1/host        sessionId, an opaque lobbyId, the host token, identities and ICE
-//   POST /v1/heartbeat   every 30 s: keep the lobby alive, refresh the current player count, report
-//                        the host's TURN credential and take a renewal of it from the answer
-//   POST /v1/visibility  the "hide from the browser" toggle
-//   POST /v1/leave       on stop
+//   POST /v1/heartbeat   every 30 s: the lobby kept alive, its player count and their links, the host's
+//                        TURN credential reported and its renewal taken from the answer
+//   POST /v1/visibility  the "hide from the browser" toggle; POST /v1/leave on stop
 //
-// Threading: Host() blocks, so call it on a worker. On success it spawns the heartbeat worker
-// thread, and Stop() signals and joins it. The credentials are mutex-guarded, since the heartbeat
-// thread reads them while SetListed writes listed_.
+// Threading: Host() blocks, so call it on a worker. On success it spawns the heartbeat worker thread, and
+// Stop() signals and joins it. The credentials are mutex-guarded, since the heartbeat thread reads them
+// while SetListed writes listed_.
 
 #pragma once
 
+#include "coop/net/lobby_links.h"
 #include "coop/net/turn_credential.h"
 
 #include <atomic>
@@ -71,6 +70,11 @@ public:
     // cheaper races than that one.
     void SetPlayerCountFn(int (*fn)()) { playerCountFn_.store(fn, std::memory_order_release); }
 
+    // The heartbeat publishes the host's players counted by the link it measures on each from this
+    // callback (the host wires it to the session's links); null publishes none. Atomic for the reason
+    // the player count's is.
+    void SetLinksFn(LobbyLinks (*fn)()) { linksFn_.store(fn, std::memory_order_release); }
+
     // Hide / show the lobby in the public browser (POST /v1/visibility, async). The
     // session stays live -- this only flips `listed`. (design 5.6)
     void SetListed(bool listed);
@@ -102,6 +106,7 @@ private:
     std::atomic<bool> stop_{false};
     std::thread hbThread_;
     std::atomic<int (*)()> playerCountFn_{nullptr};
+    std::atomic<LobbyLinks (*)()> linksFn_{nullptr};
 };
 
 }  // namespace coop::net::lobby

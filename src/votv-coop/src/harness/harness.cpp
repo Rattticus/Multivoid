@@ -159,11 +159,11 @@ DWORD WINAPI TimelineThread(LPVOID param) {
     // real player, and its own verification could not see that.
     Post([] { harness::mod_environment::Run(); });
 
-    // The lobby heartbeat's player-count source, here for the same reason: the scenarios that
-    // announce a lobby do not agree on where, and an install in any one of them is missed by the
-    // others. Ordered before every announce site, so the heartbeat worker never reads the pointer
-    // before it is written.
-    session_runtime::InstallLobbyPlayerCountSource();
+    // The lobby heartbeat's sources (the player count, the players' links), here for the same reason:
+    // the scenarios that announce a lobby do not agree on where, and an install in any one of them is
+    // missed by the others. Ordered before every announce site, so the heartbeat worker never reads a
+    // pointer before it is written.
+    session_runtime::InstallLobbyHeartbeatSources();
     // The test variables that do what a click in the multiplayer menu does fire here, once what a click
     // finds ready is: the master list, the nickname seed and the identity above.
     browser_click_arm::FireFromEnv();

@@ -40,11 +40,11 @@ void SpawnSecondPlayerWhenReady();
 
 // The main loop (TimelineThread): browser-start drain + host-boot picker +
 // the coalesced 60 Hz pump composite + the client-abort / host-death edges.
-// Install the source of the lobby heartbeat's player count (this module owns the
-// session object it reads). Call ONCE at boot, ABOVE the scenario branch and so
-// before every announce site on every lane -- see the call site's comment for why
-// no per-scenario location is correct. Idempotent.
-void InstallLobbyPlayerCountSource();
+// Install the sources of the lobby heartbeat's player count and its players' links (this module
+// owns the session object they read). Call ONCE at boot, ABOVE the scenario branch and so before
+// every announce site on every lane -- see the call site's comment for why no per-scenario location
+// is correct. Idempotent.
+void InstallLobbyHeartbeatSources();
 
 // Blocks until shutdown. `bootedIntoGameplay` is a BOOT fact and only a boot fact: this process
 // auto-loaded a gameplay world of its own before the loop started, which the env test scenarios

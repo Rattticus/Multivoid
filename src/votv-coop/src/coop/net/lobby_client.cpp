@@ -64,6 +64,15 @@ bool FetchList(const std::string& masterUrl, const std::string& versionFilter,
         r.proto      = J::IntClamped(e, "proto", 0, 65535);  // the join gate; 0 means a host older than the field
         r.locked     = J::Bool(e, "locked");
         r.direct     = (J::Str(e, "conn") == "direct");  // direct lobbies
+        // The link word is one of three or none; anything else a master sends is none.
+        const std::string link = J::StrN(e, "link", 8);
+        if (link == "relay" || link == "direct" || link == "lan") r.link = link;
+        auto lk = e.find("links");
+        if (lk != e.end() && lk->is_object()) {
+            r.links.relayed = J::IntClamped(*lk, "relayed", 0, 64);
+            r.links.direct  = J::IntClamped(*lk, "direct", 0, 64);
+            r.links.lan     = J::IntClamped(*lk, "lan", 0, 64);
+        }
         if (!r.lobbyId.empty()) out.push_back(std::move(r));
     }
     // A total order, imposed here, because the list arrives with none: the master stores lobbies
@@ -84,7 +93,7 @@ bool FetchList(const std::string& masterUrl, const std::string& versionFilter,
         return a.lobbyId < b.lobbyId;
     });
     // Bounded, and the bound belongs here rather than in a renderer. Every field is length-capped
-    // but the row count never was, and the row copy is a deep copy of five strings per row taken
+    // but the row count never was, and the row copy is a deep copy of six strings per row taken
     // under the mutex, which the overlay browser performs every frame and then renders unbounded,
     // so a master that is hostile, on-path or merely large buys a multi-megabyte copy per frame on
     // the render thread; the native browser's row cap bounds its display loop and never bounded
