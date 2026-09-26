@@ -6,6 +6,7 @@
 #include "coop/net/protocol.h"          // kProtocolVersion -- the version-cell mismatch tint
 #include "coop/session/session_manager.h"
 #include "coop/text/utf8_codec.h"       // the one owner of text encoding
+#include "ui/link_format.h"             // LobbyLinkLabel -- the link cell's word, shared with the overlay
 #include "ui/native_screen.h"           // palette + widget primitives, shared with the host window
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
@@ -90,18 +91,22 @@ int      g_visibleRows  = 0;   // rows actually SHOWN, not ChildCount's high-wat
 uint64_t g_fetchedAtMs  = 0;
 uint64_t g_lastDataGen  = 0;   // the DATA generation the stamp above was taken at
 
-// Three cells, not five columns, and no header strip: the game's save browser gives each row a
+// Four cells, not five columns, and no header strip: the game's save browser gives each row a
 // title and one right-hand fact and puts every other detail in a side panel, so the name takes
-// the row, "Players: c/m" sits at the right, and the middle cell is a red mismatch mark (its own
-// cell because a UTextBlock has one colour). The weights are measured against the longest string
-// each cell holds: a right-aligned cell clips at the left, and 0.24 clipped "Players: 2/4".
+// the row, "Players: c/m" sits at the right, and between them a red mismatch mark (its own cell
+// because a UTextBlock has one colour) and one word for how the host's players reach it. The
+// weights are measured against the longest string each cell holds, after every weighted cell's 18 px
+// gutter: a right-aligned cell clips at the left, and with four cells 0.28 clipped "Players: 2/4" to
+// "'layers: 2/4".
 struct Cell { float weight; };
-constexpr Cell kCells[3] = {
-    {0.58f},   // name        -- accent orange, left
+constexpr Cell kCells[4] = {
+    {0.40f},   // name        -- accent orange, left
     {0.14f},   // mismatch    -- #FF0000, left, EMPTY unless the join gate would refuse
-    {0.28f},   // "Players: n/m" -- white, right
+    {0.16f},   // link        -- dim, left: "Relay", "Direct", "LAN", or "--" when the host reports no one
+    {0.30f},   // "Players: n/m" -- white, right
 };
-constexpr int kCellName = 0, kCellFlag = 1, kCellPlayers = 2;
+constexpr int kCellName = 0, kCellFlag = 1, kCellLink = 2, kCellPlayers = 3;
+constexpr int kCellCount = 4;
 
 // A row goes dim when its host has stopped checking in: the master reaps a silent host at a
 // measured 111-116 s (three 30 s heartbeats plus slack), so one missed cycle means a server that
@@ -156,7 +161,7 @@ void* AddLockGlyph(void* parent) {
 }
 
 // One row: USizeBox(64) -> UOverlay (the kit's AddFramedBox: edge, face) -> UHorizontalBox of the
-// lock cell and three texts. No UButton: the native row's own button_select draws nothing in all
+// lock cell and four texts. No UButton: the native row's own button_select draws nothing in all
 // three states, and a UButton would add a press visual to suppress. The frame images are
 // HitTestInvisible; the hit test reads the SizeBox's rect (native_screen::ChildAtCursor).
 void* BuildRow(void* parent) {
@@ -175,10 +180,11 @@ void* BuildRow(void* parent) {
     // The lock cell comes first and is present on every row (hidden when the lobby is open): a cell
     // only locked rows have would shift the name left and right down the list.
     AddLockGlyph(hb);
-    // Sizes and colours are the cell's: the name is the row's title (larger, accent), the two facts
+    // Sizes and colours are the cell's: the name is the row's title (larger, accent), the three facts
     // beside it body text.
     AddText(hb, L"", 20, kAccent, kJustLeft,  kCells[kCellName].weight);
     AddText(hb, L"", 16, kBad,    kJustLeft,  kCells[kCellFlag].weight);
+    AddText(hb, L"", 16, kDim,    kJustLeft,  kCells[kCellLink].weight);
     AddText(hb, L"", 16, kText,   kJustRight, kCells[kCellPlayers].weight);
     // SizeBox is a UContentWidget: its single child goes through SetContent.
     U::SetContent(box, ovl);
@@ -188,7 +194,7 @@ void* BuildRow(void* parent) {
 // A row's parts, re-derived from the panel on demand: no row pointers are held across ticks
 // (cached_obj_ref.h: the world stamp is inert for UMG, and a hand-spawned widget captures serial
 // 0). The panel's Slots is the authority.
-struct RowParts { void* box; void* edge; void* face; void* lock; void* text[3]; };
+struct RowParts { void* box; void* edge; void* face; void* lock; void* text[kCellCount]; };
 bool RowPartsAt(int32_t i, RowParts& out) {
     out = RowParts{};
     void* box = U::ChildAt(g_list, i);
@@ -216,9 +222,9 @@ bool RowPartsAt(int32_t i, RowParts& out) {
     out.face = fp.face;
     void* hb = fp.content;
     if (!hb) return false;
-    // Child 0 of the text row is the lock cell; the three text cells follow it.
+    // Child 0 of the text row is the lock cell; the text cells follow it.
     out.lock = U::ChildAt(hb, 0);
-    for (int c = 0; c < 3; ++c) out.text[c] = U::ChildAt(hb, c + 1);
+    for (int c = 0; c < kCellCount; ++c) out.text[c] = U::ChildAt(hb, c + 1);
     return true;
 }
 
@@ -233,7 +239,7 @@ std::string MismatchMark(const Row& r) {
     return {};
 }
 
-// A row's three text colours, one owner, so un-hovering cannot restore the wrong base.
+// A row's text colours, one owner, so un-hovering cannot restore the wrong base.
 void ApplyRowTextColors(const RowParts& rp, const Row& r, bool isOwn, bool stale,
                         bool hovered, bool selected) {
     // Hovering turns the label yellow and leaves the fill alone; a selected row keeps its data
@@ -243,15 +249,17 @@ void ApplyRowTextColors(const RowParts& rp, const Row& r, bool isOwn, bool stale
     // mark stays red under the pointer: yellowing it would erase the one thing it says.
     FLinearColor name = lit ? kHover : (isOwn ? kOwn : kAccent);
     FLinearColor body = lit ? kHover : kText;
+    FLinearColor link = lit ? kHover : kDim;
     FLinearColor flag = kBad;
     // Stale last, so it fades whatever the state above chose.
-    if (stale) { name = Faded(name); body = Faded(body); flag = Faded(flag); }
+    if (stale) { name = Faded(name); body = Faded(body); link = Faded(link); flag = Faded(flag); }
     // The dispatch variant, never the raw write: UMG bakes the property into the Slate widget at
     // attach, so a raw write to a block in a constructed tree never reaches the screen (only the
     // WidgetComponent nameplates re-render from properties). Column headers coloured at build time,
     // before attach, are why a screen with dead colour writes once looked right.
     if (rp.text[kCellName])    E::SetTextBlockColorDispatch(rp.text[kCellName], name);
     if (rp.text[kCellFlag])    E::SetTextBlockColorDispatch(rp.text[kCellFlag], flag);
+    if (rp.text[kCellLink])    E::SetTextBlockColorDispatch(rp.text[kCellLink], link);
     if (rp.text[kCellPlayers]) E::SetTextBlockColorDispatch(rp.text[kCellPlayers], body);
     (void)r;
 }
@@ -317,7 +325,7 @@ bool RowIsSelected(int i) {
 
 // Repaint the rows whose selection state changed: all three channels (hover paints the frame and
 // the text together, so a fill-plus-frame repaint leaves the just-clicked row purple with yellow
-// glyphs), and only the two rows that changed hands (~30 dispatches instead of a ~380 full-list
+// glyphs), and only the two rows that changed hands (~34 dispatches instead of a ~430 full-list
 // walk).
 void RepaintSelectionChange(const std::string& wasId) {
     if (wasId == g_selectedId) return;   // nothing changed hands
@@ -476,7 +484,7 @@ void Sync() {
     const std::string own = sm::OwnLobbyId();
     for (int i = 0; i < total; ++i) {
         // The surplus branch first: a row past `want` needs only its box, to collapse it, and
-        // deriving all seven parts cost ten dispatches per surplus row per sync; rows are never
+        // deriving all eight parts cost eleven dispatches per surplus row per sync; rows are never
         // removed, so on a list that was ever long the surplus is most of the loop.
         if (i >= want) {
             if (void* box = U::ChildAt(g_list, i))
@@ -497,6 +505,7 @@ void Sync() {
         if (rp.lock) E::SetWidgetVisibility(rp.lock, r.locked ? 0 : 2);
         SetRowText(rp.text[kCellName], isOwn ? r.name + "   (your server)" : r.name);
         SetRowText(rp.text[kCellFlag], MismatchMark(r));
+        SetRowText(rp.text[kCellLink], ui::link_format::LobbyLinkLabel(r.link));
         SetRowText(rp.text[kCellPlayers],
                    "Players: " + std::to_string(r.playersCur) + "/" +
                    std::to_string(r.playersMax));

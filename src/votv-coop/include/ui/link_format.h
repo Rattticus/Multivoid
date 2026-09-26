@@ -18,6 +18,8 @@
 
 #include "coop/net/link_kind.h"
 
+#include <string>
+
 namespace ui::link_format {
 
 // Short column label for a transport. Never returns nullptr or an empty string:
@@ -30,5 +32,10 @@ const char* LinkLabel(coop::net::LinkKind kind);
 // un-mean. (A published 0 was rejected for exactly this: the cascade turns 0
 // into "<1ms", a measured-looking latency nobody measured.)
 void FormatPing(int pingMs, coop::net::LinkKind kind, char* out, int outLen);
+
+// A lobby's word for how its players reach its host, as the master serves it on a browser row ("relay",
+// "direct", "lan", or empty), in the label both browsers show: "Relay", "Direct", "LAN", or "--" when the
+// host reports no one.
+const char* LobbyLinkLabel(const std::string& word);
 
 }  // namespace ui::link_format

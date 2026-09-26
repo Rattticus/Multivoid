@@ -27,4 +27,11 @@ void FormatPing(int pingMs, LinkKind kind, char* out, int outLen) {
     else std::snprintf(out, static_cast<size_t>(outLen), "--");
 }
 
+const char* LobbyLinkLabel(const std::string& word) {
+    if (word == "relay") return "Relay";
+    if (word == "direct") return "Direct";
+    if (word == "lan") return "LAN";
+    return "--";
+}
+
 }  // namespace ui::link_format

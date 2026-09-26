@@ -144,6 +144,22 @@ void* DetailLine(void* col, int32_t size, const FLinearColor& c, bool wrap = fal
 
 std::string Sec(int s) { return std::to_string(s) + "s ago"; }
 
+// How the host's players reach it, counted by the link the host measures on each: the counts behind the
+// row's word, as a tail on the connection line. None when the host reports no one, which says nothing about
+// who is in: a host or master older than the counts reports no one either.
+std::string LinksTail(const coop::net::lobby::LobbyRow& r) {
+    std::string parts;
+    const auto add = [&parts](int n, const char* what) {
+        if (n <= 0) return;
+        if (!parts.empty()) parts += ", ";
+        parts += std::to_string(n) + " " + what;
+    };
+    add(r.links.relayed, "relayed");
+    add(r.links.direct, "direct");
+    add(r.links.lan, "LAN");
+    return parts.empty() ? std::string() : " -- " + parts;
+}
+
 }  // namespace
 
 bool BuildDetails(void* parent) {
@@ -258,7 +274,7 @@ void Sync(bool force) {
         // The direct flag is parsed off the wire and had no reader on this screen: a direct host is
         // port-forwarded UDP, an automatic host is brokered peer-to-peer, the difference between a
         // NAT that may need to cooperate and one that does not, worth one word.
-        g_dConn.Set(std::string("Connection: ") + (r.direct ? "direct" : "p2p") +
+        g_dConn.Set(std::string("Connection: ") + (r.direct ? "direct" : "p2p") + LinksTail(r) +
                     (r.locked ? "   (locked)" : ""));
         g_dSeen.Set("Last seen: " + Sec(rows::AgeNowSec(r)));
     }

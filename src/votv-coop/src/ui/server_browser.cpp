@@ -16,6 +16,7 @@
 #include "coop/session/session_manager.h"
 #include "coop/config/config.h"   // local-only ini persistence for the name + last direct address
 #include "ui/scale.h"
+#include "ui/link_format.h"      // LobbyLinkLabel -- the Link column's word
 #include "ue_wrap/core/log.h"
 
 #include "imgui.h"
@@ -182,11 +183,13 @@ void Render() {
         const ImGuiTableFlags tflags = ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH |
                                        ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable |
                                        ImGuiTableFlags_PadOuterX;
-        if (ImGui::BeginTable("##serverlist", 6, tflags, ImVec2(0.0f, -footer))) {
+        if (ImGui::BeginTable("##serverlist", 7, tflags, ImVec2(0.0f, -footer))) {
             ImGui::TableSetupScrollFreeze(0, 1);
             ImGui::TableSetupColumn("",        ImGuiTableColumnFlags_WidthFixed, S(22.0f));   // lock
             ImGui::TableSetupColumn("Name",    ImGuiTableColumnFlags_WidthStretch);
             ImGui::TableSetupColumn("Players", ImGuiTableColumnFlags_WidthFixed, S(70.0f));
+            // How the host's players reach it, the master's one word for the row.
+            ImGui::TableSetupColumn("Link",    ImGuiTableColumnFlags_WidthFixed, S(54.0f));
             ImGui::TableSetupColumn("Age",     ImGuiTableColumnFlags_WidthFixed, S(54.0f));
             ImGui::TableSetupColumn("World",   ImGuiTableColumnFlags_WidthFixed, S(140.0f));
             ImGui::TableSetupColumn("Version", ImGuiTableColumnFlags_WidthFixed, S(96.0f));
@@ -222,10 +225,12 @@ void Render() {
                 ImGui::TableSetColumnIndex(2);
                 ImGui::Text("%d/%d", r.playersCur, r.playersMax);
                 ImGui::TableSetColumnIndex(3);
-                ImGui::Text("%ds", r.ageSec);
+                ImGui::TextUnformatted(ui::link_format::LobbyLinkLabel(r.link));
                 ImGui::TableSetColumnIndex(4);
-                ImGui::TextUnformatted(r.world.c_str());
+                ImGui::Text("%ds", r.ageSec);
                 ImGui::TableSetColumnIndex(5);
+                ImGui::TextUnformatted(r.world.c_str());
+                ImGui::TableSetColumnIndex(6);
                 // Version column = the host's PAIR identity, the game target plus the build number.
                 // Amber and (!) when EITHER axis mismatches ours -- the same tiers the Join gate
                 // refuses on, so amber ALWAYS means "join will be refused with a popup". Unknown

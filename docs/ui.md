@@ -28,8 +28,11 @@ A native MULTIPLAYER button is injected into the game's main menu above NEW GAME
 own tick, which needs no new engine primitive; binding the button's delegate would need a
 no-parameter function of our own to point at, and the mod owns no class to mint one on. The
 button opens the native server browser (`ui/server_browser_native`): the master server's lobby
-list with name, players, version, world and age, an amber mark on a version pair that differs
-from ours, which always means the connect will be refused, a Host button and a Join. A row of tabs
+list with name, players, version, world and age, one word for how a lobby's players reach its host
+(Relay, Direct, LAN, or `--` when the host reports no one; the counts behind it on the details panel's
+connection line),
+an amber mark on a version pair that differs from ours, which always means the connect will be
+refused, a Host button and a Join. A row of tabs
 above the list picks which master's list it is, one tab per master, the chosen one filled; the
 choice is remembered in the ini and is also where a hosted game is listed
 (`ui/server_browser_tabs`, [master-server.md](master-server.md)). When a master stops answering,
