@@ -133,11 +133,15 @@ void* DishAt(TArrayView* a, int32_t i) {
     return (d && R::IsLive(d)) ? d : nullptr;
 }
 
+}  // namespace
+
 void* DishByIndex(int32_t index) {
     TArrayView* a = Dishs();
     if (!a || a->num < 0 || a->num > 64 || index < 0 || index >= a->num) return nullptr;
     return DishAt(a, index);
 }
+
+namespace {
 
 void* ComponentAt(void* d, int32_t off) {
     if (!d || off < 0) return nullptr;

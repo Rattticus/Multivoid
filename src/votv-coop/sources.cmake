@@ -90,6 +90,7 @@ set(VOTVCOOP_SOURCES
     src/ue_wrap/desk/comp_pane.cpp
     src/ue_wrap/desk/coords_panel.cpp
     src/ue_wrap/desk/dish.cpp
+    src/ue_wrap/desk/sat_console.cpp
     src/ue_wrap/desk/coord_tower.cpp
     src/ue_wrap/desk/tape_caddy.cpp
     src/ue_wrap/devices/floppy_slot.cpp

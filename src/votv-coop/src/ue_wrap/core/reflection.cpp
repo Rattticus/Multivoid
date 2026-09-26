@@ -139,6 +139,18 @@ bool RemoveFromRoot(void* obj) {
     return true;
 }
 
+bool MarkPendingKill(void* obj) {
+    uint8_t* item = RootFlagSlotFor(obj);
+    if (!item) return false;
+    // An actor, or a component, goes through DestroyActor: its level and its owner hold it.
+    static void* const kHeld[] = {FindClass(L"Actor"), FindClass(L"ActorComponent")};
+    if (kHeld[0] && kHeld[1] && IsDescendantOfAny(ClassOf(obj), kHeld, 2, 64)) return false;
+    auto* flags = reinterpret_cast<volatile long*>(item + O::FUObjectItem_Flags);
+    if (*flags & slot_flags::RootSet) return false;
+    _InterlockedOr(flags, slot_flags::PendingKill);  // the engine's SetPendingKill is an interlocked OR too
+    return true;
+}
+
 int32_t InternalIndexOf(void* obj) {
     if (!obj) return -1;
     // Dereferences obj; the caller guarantees it is mapped (see the header).

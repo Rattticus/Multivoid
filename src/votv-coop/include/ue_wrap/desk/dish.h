@@ -132,6 +132,9 @@ bool WriteHashcode(int32_t index, const std::wstring& code);
 // The gamemode.dishs index `dish` sits at, or -1 (not in the array, or the array unresolved).
 int32_t IndexOf(void* dish);
 
+// The dish at a gamemode.dishs index, or null (out of range, dead, or the array unresolved).
+void* DishByIndex(int32_t index);
+
 // Reflected mainGamemode.checkFordDishes() -- the native arm/display tail
 // (gate Contains(activeDishes,true) -> ret; all-false -> dishesStop broadcast
 // + camera aim + objectRenderer.begin() + signalFound). The L4 client ARM

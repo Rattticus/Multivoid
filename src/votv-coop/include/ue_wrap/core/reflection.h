@@ -148,6 +148,15 @@ bool AddToRoot(void* obj);
 // is the only caller. False if obj is null, its slot was recycled, or the index is out of range.
 bool RemoveFromRoot(void* obj);
 
+// Mark an object of ours for destruction now, as UObject::MarkPendingKill does: its slot's
+// PendingKill bit set, so every weak reference to it -- the latent action manager's included, which
+// then drops the object's pending Delays -- resolves to nothing at once, and the next GC collects it.
+// Refused for a rooted object (release its GcPin first), and for an actor or a component, which go
+// through DestroyActor; for an object nothing of the engine holds strongly, such as a widget never
+// added to a viewport. False if obj is null, refused, its slot was recycled, or the index is out of
+// range.
+bool MarkPendingKill(void* obj);
+
 // UObjectBase accessors, reading the standard UE4.27 fields by the offsets sdk_profile.h names.
 const FName& NameOf(void* uobject);   // NamePrivate
 void*        ClassOf(void* uobject);  // ClassPrivate
