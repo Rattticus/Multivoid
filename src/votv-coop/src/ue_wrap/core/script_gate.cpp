@@ -1,12 +1,9 @@
 // ue_wrap/core/script_gate.cpp -- see ue_wrap/core/script_gate.h.
 // The watch surface's precedent (Relay's README) is named in the header.
 //
-// The loop is derived, not pattern-scanned: the exec-handler table (GNatives) is resolved by
-// its dispatch-site signature and validated, the local-final and local-virtual handlers are read
-// out of it, and each is scanned for the rip-relative address it hands ProcessScriptFunction as
-// the body executor; the two must agree, and the candidate's own first bytes must hold the
-// loop's return-opcode compare and a reference back to the same table. Four facts that agree,
-// or no install.
+// The loop is derived, not pattern-scanned (ue_wrap/core/script_loop): the filled exec-handler
+// table's two local-call handlers must name the same function, and the image alone must name it
+// too, the one function that references the table with the loop's shape.
 
 #include "ue_wrap/core/script_gate.h"
 
@@ -15,6 +12,7 @@
 #include "ue_wrap/core/hook.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/script_loop.h"
 #include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/core/sig_scan.h"
 
@@ -36,11 +34,6 @@ namespace P  = ue_wrap::profile;
 // The loop's ABI, shared with the exec handlers: (Context, FFrame&, Result). The return is a
 // leftover register no caller reads; forwarded unchanged.
 using LoopFn = std::uintptr_t(__fastcall*)(void* ctx, void* stack, void* result);
-
-constexpr int kOpcodeLocalVirtual = 0x45;
-constexpr int kOpcodeLocalFinal   = 0x46;
-constexpr std::uint8_t kExReturn  = 0x04;
-constexpr std::uint8_t kExNothing = 0x0B;
 
 LoopFn g_trampoline = nullptr;
 void*  g_target = nullptr;
@@ -285,93 +278,38 @@ std::uintptr_t __fastcall LoopDetour(void* ctx, void* stack, void* result) {
     return rv;
 }
 
-// ---- deriving the loop ---------------------------------------------------------------------
-std::uintptr_t* ResolveGNatives() {
-    // The dispatch site `lea r9,[GNatives]; ... movzx; ... call [r9+rax*8]`: the rel32 sits at
-    // hit+3, so the table is hit + 7 + rel32.
-    const uintptr_t hit = ue_wrap::FindPattern(
-        "4C 8D 0D ?? ?? ?? ?? 49 8B D7 0F B6 08 48 FF C0 49 89 47 20 8B C1 49 8B 4F 18 41 FF 14 C1");
-    if (!hit) return nullptr;
-    const std::int32_t rel = *reinterpret_cast<std::int32_t*>(hit + 3);
-    return reinterpret_cast<std::uintptr_t*>(hit + 7 + rel);
-}
-
-bool InModule(uintptr_t p, uintptr_t base, size_t size) { return p >= base && p < base + size; }
-
-bool ValidateTable(const std::uintptr_t* tbl, uintptr_t base, size_t size) {
-    int inRange = 0;
-    for (int i = 0; i < 256; ++i)
-        if (InModule(tbl[i], base, size)) ++inRange;
-    return inRange >= 200;
-}
-
-// A `lea r64,[rip+disp32]` at p (REX.W with or without REX.R; ModRM mod=00 rm=101) -> its target.
-bool DecodeLeaRip(const std::uint8_t* p, uintptr_t& out) {
-    if ((p[0] != 0x48 && p[0] != 0x4C) || p[1] != 0x8D || (p[2] & 0xC7) != 0x05) return false;
-    std::int32_t rel; std::memcpy(&rel, p + 3, sizeof(rel));
-    out = reinterpret_cast<uintptr_t>(p) + 7 + rel;
-    return true;
-}
-
-// The loop's shape: within its body, the return-opcode compare, the nothing-opcode compare (the
-// last thing it does, past the loop itself) and a rip-relative reference to the exec-handler
-// table. The window covers the whole function; a short one once refused the real loop.
-bool LooksLikeLoop(uintptr_t t, uintptr_t gnatives, uintptr_t base, size_t size) {
-    constexpr size_t kWindow = 0xA0;
-    if (!InModule(t, base, size) || !InModule(t + kWindow, base, size)) return false;
-    const std::uint8_t* p = reinterpret_cast<const std::uint8_t*>(t);
-    bool cmpReturn = false, cmpNothing = false, namesTable = false;
-    for (size_t i = 0; i + 7 <= kWindow; ++i) {
-        if (p[i] == 0x80 && p[i + 1] == 0x38 && p[i + 2] == kExReturn) cmpReturn = true;
-        if (p[i] == 0x80 && p[i + 1] == 0x38 && p[i + 2] == kExNothing) cmpNothing = true;
-        uintptr_t target;
-        if (DecodeLeaRip(p + i, target) && target == gnatives) namesTable = true;
-    }
-    return cmpReturn && cmpNothing && namesTable;
-}
-
-// The body executor a handler hands ProcessScriptFunction: the one rip-relative lea in the
-// handler whose target has the loop's shape. 0 when there is none or more than one.
-uintptr_t ExecutorOfHandler(uintptr_t handler, uintptr_t gnatives, uintptr_t base, size_t size) {
-    constexpr size_t kWindow = 0xA0;   // both handlers are under 0xA0 bytes
-    if (!InModule(handler, base, size) || !InModule(handler + kWindow, base, size)) return 0;
-    const std::uint8_t* p = reinterpret_cast<const std::uint8_t*>(handler);
-    uintptr_t found = 0;
-    for (size_t i = 0; i + 7 <= kWindow; ++i) {
-        uintptr_t target;
-        if (!DecodeLeaRip(p + i, target)) continue;
-        if (!LooksLikeLoop(target, gnatives, base, size)) continue;
-        if (found && found != target) return 0;
-        found = target;
-    }
-    return found;
-}
-
 }  // namespace
 
 bool Install() {
     if (g_installed.load(std::memory_order_acquire)) return true;
     uintptr_t base = 0; size_t size = 0;
     ue_wrap::MainModuleRange(base, size);
-    std::uintptr_t* gnatives = ResolveGNatives();
-    if (!gnatives || !ValidateTable(gnatives, base, size)) {
+    std::uintptr_t* gnatives = script_loop::ResolveGNatives();
+    if (!script_loop::TableFilled(gnatives)) {
         UE_LOGE("script_gate: the exec-handler table did not resolve or validate (%p) -- NOT installed",
                 static_cast<void*>(gnatives));
         return false;
     }
-    const uintptr_t fromVirtual = ExecutorOfHandler(gnatives[kOpcodeLocalVirtual],
-                                                    reinterpret_cast<uintptr_t>(gnatives), base, size);
-    const uintptr_t fromFinal = ExecutorOfHandler(gnatives[kOpcodeLocalFinal],
-                                                  reinterpret_cast<uintptr_t>(gnatives), base, size);
-    if (!fromVirtual || fromVirtual != fromFinal) {
+    std::uintptr_t virt = 0, fin = 0;
+    const std::uintptr_t loop = script_loop::ByHandlers(gnatives, virt, fin);
+    if (!loop) {
         UE_LOGE("script_gate: the two handlers disagree on the body loop (local-virtual -> exe+0x%llX, "
                 "local-final -> exe+0x%llX) -- NOT installed",
-                static_cast<unsigned long long>(fromVirtual ? fromVirtual - base : 0),
-                static_cast<unsigned long long>(fromFinal ? fromFinal - base : 0));
+                static_cast<unsigned long long>(virt ? virt - base : 0),
+                static_cast<unsigned long long>(fin ? fin - base : 0));
+        return false;
+    }
+    int candidates = 0;
+    const std::uintptr_t byCode = script_loop::ByCode(reinterpret_cast<std::uintptr_t>(gnatives), candidates);
+    if (byCode != loop) {
+        UE_LOGE("script_gate: the image alone names another loop (exe+0x%llX, of %d functions that reference the "
+                "table) than the handlers (exe+0x%llX) -- NOT installed",
+                static_cast<unsigned long long>(byCode ? byCode - base : 0), candidates,
+                static_cast<unsigned long long>(loop - base));
         return false;
     }
     if (!hook::Init()) return false;
-    void* target = reinterpret_cast<void*>(fromVirtual);
+    void* target = reinterpret_cast<void*>(loop);
     // The loop is a function UE4SS's own PolyHook detours for its Lua script hooks, so the relay
     // must be followJmp-immune, as ProcessEvent's is.
     if (!hook::Install(target, reinterpret_cast<void*>(&LoopDetour),
@@ -380,9 +318,10 @@ bool Install() {
     }
     g_target = target;
     g_installed.store(true, std::memory_order_release);
-    UE_LOGI("script_gate: installed on the VM's script loop at exe+0x%llX (both exec handlers name "
-            "it, and it names the exec-handler table at %p); disabled until something holds it",
-            static_cast<unsigned long long>(fromVirtual - base), static_cast<void*>(gnatives));
+    UE_LOGI("script_gate: installed on the VM's script loop at exe+0x%llX (both exec handlers name it, and so does "
+            "the image alone, the one of %d functions that reference the table at %p with its shape); disabled "
+            "until something holds it", static_cast<unsigned long long>(loop - base), candidates,
+            static_cast<void*>(gnatives));
     return true;
 }
 

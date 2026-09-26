@@ -2,6 +2,7 @@
 
 #include <windows.h>
 
+#include <cstring>
 #include <vector>
 
 namespace ue_wrap {
@@ -54,6 +55,40 @@ void MainModuleRange(uintptr_t& base, size_t& size) {
     auto* nt = reinterpret_cast<IMAGE_NT_HEADERS*>(base + dos->e_lfanew);
     if (nt->Signature != IMAGE_NT_SIGNATURE) return;
     size = nt->OptionalHeader.SizeOfImage;
+}
+
+bool MainTextRange(uintptr_t& begin, size_t& size) {
+    begin = 0;
+    size = 0;
+    uintptr_t base = 0;
+    size_t imageSize = 0;
+    MainModuleRange(base, imageSize);
+    if (!imageSize) return false;
+    const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS*>(
+        base + reinterpret_cast<const IMAGE_DOS_HEADER*>(base)->e_lfanew);
+    const IMAGE_SECTION_HEADER* sec = IMAGE_FIRST_SECTION(nt);
+    for (WORD i = 0; i < nt->FileHeader.NumberOfSections; ++i, ++sec) {
+        if (std::memcmp(sec->Name, ".text", 6) == 0) {
+            begin = base + sec->VirtualAddress;
+            size = sec->Misc.VirtualSize;
+            return true;
+        }
+    }
+    return false;
+}
+
+uintptr_t FunctionStart(uintptr_t pc) {
+    DWORD64 imageBase = 0;
+    const RUNTIME_FUNCTION* rf = ::RtlLookupFunctionEntry(pc, &imageBase, nullptr);
+    for (int depth = 0; rf && depth < 32; ++depth) {
+        const auto* info = reinterpret_cast<const uint8_t*>(imageBase + rf->UnwindInfoAddress);
+        if (!((info[0] >> 3) & UNW_FLAG_CHAININFO)) return static_cast<uintptr_t>(imageBase + rf->BeginAddress);
+        // UNWIND_INFO: version and flags, prolog size, code count, frame register; then the codes,
+        // padded to an even count; then the chained entry.
+        const size_t codes = (static_cast<size_t>(info[2]) + 1) & ~static_cast<size_t>(1);
+        rf = reinterpret_cast<const RUNTIME_FUNCTION*>(info + 4 + codes * 2);
+    }
+    return 0;
 }
 
 uintptr_t FindPatternIn(uintptr_t base, size_t size, const char* pattern) {

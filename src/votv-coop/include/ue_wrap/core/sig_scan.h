@@ -27,4 +27,12 @@ bool MatchesAt(uintptr_t addr, const char* pattern);
 // [base, size) of the main executable image, from its PE headers.
 void MainModuleRange(uintptr_t& base, size_t& size);
 
+// [begin, size) of the main executable's .text section, from its section headers. False when absent.
+bool MainTextRange(uintptr_t& begin, size_t& size);
+
+// The start of the function that holds `pc`, from the image's exception directory; a fragment the
+// compiler split out carries its parent's entry as chained unwind information, and the parent's begin
+// is the function's. 0 when `pc` has no entry.
+uintptr_t FunctionStart(uintptr_t pc);
+
 }  // namespace ue_wrap
