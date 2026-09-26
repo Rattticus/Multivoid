@@ -49,6 +49,11 @@ int32_t  g_disabledOff = -1;
 int32_t  g_waterloggedOff = -1;
 int32_t  g_offPanel = -1;          // mainGamemode_C.powerControl
 
+// The game mode's unit flags, in UnitPower's order, and its powerUsage: the drill's reading.
+struct GmBool { const wchar_t* name; int32_t off = -1; uint8_t mask = 0; };
+GmBool  g_usesp[5] = {{L"usesp_calc"}, {L"usesp_downl"}, {L"usesp_coords"}, {L"usesp_play"}, {L"usesp_light"}};
+int32_t g_offUsage = -1;
+
 // A TArray<AActor*> member of the panel: its data, then its count and capacity.
 struct ActorArray {
     void** data;
@@ -103,6 +108,14 @@ void* ObjectField(void* obj, const wchar_t* name) {
 // The hum: an AmbientSound actor, whose root, and the component the panel switches, is its AudioComponent.
 void* HumComponent(void* p) { return ObjectField(ObjectField(p, L"serversSound"), L"AudioComponent"); }
 
+bool ComponentActive(void* comp, bool& active) {
+    int32_t off = -1;
+    uint8_t mask = 0;
+    if (!comp || !R::FindBoolProperty(R::ClassOf(comp), L"bIsActive", off, mask)) return false;
+    active = (*(reinterpret_cast<const uint8_t*>(comp) + off) & mask) != 0;
+    return true;
+}
+
 bool CallVerb(void* p, const wchar_t* verb) {
     return p && g_resolved.load(std::memory_order_acquire) && component_calls::CallParamlessNamed(p, verb);
 }
@@ -146,6 +159,8 @@ bool EnsureResolved() {
         UE_LOGW("power: playSND not found -- a lever press mirrored from another peer is silent");
     const int32_t offPanel = R::FindPropertyOffset(gmCls, L"powerControl");
     if (offPanel < 0) return refuse(L"mainGamemode_C::powerControl");
+    for (auto& b : g_usesp) R::FindBoolProperty(gmCls, b.name, b.off, b.mask);  // the drill's reading only
+    g_offUsage = R::FindPropertyOffset(gmCls, L"powerUsage");
 
     g_offPanel = offPanel;
     g_disabledOff = disabledOff;
@@ -260,5 +275,34 @@ bool PlayTurnOnCue(void* p) {
 bool ReadLightRoots(void* p, std::vector<void*>& out) { return g_lightRoots.Read(p, out); }
 
 bool ReadBlackoutDoors(void* p, std::vector<void*>& out) { return g_blackoutDoors.Read(p, out); }
+
+bool ReadUnitPower(UnitPower& out) {
+    void* gm = world_singleton::Gamemode();
+    if (!gm || !g_resolved.load(std::memory_order_acquire) || g_offUsage < 0) return false;
+    bool* flags[5] = {&out.calc, &out.downl, &out.coords, &out.play, &out.light};
+    for (int i = 0; i < 5; ++i) {
+        if (g_usesp[i].off < 0) return false;
+        *flags[i] = (*(static_cast<const uint8_t*>(gm) + g_usesp[i].off) & g_usesp[i].mask) != 0;
+    }
+    out.usage = *reinterpret_cast<const float*>(static_cast<const uint8_t*>(gm) + g_offUsage);
+    return true;
+}
+
+bool ReadServers(void* p, ServerState& out) {
+    std::vector<void*> servers;
+    if (!g_servers.Read(p, servers)) return false;
+    out = ServerState{};
+    for (void* sv : servers) {
+        bool on = false;
+        if (!ComponentActive(ObjectField(sv, L"server_loop"), on)) continue;
+        ++out.total;
+        if (on) ++out.active;
+    }
+    bool hum = false;
+    if (ComponentActive(HumComponent(p), hum)) out.hum = hum ? 1 : 0;
+    return true;
+}
+
+bool CallVirusLockout(void* p) { return CallVerb(p, L"virus_pb"); }
 
 }  // namespace ue_wrap::power_control

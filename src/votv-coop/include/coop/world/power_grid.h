@@ -14,6 +14,7 @@
 
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 
 namespace coop::net { class Session; struct PowerGridPayload; }
@@ -37,6 +38,13 @@ void QueueConnectBroadcastForSlot(int slot);
 
 // HOST: a leaver's waiting ops go with it. Game thread.
 void OnPeerLeft(uint8_t slot);
+
+// [dev] the grid drill's readings. CLIENT: my ops the host has not yet taken, those sent this session, and the
+// host's last rows (false before they came). HOST: the ops it took this session. Game thread.
+size_t PendingOps();
+uint64_t ClientOpsSent();
+bool LastRows(coop::net::PowerGridPayload& out);
+uint64_t HostOpsTaken();
 
 // Say the session's counts and start them again. Session end.
 void OnDisconnect();

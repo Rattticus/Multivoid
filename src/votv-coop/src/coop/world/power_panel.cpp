@@ -2,6 +2,8 @@
 
 #include "coop/world/power_panel.h"
 
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 #include "coop/element/intent_authority.h"
 #include "coop/element/registry.h"
 #include "coop/net/protocol.h"
@@ -95,6 +97,12 @@ struct Bucket { float tokens = kPressBurst; uint64_t lastMs = 0; };
 Bucket g_rate[coop::net::kMaxPeers];
 uint8_t g_owed = 0;
 uint64_t g_pressesTaken = 0, g_pressesRefused = 0;
+
+// [dev] grid_drill=red: a client applies the canonical raw, as the old mirror did, with no apply behind it.
+bool RedApply() {
+    static const bool red = coop::config::ResolveString(::coop::config_registry::rows::grid_drill) == "red";
+    return red;
+}
 
 uint64_t NowMs() {
     return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -300,13 +308,15 @@ void ClientApplyModel(void* panel, const PowerPanelPayload& p, bool fresh) {
     if (cur != model || curDisabled != disabled) {
         PC::WriteDisabled(panel, disabled);
         PC::WritePress(panel, model);
-        PC::ButtonsVisibility(panel);
-        // The desk virus's lockout (virus_pb) switches the servers off as it starts, and as it ends switches them on
-        // with the calc breaker and plays the turn-on cue; the host's 60 s is its only clock, so each half runs here
-        // as its edge arrives.
-        if (disabled != curDisabled) {
-            PC::SetServersActive(panel, !disabled && (model & kCalcBit) != 0);
-            if (!disabled) PC::PlayTurnOnCue(panel);
+        if (!RedApply()) {
+            PC::ButtonsVisibility(panel);
+            // The desk virus's lockout (virus_pb) switches the servers off as it starts, and as it ends switches them
+            // on with the calc breaker and plays the turn-on cue; the host's 60 s is its only clock, so each half
+            // runs here as its edge arrives.
+            if (disabled != curDisabled) {
+                PC::SetServersActive(panel, !disabled && (model & kCalcBit) != 0);
+                if (!disabled) PC::PlayTurnOnCue(panel);
+            }
         }
         ++g_canonicalsApplied;
         UE_LOGI("power_panel: canonical 0x%02X%s %s, the panel was 0x%02X%s (%zu press(es) of mine on top)", p.bits,
@@ -499,8 +509,19 @@ void OnPeerLeft(uint8_t slot) {
 
 void ReassertCanonical() {
     auto* s = Connected();
-    if (!s || s->role() != coop::net::Role::Client || !g_haveCanonical) return;
+    if (!s || s->role() != coop::net::Role::Client || !g_haveCanonical || RedApply()) return;
     if (void* panel = PC::Panel()) ClientApplyModel(panel, g_canonical, false);
+}
+
+size_t PendingPresses() { return g_pending.size(); }
+uint64_t ClientPressesSent() { return g_pressesSent; }
+uint64_t HostPressesTaken() { return g_pressesTaken; }
+
+bool LastCanonical(uint8_t& bits, bool& disabled) {
+    if (!g_haveCanonical) return false;
+    bits = static_cast<uint8_t>(g_canonical.bits & kMaskBits);
+    disabled = (g_canonical.flags & kFlagDisabled) != 0;
+    return true;
 }
 
 void OnDisconnect() {

@@ -10,10 +10,13 @@
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile_names.h"
+#include "ue_wrap/engine/engine_component.h"  // GetComponentLocation
+#include "ue_wrap/engine/hit_result.h"
 #include "ue_wrap/world/world_singleton.h"
 
 #include <chrono>
 #include <cstdint>
+#include <string>
 
 namespace ue_wrap::generator {
 namespace {
@@ -31,7 +34,12 @@ int32_t  g_offCyc = -1;
 uint8_t  g_maskCyc = 0;
 int32_t  g_offCycle = -1;
 int32_t  g_offUpgrade = -1;
+int32_t  g_offButton = -1;        // button_activate
 int32_t  g_offTrigger = -1;       // triggerWhenCompleted
+int32_t  g_offLookButton = -1;    // lookAtButton, the drill's press
+uint8_t  g_maskLookButton = 0;
+int32_t  g_offPanelObj = -1;      // panelObj, the drill's puzzle shortcut
+int32_t  g_offTurnOn = -1;        // turnon, the drill's read of the last cue
 
 constexpr const wchar_t* kVerbs[] = { L"break", L"fullFix", L"damage", L"update", L"updUpgrades" };
 
@@ -100,21 +108,28 @@ bool EnsureResolved() {
     if (offCycle < 0) return refuse(L"cycle");
     const int32_t offUpgrade = R::FindPropertyOffset(cls, L"upgradeLevel");
     if (offUpgrade < 0) return refuse(L"upgradeLevel");
+    const int32_t offButton = R::FindPropertyOffset(cls, L"button_activate");
+    if (offButton < 0) return refuse(L"button_activate");
     const int32_t offTrigger = R::FindPropertyOffset(cls, L"triggerWhenCompleted");
     if (offTrigger < 0) return refuse(L"triggerWhenCompleted");
     for (const wchar_t* verb : kVerbs)
         if (!R::FindDispatchFunctionCached(cls, verb)) return refuse(verb);
+    // The drill's reads only: a miss leaves its press, its shortcut or its cue unavailable, not the lane.
+    R::FindBoolProperty(cls, L"lookAtButton", g_offLookButton, g_maskLookButton);
+    g_offPanelObj = R::FindPropertyOffset(cls, L"panelObj");
+    g_offTurnOn = R::FindPropertyOffset(cls, L"turnon");
 
     g_offList = offList;
     g_offBroken = offBroken;  g_maskBroken = maskBroken;
     g_offCyc = offCyc;        g_maskCyc = maskCyc;
     g_offCycle = offCycle;
     g_offUpgrade = offUpgrade;
+    g_offButton = offButton;
     g_offTrigger = offTrigger;
     g_resolved = true;
     UE_LOGI("generator: resolved list@0x%X isBroken@0x%X/%02X cyc@0x%X/%02X cycle@0x%X upgradeLevel@0x%X "
-            "triggerWhenCompleted@0x%X", offList, offBroken, maskBroken, offCyc, maskCyc, offCycle, offUpgrade,
-            offTrigger);
+            "button_activate@0x%X triggerWhenCompleted@0x%X", offList, offBroken, maskBroken, offCyc, maskCyc, offCycle,
+            offUpgrade, offButton, offTrigger);
     return true;
 }
 
@@ -149,6 +164,12 @@ bool ReadRow(void* gen, Row& out) {
     return true;
 }
 
+bool WriteBroken(void* gen, bool broken) {
+    if (!gen || !g_resolved) return false;
+    WriteBit(gen, g_offBroken, g_maskBroken, broken);
+    return true;
+}
+
 bool WriteCycle(void* gen, int32_t cycle) {
     if (!gen || !g_resolved) return false;
     IntAt(gen, g_offCycle) = cycle;
@@ -174,6 +195,46 @@ bool CallUpdUpgrades(void* gen) { return CallVerb(gen, L"updUpgrades"); }
 bool Repair(void* gen) {
     if (!CallVerb(gen, L"fullFix") || !CallVerb(gen, L"update")) return false;
     RunCompletionTrigger(gen);
+    return true;
+}
+
+void* ActivateButton(void* gen) {
+    if (!gen || !g_resolved) return nullptr;
+    void* button = ObjectAt(gen, g_offButton);
+    return (button && R::IsLive(button)) ? button : nullptr;
+}
+
+bool PressActivate(void* gen, void* player) {
+    void* button = ActivateButton(gen);
+    void* fn = gen ? R::FindDispatchFunctionCached(R::ClassOf(gen), L"actionOptionIndex") : nullptr;
+    if (!button || !player || !fn || g_offLookButton < 0) return false;
+    WriteBit(gen, g_offLookButton, g_maskLookButton, true);  // what getActionOptions writes for the button
+    const FVector at = engine::GetComponentLocation(button);
+    ParamFrame f(fn);
+    return f.valid() && f.Set<void*>(L"player", player) && hit_result::Write(f, L"hit", gen, button, at) &&
+           f.Set<uint8_t>(L"action", 4) && f.Set<void*>(L"lookAtComponent", button) && Call(gen, f);
+}
+
+bool WritePuzzleSolved(void* gen) {
+    if (!gen || !g_resolved) return false;
+    void* panel = ObjectAt(gen, g_offPanelObj);
+    if (!panel || !R::IsLive(panel)) return false;
+    for (const wchar_t* name : {L"isRotatorsComplete", L"isSineComplete", L"isSwitchesComplete"}) {
+        int32_t off = -1;
+        uint8_t mask = 0;
+        if (!R::FindBoolProperty(R::ClassOf(panel), name, off, mask)) return false;
+        WriteBit(panel, off, mask, true);
+    }
+    return true;
+}
+
+bool ReadLastCue(void* gen, bool& turnOn) {
+    if (!gen || !g_resolved) return false;
+    void* comp = ObjectAt(gen, g_offTurnOn);
+    if (!comp || !R::IsLive(comp)) return false;
+    void* sound = ObjectAt(comp, R::FindPropertyOffset(R::ClassOf(comp), L"Sound"));
+    if (!sound || !R::IsLive(sound)) return false;
+    turnOn = R::ToString(R::NameOf(sound)) == L"turnon";
     return true;
 }
 

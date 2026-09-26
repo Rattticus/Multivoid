@@ -482,6 +482,7 @@ set(VOTVCOOP_SOURCES
     src/coop/dev/server_upgrade_drill.cpp
     src/coop/dev/sat_console_drill.cpp
     src/coop/dev/calib_drill.cpp
+    src/coop/dev/grid_drill.cpp
     src/coop/dev/end_play_probe.cpp
     src/coop/dev/death_seam_census.cpp
     src/coop/dev/grime_drill.cpp

@@ -601,6 +601,16 @@ CFG_STRING(power_decay_drill, "power_decay_drill", "dev", "", "VOTVCOOP_POWER_DE
     "Drill (BOTH peers): the generators' 30 s decay tick. watch: each peer says every tick's verdict, a client "
     "refusing its own and the host running its own, and the client's second tick prints the DONE line; red: a "
     "client runs its own tick, the negative control. Lines tagged [POWER-DECAY].")
+CFG_STRING(grid_drill, "grid_drill", "dev", "", "VOTVCOOP_GRID_DRILL", false,
+    "Drill (BOTH peers): the power grid. run: the client walks to the panel and presses its light lever twice, "
+    "the host breaks the drill's generator (the one nearest the panel) after the first, then the client repairs "
+    "it at its Activate button from where it stands, which the host takes within reach and refuses beyond it, "
+    "then repairs at its own Activate button, with the turn-on the client must run too. "
+    "join: the host breaks the drill's generator as it hosts and the joining client finds the blackout. lockout, "
+    "lockjoin: the host runs the desk virus's lockout once the client's world is ready, or as it joins, and the "
+    "client's panel locks with the canonical and unlocks 60 s later on the host's clock. red: a client applies the "
+    "host's canonical and rows raw, the negative control. Lines tagged [GRID-DRILL]; the client's DONE line ends "
+    "it.")
 CFG_STRING(toggle_drill, "toggle_drill", "dev", "", "VOTVCOOP_TOGGLE_DRILL", false,
     "Drill (BOTH peers), by kind: garage, tap (a faucet or a sink), locker or lid. The device of that kind "
     "with the lowest key in its lane, toggled through its own verb by the client and toggled back by "

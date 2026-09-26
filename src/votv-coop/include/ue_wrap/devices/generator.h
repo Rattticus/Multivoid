@@ -40,6 +40,7 @@ int32_t IndexOf(void* gen);
 bool ReadRow(void* gen, Row& out);
 
 // Raw writes of the row's plain fields: nothing repaints. Game thread.
+bool WriteBroken(void* gen, bool broken);
 bool WriteCycle(void* gen, int32_t cycle);
 bool WriteCyc(void* gen, bool cyc);
 bool WriteUpgradeLevel(void* gen, int32_t level);
@@ -55,5 +56,21 @@ bool CallUpdUpgrades(void* gen);
 // alone). False when fullFix() or update() did not run. Game thread.
 bool Repair(void* gen);
 
+// The Activate button (button_activate), the component a player's look-at trace must strike to repair or
+// service; null before the generator resolves. Game thread.
+void* ActivateButton(void* gen);
+
+// [dev] the grid drill's repair as a player makes it: the look that marks the Activate button as the one under the
+// trace (getActionOptions writes lookAtButton), then actionOptionIndex(player, a hit on the button, 4, the button).
+// Game thread.
+bool PressActivate(void* gen, void* player);
+
+// [dev] the grid drill's shortcut through the repair puzzle: the generator's panel reads all three pages solved,
+// as a player's solving leaves them. Game thread.
+bool WritePuzzleSolved(void* gen);
+
+// [dev] the cue update() last set on the generator's own sound (its `turnon` component): true for the turn-on,
+// false for the turn-off. False when the component or its sound is unread. Game thread.
+bool ReadLastCue(void* gen, bool& turnOn);
 
 }  // namespace ue_wrap::generator

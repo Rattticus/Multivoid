@@ -67,4 +67,23 @@ bool PlayTurnOnCue(void* p);
 bool ReadLightRoots(void* p, std::vector<void*>& out);
 bool ReadBlackoutDoors(void* p, std::vector<void*>& out);
 
+// The units' power as the panel's setPower left it in the game mode: its five usesp_ flags and powerUsage.
+struct UnitPower {
+    bool  calc = false, downl = false, coords = false, play = false, light = false;
+    float usage = 0.f;
+};
+
+// How many of the panel's servers run their loop, and its hum: -1 when the panel has none, else whether it plays.
+struct ServerState {
+    int active = 0, total = 0;
+    int hum = -1;
+};
+
+// [dev] the grid drill's readings: the units' power, and the panel's servers. Game thread.
+bool ReadUnitPower(UnitPower& out);
+bool ReadServers(void* p, ServerState& out);
+
+// [dev] the grid drill's lockout: the panel's virus_pb(), as the desk's virus runs it. Game thread.
+bool CallVirusLockout(void* p);
+
 }  // namespace ue_wrap::power_control

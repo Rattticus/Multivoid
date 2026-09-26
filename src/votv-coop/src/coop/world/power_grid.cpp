@@ -151,6 +151,12 @@ uint64_t g_editsRefused = 0, g_opsSent = 0, g_hitsSent = 0, g_rowsApplied = 0;
 struct HitParams { void* fn = nullptr; int32_t actor = -1; int32_t damage = -1; };
 HitParams g_hitParams;
 
+// [dev] grid_drill=red: a client writes the rows raw, as the old lanes left each peer to its own generators.
+bool RedApply() {
+    static const bool red = coop::config::ResolveString(::coop::config_registry::rows::grid_drill) == "red";
+    return red;
+}
+
 // `a` is later than `b` in a 16-bit sequence that wraps.
 bool SeqAfter(uint16_t a, uint16_t b) { return static_cast<int16_t>(static_cast<uint16_t>(a - b)) > 0; }
 
@@ -438,7 +444,8 @@ void ClientReconcile() {
         if (e.broken != r.broken) {
             // A break blacks the base out through the panel and scrambles the puzzle; a repair runs as the host
             // runs a player's, its turn-on at the generator included.
-            if (e.broken) GEN::CallBreak(gens[i]);
+            if (RedApply()) GEN::WriteBroken(gens[i], e.broken);
+            else if (e.broken) GEN::CallBreak(gens[i]);
             else GEN::Repair(gens[i]);
             panelVerbs = true;
             UE_LOGI("power_grid: generator %zu %s as the host's", i, e.broken ? "broke" : "was repaired");
@@ -447,7 +454,7 @@ void ClientReconcile() {
         if (e.cycle != r.cycle) {
             // One step of the host's wear runs as its damage(), whose scrambled sine page puts this copy's next
             // service a solved puzzle away, as the host's is; any other gap (a join, a service) is written.
-            if (!e.broken && !r.broken && e.cycle >= 1 && e.cycle == r.cycle - 1)
+            if (!RedApply() && !e.broken && !r.broken && e.cycle >= 1 && e.cycle == r.cycle - 1)
                 GEN::CallDamage(gens[i]);
             else
                 GEN::WriteCycle(gens[i], e.cycle);
@@ -455,7 +462,7 @@ void ClientReconcile() {
         if (e.cyc != r.cyc) GEN::WriteCyc(gens[i], e.cyc);
         if (e.upgradeLevel != r.upgradeLevel) {
             GEN::WriteUpgradeLevel(gens[i], e.upgradeLevel);
-            GEN::CallUpdUpgrades(gens[i]);
+            if (!RedApply()) GEN::CallUpdUpgrades(gens[i]);
             UE_LOGI("power_grid: generator %zu upgrades %d -> %d as the host's", i, r.upgradeLevel, e.upgradeLevel);
         }
     }
@@ -669,6 +676,16 @@ void OnPeerLeft(uint8_t slot) {
     g_waiting[slot].clear();
     g_rate[slot] = Bucket{};
     g_owed = static_cast<uint8_t>(g_owed & ~(1u << slot));
+}
+
+size_t PendingOps() { return g_pending.size(); }
+uint64_t ClientOpsSent() { return g_opsSent; }
+uint64_t HostOpsTaken() { return g_opsTaken; }
+
+bool LastRows(coop::net::PowerGridPayload& out) {
+    if (!g_haveRows) return false;
+    out = g_rows;
+    return true;
 }
 
 void OnDisconnect() {

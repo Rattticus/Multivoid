@@ -16,6 +16,7 @@
 
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 
 namespace coop::net { class Session; struct PowerPanelPayload; }
@@ -43,6 +44,13 @@ void OnPeerLeft(uint8_t slot);
 // CLIENT: put the panel back to the last canonical with my untaken presses on top, after a verb of this peer's
 // own wrote its breakers (a generator's break blacks the panel out through solar()). Game thread.
 void ReassertCanonical();
+
+// [dev] the grid drill's readings. CLIENT: my presses the host has not yet taken, those sent this session, and the
+// last canonical's breakers and `disabled` (false before one came). HOST: the presses it took. Game thread.
+size_t PendingPresses();
+uint64_t ClientPressesSent();
+bool LastCanonical(uint8_t& bits, bool& disabled);
+uint64_t HostPressesTaken();
 
 // Forget the session's presses, canonical and acknowledgements. Session end.
 void OnDisconnect();
