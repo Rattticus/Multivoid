@@ -61,7 +61,7 @@ host validates and commits contested writes), `local` (never shared).
 | The bay window's dirt | each sponge dab on its render target: the pixel, the edge, the brush's opacity and colour | presser, relayed by the host | the host's transferred save | built |
 | Device occupancy | who is using a device | arbiter | snapshot of the table | works |
 | Desk input and console | field-granular input deltas, cooldown charges, the console text | presser; host relays | seed | works, five known breaks |
-| Dish | the dish pose, the client's own simulation parked; the precision, a client's own verbs sent to the host | host | snapshot; the precision a seed | works, one known break; the precision built |
+| Dish | the dish pose, the client's own simulation parked; the precision, a client's own verbs sent to the host | host | snapshot; the precision a seed | works, one known break; the precision tested |
 | Signal catch | the catch as an intent the host replays | presser and host | seed | tested |
 | Download and decode simulation | the host-run simulation's outputs | host | adopt | works, one known break |
 | Playback deck | the play and stop edges | presser | none | tested |

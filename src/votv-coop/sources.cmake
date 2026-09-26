@@ -90,6 +90,7 @@ set(VOTVCOOP_SOURCES
     src/ue_wrap/desk/comp_pane.cpp
     src/ue_wrap/desk/coords_panel.cpp
     src/ue_wrap/desk/dish.cpp
+    src/ue_wrap/desk/dish_writers.cpp
     src/ue_wrap/desk/sat_console.cpp
     src/ue_wrap/desk/coord_tower.cpp
     src/ue_wrap/desk/tape_caddy.cpp
@@ -479,6 +480,7 @@ set(VOTVCOOP_SOURCES
     src/coop/dev/drone_call_drill.cpp
     src/coop/dev/server_upgrade_drill.cpp
     src/coop/dev/sat_console_drill.cpp
+    src/coop/dev/calib_drill.cpp
     src/coop/dev/end_play_probe.cpp
     src/coop/dev/death_seam_census.cpp
     src/coop/dev/grime_drill.cpp

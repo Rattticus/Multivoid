@@ -8,6 +8,7 @@
 
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/engine_component.h"   // GetComponentLocation (the hold frame's camera)
+#include "ue_wrap/engine/hit_result.h"         // WriteField (the hitResult a drill aims)
 
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
@@ -363,6 +364,10 @@ void* ReadMainPlayerLookAtActor(void* mainPlayer) {
     const int32_t off = ue_wrap::reflected_offset::MainPlayer_lookAtActor();
     if (off < 0) return nullptr;
     return *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(mainPlayer) + off);
+}
+
+bool WriteMainPlayerHitResult(void* mainPlayer, void* actor, void* component, const FVector& location) {
+    return hit_result::WriteField(mainPlayer, L"hitResult", actor, component, location);
 }
 
 bool WriteMainPlayerLookAtActor(void* mainPlayer, void* actor) {

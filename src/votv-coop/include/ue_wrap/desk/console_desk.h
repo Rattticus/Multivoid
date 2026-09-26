@@ -216,6 +216,10 @@ bool DownloadMeshValid();
 // plus a little. False if unresolved.
 bool ReadMaxCooldown(float& out);
 
+// DL_precMult, the average of the dishes' precision that mainGamemode.setPrec writes and the
+// download's rate is computed from. False if unresolved.
+bool ReadPrecMult(float& out);
+
 // Apply one power toggle with its native setter-event side effects, replicated reflected: the
 // hum's activation, the light's visibility, and per unit the play stop, the download's
 // play-signal refresh, or the refiner's console flag and materials. The native fused setter

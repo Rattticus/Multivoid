@@ -115,6 +115,9 @@ bool WriteActiveDish(int32_t index, bool active);
 // (ue_wrap/desk/dish_writers), and a level trigger (trigger_fakeLmaos).
 bool WriteCalibration(int32_t index, float v);
 
+// A component of dish `index` that a hit on the dish can name (its yaw axis), or null. Game thread.
+void* HitComponent(int32_t index);
+
 // dish.techName (FString) for identity logging ("[dish] 3 'Bonna'").
 // Returns L"?" when unresolved/empty.
 std::wstring TechName(int32_t index);
@@ -155,6 +158,8 @@ bool CallCheckFordDishes();
 // DL_precMult, from which the desk's download computes its rate every tick. A 10 s looping timer
 // runs it on every peer. The function's name, for a watch.
 inline constexpr const wchar_t* kSetPrec = L"setPrec";
+// Reflected setPrec() on the live gamemode. Game thread.
+bool CallSetPrec();
 
 // ---- L4 ticker surface -----------------------------------------------------
 // The disher is a gamemode-BeginPlay singleton (one per world per peer): a

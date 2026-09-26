@@ -147,6 +147,7 @@ void* g_intComsUnfocusedFn = nullptr;   // the desk's unfocus verb, the reset-on
 // effects replicated per field: the hum and light components, the per-unit extra verbs, the
 // scan effects.
 int32_t g_offMaxCooldown = -1;       // coord_maxCooldown (the scan-charge target)
+int32_t g_offPrecMult = -1;          // DL_precMult (the dishes' average precision, setPrec's)
 int32_t g_offActiveConsole = -1;     // active_console (bool; the comp setter mirrors active_comp)
 int32_t g_offHumPlay = -1;           // computerHum_play   (UAudioComponent*)
 int32_t g_offHumDownl = -1;          // computerHum_downl
@@ -215,6 +216,7 @@ void ResolvePass() {
 
     // The desk-input apply surface.
     if (g_offMaxCooldown < 0) g_offMaxCooldown = R::FindPropertyOffset(g_cls, L"coord_maxCooldown");
+    if (g_offPrecMult < 0)   g_offPrecMult = R::FindPropertyOffset(g_cls, L"DL_precMult");
     if (g_offActiveConsole < 0) g_offActiveConsole = R::FindPropertyOffset(g_cls, L"active_console");
     if (g_offHumPlay < 0)    g_offHumPlay = R::FindPropertyOffset(g_cls, L"computerHum_play");
     if (g_offHumDownl < 0)   g_offHumDownl = R::FindPropertyOffset(g_cls, L"computerHum_downl");
@@ -646,6 +648,13 @@ bool ReadMaxCooldown(float& out) {
     void* d = Instance();
     if (!d || g_offMaxCooldown < 0) return false;
     out = *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(d) + g_offMaxCooldown);
+    return true;
+}
+
+bool ReadPrecMult(float& out) {
+    void* d = Instance();
+    if (!d || g_offPrecMult < 0) return false;
+    out = *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(d) + g_offPrecMult);
     return true;
 }
 

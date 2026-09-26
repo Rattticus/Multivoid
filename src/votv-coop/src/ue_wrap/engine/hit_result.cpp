@@ -32,25 +32,18 @@ bool Names(const uint8_t* hit, const wchar_t* field, void* object) {
     return R::ResolveWeakObject(idx, serial) == object;
 }
 
-}  // namespace
-
-bool Write(ParamFrame& frame, const wchar_t* param, void* actor, void* component, const FVector& location) {
+bool Resolve() {
     if (!g_cdo) g_cdo = R::FindClassDefaultObject(L"GameplayStatics");
     if (!g_makeFn) {
         if (void* cls = R::FindClass(L"GameplayStatics")) g_makeFn = R::FindFunction(cls, L"MakeHitResult");
     }
     if (!g_hitStruct && g_makeFn) g_hitStruct = R::PropertyInnerStruct(g_makeFn, L"ReturnValue");
-    if (!g_cdo || !g_makeFn || !g_hitStruct || !frame.valid()) {
-        UE_LOGW("hit_result: not built (GameplayStatics CDO=%d MakeHitResult=%d HitResult struct=%d frame=%d)",
-                g_cdo ? 1 : 0, g_makeFn ? 1 : 0, g_hitStruct ? 1 : 0, frame.valid() ? 1 : 0);
-        return false;
-    }
-    const int32_t size = R::FindParamSize(g_makeFn, L"ReturnValue");
-    const int32_t into = R::FindParamSize(frame.function(), param);
-    if (size <= 0 || size != into) {
-        UE_LOGW("hit_result: not built: MakeHitResult returns %d bytes and '%ls' takes %d", size, param, into);
-        return false;
-    }
+    return g_cdo && g_makeFn && g_hitStruct;
+}
+
+// MakeHitResult's value for a blocking hit on `component` of `actor` at `location`, `size` bytes into `hit`. False
+// when the call fails or the hit does not name what it was built on.
+bool Build(void* actor, void* component, const FVector& location, uint8_t* hit, int32_t size) {
     ParamFrame f(g_makeFn);
     if (!f.valid() || !f.Set<bool>(L"bBlockingHit", true) || !f.Set<void*>(L"HitActor", actor) ||
         !f.Set<void*>(L"HitComponent", component))
@@ -62,15 +55,49 @@ bool Write(ParamFrame& frame, const wchar_t* param, void* actor, void* component
         return false;
     }
     // Weak pointers and names only: the bytes are the whole value, with nothing to release.
-    std::vector<uint8_t> hit(static_cast<size_t>(size));
-    if (!f.GetRaw(L"ReturnValue", hit.data(), size)) return false;
+    if (!f.GetRaw(L"ReturnValue", hit, size)) return false;
     // A hit that does not name what it was built on would send the call somewhere else.
-    if (!Names(hit.data(), L"Component", component) || !Names(hit.data(), L"Actor", actor)) {
+    if (!Names(hit, L"Component", component) || !Names(hit, L"Actor", actor)) {
         UE_LOGW("hit_result: not built: the hit does not resolve back (component=%d actor=%d)",
-                Names(hit.data(), L"Component", component) ? 1 : 0, Names(hit.data(), L"Actor", actor) ? 1 : 0);
+                Names(hit, L"Component", component) ? 1 : 0, Names(hit, L"Actor", actor) ? 1 : 0);
         return false;
     }
-    return frame.SetRaw(param, hit.data(), size);
+    return true;
+}
+
+}  // namespace
+
+bool Write(ParamFrame& frame, const wchar_t* param, void* actor, void* component, const FVector& location) {
+    if (!Resolve() || !frame.valid()) {
+        UE_LOGW("hit_result: not built (GameplayStatics CDO=%d MakeHitResult=%d HitResult struct=%d frame=%d)",
+                g_cdo ? 1 : 0, g_makeFn ? 1 : 0, g_hitStruct ? 1 : 0, frame.valid() ? 1 : 0);
+        return false;
+    }
+    const int32_t size = R::FindParamSize(g_makeFn, L"ReturnValue");
+    const int32_t into = R::FindParamSize(frame.function(), param);
+    if (size <= 0 || size != into) {
+        UE_LOGW("hit_result: not built: MakeHitResult returns %d bytes and '%ls' takes %d", size, param, into);
+        return false;
+    }
+    std::vector<uint8_t> hit(static_cast<size_t>(size));
+    return Build(actor, component, location, hit.data(), size) && frame.SetRaw(param, hit.data(), size);
+}
+
+bool WriteField(void* object, const wchar_t* field, void* actor, void* component, const FVector& location) {
+    void* cls = object && R::IsLive(object) ? R::ClassOf(object) : nullptr;
+    if (!cls || !Resolve()) return false;
+    const int32_t off = R::FindPropertyOffset(cls, field);
+    void* inner = R::PropertyInnerStruct(cls, field);
+    const int32_t size = R::FindParamSize(g_makeFn, L"ReturnValue");
+    if (off < 0 || !inner || size <= 0 || size != R::StructSize(inner)) {
+        UE_LOGW("hit_result: not built: MakeHitResult returns %d bytes and '%ls' holds %d", size, field,
+                inner ? R::StructSize(inner) : -1);
+        return false;
+    }
+    std::vector<uint8_t> hit(static_cast<size_t>(size));
+    if (!Build(actor, component, location, hit.data(), size)) return false;
+    std::memcpy(reinterpret_cast<uint8_t*>(object) + off, hit.data(), hit.size());
+    return true;
 }
 
 }  // namespace ue_wrap::hit_result

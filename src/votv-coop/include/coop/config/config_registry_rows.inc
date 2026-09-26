@@ -586,6 +586,13 @@ CFG_STRING(sat_console_drill, "sat_console_drill", "dev", "", "VOTVCOOP_SAT_CONS
     "run's lines again. discard -- the only client leaves in the middle (run with --rejoin-marker and no observer): the "
     "session ends and the host checks, in the next one, that the discarded terminal's run stopped and it went at a "
     "GC. Lines tagged [SAT-DRILL].")
+CFG_STRING(calib_drill, "calib_drill", "dev", "", "VOTVCOOP_CALIB_DRILL", false,
+    "Drill (BOTH peers): the host holds three dishes at values no dish rests at. A client writes another value into "
+    "its copy of the first, which the lane must put back within 3 s while the host's never takes it; writes it "
+    "again and calls setPrec at once, whose average must be the host's; runs an uncalibrator's use on the second "
+    "and a toolgun calibration tool's 2.5 on the third, which the host must perform and the client's copy hold. "
+    "run -- the host holds them once a client is in its world; join -- before any client connects. Lines tagged "
+    "[CALIB-DRILL]; the host's DONE line ends it.")
 CFG_STRING(server_upgrade_drill, "server_upgrade_drill", "dev", "", "VOTVCOOP_SERVER_UPGRADE_DRILL", false,
     "Drill (BOTH peers): a client installs an upgrade into a server box and takes one out. apply: the host "
     "applies both; refuse: the host refuses both, as if each had lost its race, and the client sees its install "

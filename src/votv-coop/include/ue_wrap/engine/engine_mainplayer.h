@@ -98,6 +98,12 @@ void* ReadMainPlayerLookAtActor(void* mainPlayer);
 // test aim the next InpActEvt_use dispatch at a chosen actor. Game thread.
 bool WriteMainPlayerLookAtActor(void* mainPlayer, void* actor);
 
+// Direct write of hitResult, the interaction trace the BP re-derives each tick, as a blocking hit on
+// `component` of `actor` at `location`: lets a test aim the next hand use (a held prop's
+// playerHandUse_LMB breaks this trace) at a chosen actor; the next tick's trace overwrites it. Game
+// thread.
+bool WriteMainPlayerHitResult(void* mainPlayer, void* actor, void* component, const FVector& location);
+
 // The whole look-at result AmainPlayer_C::LookAtFunction keeps between frames. The function
 // re-traces every tick and compares the fresh answer against these five fields; if any one of them
 // differs it stores the new set, rebuilds the action list and re-opens the hovertext, which the

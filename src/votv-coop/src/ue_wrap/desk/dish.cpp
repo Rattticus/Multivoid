@@ -427,6 +427,12 @@ bool WriteCalibration(int32_t index, float v) {
     return true;
 }
 
+void* HitComponent(int32_t index) {
+    if (!g_l4Resolved) return nullptr;
+    void* d = DishByIndex(index);
+    return d ? ComponentAt(d, g_offAxisZ) : nullptr;
+}
+
 std::wstring TechName(int32_t index) {
     if (!g_l4Resolved) return L"?";
     void* d = DishByIndex(index);
@@ -505,6 +511,14 @@ bool CallCheckFordDishes() {
     if (!gm || !g_gamemodeCls) return false;
     static void* sFn = nullptr;
     if (!sFn) sFn = R::FindFunction(g_gamemodeCls, L"checkFordDishes");
+    return sFn && CallNoArg(gm, sFn);
+}
+
+bool CallSetPrec() {
+    void* gm = Gamemode();
+    if (!gm || !g_gamemodeCls) return false;
+    static void* sFn = nullptr;
+    if (!sFn) sFn = R::FindFunction(g_gamemodeCls, kSetPrec);
     return sFn && CallNoArg(gm, sFn);
 }
 
