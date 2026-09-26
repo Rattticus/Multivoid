@@ -583,6 +583,8 @@ inline constexpr const wchar_t* GetPhysicsLinearVelocityFn           = L"GetPhys
 inline constexpr const wchar_t* GetPhysicsAngularVelocityInDegreesFn = L"GetPhysicsAngularVelocityInDegrees";
 inline constexpr const wchar_t* SetPhysicsLinearVelocityFn           = L"SetPhysicsLinearVelocity";
 inline constexpr const wchar_t* SetPhysicsAngularVelocityInDegreesFn = L"SetPhysicsAngularVelocityInDegrees";
+// GetCenterOfMass: a body's centre of mass in world space, a welded body's the whole weld's.
+inline constexpr const wchar_t* GetCenterOfMassFn                    = L"GetCenterOfMass";
 
 // AdaynightCycle_C: the singleton weather authority (the scheduler timers, the state fields, the
 // mutator UFunctions), resolved through R::FindObjectByClass.

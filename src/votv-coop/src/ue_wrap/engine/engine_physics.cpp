@@ -20,7 +20,7 @@ namespace P = profile;
 namespace R = reflection;
 
 // Every frame here fits 64 bytes: SetSimulatePhysics takes 1, the two velocity setters 24,
-// IsSimulatingPhysics 12. A UFunction whose frame outgrows it is refused at the resolve, so a
+// IsSimulatingPhysics 12, GetCenterOfMass 20. A UFunction whose frame outgrows it is refused at the resolve, so a
 // recooked signature can never make ProcessEvent write past the buffer.
 constexpr int32_t kFrameBytes = 64;
 
@@ -40,6 +40,7 @@ Thunk g_setSimulate{P::name::SetSimulatePhysicsFn, L"bSimulate", nullptr};
 Thunk g_setLinVel{P::name::SetPhysicsLinearVelocityFn, L"NewVel", L"BoneName"};
 Thunk g_setAngVel{P::name::SetPhysicsAngularVelocityInDegreesFn, L"NewAngVel", L"BoneName"};
 Thunk g_isSimulating{P::name::IsSimulatingPhysicsFn, L"BoneName", L"ReturnValue"};
+Thunk g_getCenterOfMass{P::name::GetCenterOfMassFn, L"BoneName", L"ReturnValue"};
 
 // The class they are found on. A native class outlives every world, but the references are checked:
 // a freed one is found again, and each thunk, holding the class it resolved on by slot and serial,
@@ -124,6 +125,15 @@ bool IsComponentSimulatingPhysics(void* component) {
     *reinterpret_cast<R::FName*>(frame + g_isSimulating.off0) = R::FName{0, 0};  // None: the whole body
     R::CallFunction(component, g_isSimulating.fn, frame);
     return *reinterpret_cast<bool*>(frame + g_isSimulating.off1);
+}
+
+bool GetComponentCenterOfMass(void* component, FVector& out) {
+    if (!component || !Resolve(g_getCenterOfMass)) return false;
+    unsigned char frame[kFrameBytes] = {};
+    *reinterpret_cast<R::FName*>(frame + g_getCenterOfMass.off0) = R::FName{0, 0};  // None: the whole body
+    R::CallFunction(component, g_getCenterOfMass.fn, frame);
+    out = *reinterpret_cast<FVector*>(frame + g_getCenterOfMass.off1);
+    return true;
 }
 
 int StopActorSimulating(void* actor) {
