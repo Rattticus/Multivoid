@@ -24,9 +24,10 @@ signaling leg is still plaintext TCP.
 
 A small HTTP JSON service. A host announces itself with the world, the player count and its
 identity and gets back a session id, an opaque lobby id and a host token; it heartbeats every
-thirty seconds with its player count and whether it is listed, can flip its listing, and leaves
-on stop. A lobby that misses three heartbeats is reaped, so a killed host disappears from the
-browser within a minute and a half (`coop/net/lobby_announcer`). A client fetches the list for its
+thirty seconds with its player count, how they reach it (counted by the link it measures on each:
+relayed, direct, on a LAN) and whether it is listed, can flip its listing, and leaves on stop. A
+lobby that misses three heartbeats is reaped, so a killed host disappears from the browser within a
+minute and a half (`coop/net/lobby_announcer`). A client fetches the list for its
 version and, on a join, asks the master for the way to dial the host: the credentials, both
 identities and the ICE configuration (`coop/net/lobby_client`). For a brokered lobby that
 includes short-lived TURN credentials the master mints from a shared secret, the same recipe the
@@ -131,8 +132,8 @@ locally for a scripted run, and serves a synthetic lobby list to the browser in 
 
 | Route | Who | Carries |
 |---|---|---|
-| `/v1/host`, `/v1/heartbeat`, `/v1/visibility`, `/v1/leave` | the host | the announce; the keepalive with players, listing and the TURN credential the host holds, answered with its renewal; the listing flip; the leave |
-| `/v1/lobbies`, `/v1/join` | the client | the list for a version; the dialing information for a lobby |
+| `/v1/host`, `/v1/heartbeat`, `/v1/visibility`, `/v1/leave` | the host | the announce; the keepalive with players, their links, listing and the TURN credential the host holds, answered with its renewal; the listing flip; the leave |
+| `/v1/lobbies`, `/v1/join` | the client | the list for a version, each row with one word for how its players reach the host (relay, direct, lan, or none before anyone has joined) and the counts behind it; the dialing information for a lobby |
 | `/v1/latest`, `/healthz` | the client; an operator | the released pair; liveness |
 | `/v1/thanks` | the client, on opening the browser | the thanks list's text |
 | the signaling lines | both peers | the greeting, the challenge and its proof, the forwarded candidates |
@@ -155,7 +156,6 @@ most until its heartbeats lapse.
 
 | Concept | Files |
 |---|---|
-| the services | `server/src/bin/master.rs`, `server/src/bin/signaling.rs`, `server/src/tls.rs`, `server/src/common.rs`, `server/README.md` |
+| the services | `server/src/bin/master.rs`, `server/src/bin/signaling.rs`, `server/src/lobby.rs`, `server/src/ice.rs`, `server/src/version_gate.rs`, `server/src/tls.rs`, `server/src/common.rs`, `server/README.md` |
 | the mod's master client | `coop/net/master_slots`, `coop/net/lobby_client`, `coop/net/lobby_announcer`, `coop/net/http_client`, `coop/session/session_manager` |
 | the rendezvous | `coop/net/signaling_client.h`, `coop/net/ice_config.h`, `coop/net/ice_policy.h`, `coop/session/host_mode` |
-| the services | `server/src/bin/master.rs`, `server/src/bin/signaling.rs`, `server/src/tls.rs` |

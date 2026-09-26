@@ -84,6 +84,46 @@ pub struct Lobby {
     // The host's TURN credential by this record; None for a lobby that holds none (a direct one, or a
     // master with no TURN configured).
     pub turn: Option<HostTurn>,
+    // How the host's players reach it, as the host measures each connection and sends with its beats.
+    pub links: LobbyLinks,
+}
+
+/// A lobby's players counted by the link the host measures on each (relayed, direct, on the LAN), the host
+/// itself not counted: what other players' links to this host are, not the path a new joiner will get.
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+pub struct LobbyLinks {
+    pub relayed: i64,
+    pub direct: i64,
+    pub lan: i64,
+}
+
+impl LobbyLinks {
+    /// A beat's counts, each clamped to the lobby's size; None when the beat carries none.
+    pub fn from_beat(body: &Value, cap: i64) -> Option<LobbyLinks> {
+        let l = body.get("links")?;
+        Some(LobbyLinks {
+            relayed: as_int(l, "relayed", 0).clamp(0, cap),
+            direct: as_int(l, "direct", 0).clamp(0, cap),
+            lan: as_int(l, "lan", 0).clamp(0, cap),
+        })
+    }
+
+    /// The row's one word: "relay" when any player comes through the relay, else "direct", else "lan",
+    /// else "" before the host has measured anyone. A DIRECT lobby says "direct" from its mode: its
+    /// joiners dial the host's own address.
+    pub fn word(&self, conn: &str) -> &'static str {
+        if conn == "direct" {
+            "direct"
+        } else if self.relayed > 0 {
+            "relay"
+        } else if self.direct > 0 {
+            "direct"
+        } else if self.lan > 0 {
+            "lan"
+        } else {
+            ""
+        }
+    }
 }
 
 impl Lobby {
@@ -111,6 +151,7 @@ impl Lobby {
             conn: "p2p".to_string(),
             direct_port: 0,
             turn: None,
+            links: LobbyLinks::default(),
         }
     }
 }
@@ -383,6 +424,9 @@ pub fn h_heartbeat(state: &mut MasterState, ip: &str, body: &Value) -> (u16, Val
     if body_has(body, "listed") {
         lo.listed = as_bool(body, "listed", lo.listed);
     }
+    if let Some(links) = LobbyLinks::from_beat(body, lo.players_max) {
+        lo.links = links;
+    }
     lo.last_seen = now;
     // The host's TURN credential: it allocates with it for every joiner its lobby takes, so the one from
     // /v1/host alone left a relay-only host unjoinable after its lifetime. A beat reports the username of the
@@ -531,6 +575,8 @@ pub fn build_rows(state: &MasterState) -> Vec<Value> {
             "players_max": lo.players_max,
             "age": now.duration_since(lo.last_seen).as_secs() as i64,
             "conn": lo.conn,
+            "link": lo.links.word(&lo.conn),
+            "links": {"relayed": lo.links.relayed, "direct": lo.links.direct, "lan": lo.links.lan},
         }));
     }
     rows
@@ -605,7 +651,26 @@ pub async fn sweeper() {
 
 #[cfg(test)]
 mod tests {
+    use super::LobbyLinks;
     use crate::common::identity_shape_ok;
+
+    #[test]
+    fn a_lobby_row_names_its_players_links_in_one_word() {
+        let l = |relayed, direct, lan| LobbyLinks { relayed, direct, lan };
+        assert_eq!(l(0, 0, 0).word("p2p"), "");        // nobody measured yet
+        assert_eq!(l(0, 0, 2).word("p2p"), "lan");
+        assert_eq!(l(0, 1, 2).word("p2p"), "direct");
+        assert_eq!(l(1, 1, 0).word("p2p"), "relay");   // any relayed player names the relay
+        assert_eq!(l(0, 0, 0).word("direct"), "direct"); // a DIRECT lobby, before anyone joins
+        assert_eq!(l(0, 0, 1).word("direct"), "direct");
+    }
+
+    #[test]
+    fn a_beats_links_are_clamped_to_the_lobby() {
+        let body = serde_json::json!({"links": {"relayed": 9, "direct": -2, "lan": "1"}});
+        assert_eq!(LobbyLinks::from_beat(&body, 4), Some(LobbyLinks { relayed: 4, direct: 0, lan: 1 }));
+        assert_eq!(LobbyLinks::from_beat(&serde_json::json!({}), 4), None);
+    }
 
     #[test]
     fn identity_shape_accepts_a_real_rendered_key() {
