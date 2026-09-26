@@ -39,9 +39,11 @@ void Tick();
 void OnAppendChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot);
 
 // Wire ingest: one content-keyed delete (MeadowDelete). A delete that matches no
-// row leaves a tombstone (one per outstanding count, 20 s each) that the next
-// matching append consumes, which is what covers the delete-beats-append race.
-// Named residual: a same-content re-add inside that window can be consumed by it.
+// row leaves a tombstone (one per outstanding count, held 20 s of the lane's live
+// time: its clock stands still while lines are parked or the database is away)
+// that the next matching append consumes, which is what covers the delete-beats-
+// append race. Named residual: a same-content re-add inside that window can be
+// consumed by it.
 void OnDelete(const coop::net::ContentHashPayload& p, uint8_t senderSlot);
 
 // Wire ingest: one chunk of an order-as-state line (MeadowOrder) -- the sort order
@@ -54,7 +56,7 @@ void OnDelete(const coop::net::ContentHashPayload& p, uint8_t senderSlot);
 // overtake a line it references.
 void OnOrderChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot);
 
-// HOST, save_transfer OnRequest (same GT callback as the scratch-save capture):
+// HOST, at save_transfer's capture (the same game-thread call as the scratch save):
 // snapshot the current multiset for this joining slot (the seed baseline).
 void CaptureJoinSnapshot(int peerSlot);
 
@@ -65,7 +67,10 @@ void CaptureJoinSnapshot(int peerSlot);
 // carries -- is not sent twice. That closes the window between the snapshot and
 // world-ready, where a reliable send skips a not-yet-ready slot. It also stamps
 // the pending exclude-masks that keep the seed and the retry from ever delivering
-// the same line.
+// the same line. The pen's parked lines from other clients follow the delta, since
+// the session relayed them only to the peers ready when they came; while the
+// host's own database is away the seed is owed, and runs once it is back, before
+// the pen drains, forwarding only the lines parked before this joiner was ready.
 void QueueConnectBroadcastForSlot(int peerSlot);
 
 // HOST: a join stream was cancelled / the slot disconnected -- drop the slot's

@@ -16,9 +16,10 @@ using Clock = std::chrono::steady_clock;
 
 // Hold a delete that found no row of its content. A delete is held exactly when it did not match, so a
 // stream of attacker-chosen hashes grows the pen at line rate, and the time bounds it in time but not in
-// rate: past the bound a delete is refused (said), not the oldest evicted, since eviction would let a
-// flood push out the legitimate not-yet-arrived-row delete the pen exists to hold. Legitimate entries are
-// the deletes racing an append that has not landed yet, a handful within one hold. False when refused.
+// rate: past the bound a delete is refused, not the oldest evicted, since eviction would let a flood push
+// out the legitimate not-yet-arrived-row delete the pen exists to hold; the first refusal of an episode is
+// said, and the count when a hold is taken again or the pen clears. Legitimate entries are the deletes
+// racing an append that has not landed yet, a handful within one hold. False when refused.
 bool HoldDelete(uint64_t hash, uint8_t senderSlot, Clock::time_point now);
 
 // Whether an arriving append of this content meets a held delete; the delete goes with it.
@@ -55,6 +56,10 @@ using ReplayFn = bool (*)(Kind kind, const std::vector<uint8_t>& blob, uint64_t 
 size_t Drain(ReplayFn replay, size_t budget);
 
 size_t Parked();
+
+// Visit the first `upTo` parked lines in the order they came, without taking them out.
+using VisitFn = void (*)(void* ctx, Kind kind, const std::vector<uint8_t>& blob, uint64_t hash, uint8_t senderSlot);
+void ForEachParked(size_t upTo, VisitFn fn, void* ctx);
 
 // [dev] Whether an append of this row waits among the parked lines.
 bool ParkedAppend(uint64_t hash);

@@ -16,6 +16,13 @@ constexpr size_t kHeldCap = 256;
 
 struct Tomb { uint64_t hash; Clock::time_point until; };
 std::vector<Tomb> g_tombs;
+size_t g_tombsRefused = 0;  // the held deletes refused this episode, said when the next is held or the pen clears
+
+void SayTombsRefused() {
+    if (g_tombsRefused == 0) return;
+    UE_LOGW("meadow_db: %zu unmatched delete(s) were refused at the %zu-entry bound", g_tombsRefused, kHeldCap);
+    g_tombsRefused = 0;
+}
 
 constexpr size_t kParkCap = 256;
 // A row's blob is bounded by the wire (tens of KB); 2 MB holds any travel's worth of edits.
@@ -36,10 +43,12 @@ void SayRefused() {
 
 bool HoldDelete(uint64_t hash, uint8_t senderSlot, Clock::time_point now) {
     if (g_tombs.size() >= kHeldCap) {
-        UE_LOGW("meadow_db: tombstone REFUSED (hash=%016llx, from slot %u) -- at the %zu-entry bound",
-                static_cast<unsigned long long>(hash), static_cast<unsigned>(senderSlot), kHeldCap);
+        if (g_tombsRefused++ == 0)
+            UE_LOGW("meadow_db: tombstone REFUSED (hash=%016llx, from slot %u) -- at the %zu-entry bound",
+                    static_cast<unsigned long long>(hash), static_cast<unsigned>(senderSlot), kHeldCap);
         return false;
     }
+    SayTombsRefused();
     g_tombs.push_back({hash, now + kHoldTime});
     return true;
 }
@@ -83,7 +92,14 @@ size_t HeldDeletes() {
 bool Park(Kind kind, std::vector<uint8_t>&& blob, uint64_t hash, uint8_t senderSlot) {
     if (kind == Kind::Order && !g_lines.empty() && g_lines.back().kind == Kind::Order &&
         g_lines.back().senderSlot == senderSlot) {
-        g_bytes = g_bytes - g_lines.back().blob.size() + blob.size();
+        const size_t bytes = g_bytes - g_lines.back().blob.size() + blob.size();
+        if (bytes > kParkBytesCap) {
+            if (g_refused++ == 0)
+                UE_LOGW("meadow_db: an order line from slot %u REFUSED while the database is away -- %zu bytes "
+                        "already wait", static_cast<unsigned>(senderSlot), g_bytes);
+            return false;
+        }
+        g_bytes = bytes;
         g_lines.back().blob = std::move(blob);
         return true;
     }
@@ -122,6 +138,14 @@ size_t Parked() {
     return g_lines.size();
 }
 
+void ForEachParked(size_t upTo, VisitFn fn, void* ctx) {
+    size_t i = 0;
+    for (const Line& l : g_lines) {
+        if (i++ >= upTo) return;
+        fn(ctx, l.kind, l.blob, l.hash, l.senderSlot);
+    }
+}
+
 bool ParkedAppend(uint64_t hash) {
     for (const Line& l : g_lines)
         if (l.kind == Kind::Append && l.hash == hash) return true;
@@ -132,6 +156,7 @@ size_t Clear() {
     const size_t dropped = g_lines.size();
     ++g_clears;
     SayRefused();
+    SayTombsRefused();
     g_tombs.clear();
     g_lines.clear();
     g_bytes = 0;

@@ -34,9 +34,31 @@ struct SlotSnap {
     std::map<uint64_t, int32_t> counts;
 };
 SlotSnap g_snap[coop::net::kMaxPeers];
-// Joiners whose world-ready came while this host's own pen held lines: the session relayed those lines to the
-// peers ready when they came, not to these, so their seed waits until the pen has drained into the database.
+// Joiners whose world-ready came while this host's database was away, and the pen's length then: their seed
+// runs once the database is back, before the pen drains, with only the lines that came before they were
+// ready -- the session relayed every later one to them as it came.
 uint32_t g_seedOwed = 0;
+size_t   g_owedUpTo[coop::net::kMaxPeers] = {};
+
+// The pen's lines a joiner's seed forwards: those the session relayed to the peers ready when they came,
+// before this joiner was one of them. A client's own lines never go back to it, and the session never
+// relays an order line.
+struct Forward { coop::net::Session* s; int slot; int appends; int deletes; };
+void ForwardParked(void* ctx, meadow_db_park::Kind kind, const std::vector<uint8_t>& blob, uint64_t hash,
+                   uint8_t senderSlot) {
+    auto* f = static_cast<Forward*>(ctx);
+    if (senderSlot == f->slot || senderSlot == 0) return;
+    if (kind == meadow_db_park::Kind::Append) {
+        if (coop::blob_chunks::SendBlobToSlot(f->s, f->slot, coop::net::ReliableKind::MeadowAppend, I::NextSeq(),
+                                              blob))
+            ++f->appends;
+    } else if (kind == meadow_db_park::Kind::Delete) {
+        coop::net::ContentHashPayload cp{hash};
+        if (f->s->SendReliableToSlot(f->slot, coop::net::ReliableKind::MeadowDelete, &cp, sizeof(cp))) ++f->deletes;
+    }
+}
+
+void SeedSlot(int peerSlot, size_t forwardUpTo);
 bool g_seededOnce[coop::net::kMaxPeers] = {};  // the connect replay re-fires on every world-change re-announce; only the first missing snapshot warns
 
 }  // namespace
@@ -77,12 +99,22 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
         return;
     }
     g_seededOnce[peerSlot] = true;
-    if (meadow_db_park::Parked() > 0) {
+    if (I::DatabaseAway()) {
         g_seedOwed |= 1u << peerSlot;
-        UE_LOGI("meadow_db: the seed for slot %d waits for this host's %zu parked line(s)", peerSlot,
-                meadow_db_park::Parked());
+        g_owedUpTo[peerSlot] = meadow_db_park::Parked();
+        UE_LOGI("meadow_db: the seed for slot %d waits for this host's database, away (%zu line(s) parked)",
+                peerSlot, g_owedUpTo[peerSlot]);
         return;
     }
+    SeedSlot(peerSlot, meadow_db_park::Parked());
+}
+
+namespace {
+
+void SeedSlot(int peerSlot, size_t forwardUpTo) {
+    auto* s = I::SessionPtr();
+    SlotSnap& snap = g_snap[peerSlot];
+    if (!s || !s->connected() || !snap.valid) return;
     if (!MS::EnsureResolved()) { snap.valid = false; return; }
 
     std::map<uint64_t, int32_t> cur;
@@ -129,27 +161,38 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
             }
         }
     }
+    // The pen's lines the session skipped for this joiner follow the delta: without them the joiner would
+    // never hold the rows the host has yet to drain into its own database.
+    Forward fwd{s, peerSlot, 0, 0};
+    meadow_db_park::ForEachParked(forwardUpTo, &ForwardParked, &fwd);
+    sentA += fwd.appends;
+    sentD += fwd.deletes;
+
     // The canonical order always rides after the deltas on the same FIFO lane: the joiner's save order
     // may predate in-window moves, the seed's appends went in hash order, and order is synced state. The
-    // FIFO guard: with lines still waiting the order would name hashes not yet delivered, so it is owed to
-    // this slot and the retry sends it once none waits -- as it is when this send is refused.
+    // FIFO guard: with lines still waiting, or parked in the pen behind the host's own database, the order
+    // would name a sequence the joiner does not hold, so it is owed to this slot and the retry sends it once
+    // none waits -- as it is when this send is refused.
     int sentO = 0;
     if (!seq.empty()) {
-        if (waiting.empty() && I::SendOrder(s, seq, peerSlot)) sentO = 1;
+        if (waiting.empty() && meadow_db_park::Parked() == 0 && I::SendOrder(s, seq, peerSlot)) sentO = 1;
         else I::OweOrderTo(peerSlot);
     }
     I::CountSeedLines(static_cast<uint64_t>(sentA + sentD + sentO));
     if (sentA || sentD || sentO)
-        UE_LOGI("meadow_db: seed slot=%d +%d/-%d rows%s", peerSlot, sentA, sentD,
-                sentO ? " +order" : "");
+        UE_LOGI("meadow_db: seed slot=%d +%d/-%d rows%s (%d/%d of them from the pen)", peerSlot, sentA, sentD,
+                sentO ? " +order" : "", fwd.appends, fwd.deletes);
     snap.valid = false;
 }
+
+}  // namespace
 
 void CancelJoinSnapshot(int peerSlot) {
     if (peerSlot <= 0 || peerSlot >= coop::net::kMaxPeers) return;
     g_snap[peerSlot] = SlotSnap{};
     g_seededOnce[peerSlot] = false;
     g_seedOwed &= ~(1u << peerSlot);
+    g_owedUpTo[peerSlot] = 0;
     I::ForgetSlot(static_cast<uint8_t>(peerSlot));
     const uint32_t bit = 1u << peerSlot;
     for (auto& p : I::Waiting()) {
@@ -166,11 +209,20 @@ void ResetJoinSeeds() {
     g_seedOwed = 0;
 }
 
+bool HasOwedSeeds() {
+    return g_seedOwed != 0;
+}
+
 void RunOwedSeeds() {
     const uint32_t owed = g_seedOwed;
     g_seedOwed = 0;
     for (int slot = 1; slot < coop::net::kMaxPeers; ++slot)
-        if (owed & (1u << slot)) QueueConnectBroadcastForSlot(slot);
+        if (owed & (1u << slot)) SeedSlot(slot, g_owedUpTo[slot]);
+}
+
+void DropOwedSeeds() {
+    if (g_seedOwed) UE_LOGW("meadow_db: a new database -- the seeds owed to joiners are dropped with it");
+    g_seedOwed = 0;
 }
 
 }  // namespace internal

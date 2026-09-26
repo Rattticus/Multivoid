@@ -180,6 +180,8 @@ bool EnsurePrimed() {
         UE_LOGI("meadow_db: a new database -- the shadow, %zu waiting line(s), %zu held delete(s) and %zu parked "
                 "line(s) dropped", outgoing, held, parked);
         g_awaySaid = false;
+        g_drained = 0;
+        internal::DropOwedSeeds();
         g_primed = false;
         g_shadow.clear();
         g_pending.clear();
@@ -295,7 +297,7 @@ void SendOrderIfDiffers(coop::net::Session* s, const std::vector<uint64_t>& seq)
 
 // The seeds' orders still owed, each to its slot, once no line waits.
 void SendOwedOrders(coop::net::Session* s, const std::vector<uint64_t>& seq) {
-    if (!g_owedSlots || !g_pending.empty() || !s || !s->connected()) return;
+    if (!g_owedSlots || !g_pending.empty() || meadow_db_park::Parked() > 0 || !s || !s->connected()) return;
     for (int slot = 1; slot < coop::net::kMaxPeers; ++slot) {
         const uint32_t bit = 1u << slot;
         if (!(g_owedSlots & bit) || !SendOrder(s, seq, slot)) continue;
@@ -627,15 +629,16 @@ void Tick() {
     // A held delete's append may be among them, or still on its way, so the held deletes keep no clock while
     // anything is parked or the database is away, and get a full hold again when it is back. Away() is read
     // only while one of the two waits.
-    if (meadow_db_park::Parked() > 0 || meadow_db_park::HeldDeletes() > 0) {
+    if (meadow_db_park::Parked() > 0 || meadow_db_park::HeldDeletes() > 0 || internal::HasOwedSeeds()) {
         const bool away = Away();
+        // A seed owed while the database was away runs before the drain, from the database as the pen left it.
+        if (!away && internal::HasOwedSeeds()) internal::RunOwedSeeds();
         if (meadow_db_park::Parked() > 0 && !away) {
             g_drained += meadow_db_park::Drain(&ReplayParked, kDrainPerTick);
             if (meadow_db_park::Parked() == 0) {
                 g_awaySaid = false;
                 UE_LOGI("meadow_db: the database is back -- %zu waiting line(s) applied in their order", g_drained);
                 g_drained = 0;
-                internal::RunOwedSeeds();
             }
         }
         const bool parking = away || meadow_db_park::Parked() > 0;
@@ -658,7 +661,7 @@ void Tick() {
     if (!EnsurePrimed()) return;
     meadow_db_park::RetryDeletes(&ApplyDeleteByHash);
     RetryPending(s);
-    if ((g_orderPending || g_owedAll || g_owedSlots) && g_pending.empty()) {
+    if ((g_orderPending || g_owedAll || g_owedSlots) && g_pending.empty() && meadow_db_park::Parked() == 0) {
         std::map<uint64_t, int32_t> cur;
         std::vector<uint64_t> seq;
         if (MH::HashStore(cur, &seq)) {
@@ -773,6 +776,8 @@ bool SendOrder(coop::net::Session* s, const std::vector<uint64_t>& seq, int toSl
 }
 
 void OweOrderTo(int slot) { g_owedSlots |= 1u << slot; }
+
+bool DatabaseAway() { return Away(); }
 void CountSeedLines(uint64_t n) { g_cSeedLines += n; }
 
 void ForgetSlot(uint8_t slot) {
