@@ -9,6 +9,7 @@
 #include "coop/player/players_registry.h"  // coop::players::kMaxPeers
 #include "coop/player/sleep_sync.h"
 #include "coop/props/prop_snapshot.h"
+#include "coop/save/save_transfer.h"
 #include "coop/session/join_progress.h"
 #include "coop/session/net_pump.h"
 #include "coop/world/time_sync.h"
@@ -19,6 +20,7 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/script_gate.h"
+#include "ue_wrap/desk/dish.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/world_identity.h"
 #include "ue_wrap/world/active_events.h"
@@ -41,15 +43,17 @@ namespace sg  = ue_wrap::script_gate;
 namespace AE  = ue_wrap::active_events;
 namespace WI  = ue_wrap::world_identity;
 
-enum class Arm { Off, Awake, Asleep, Cheat, Mode5, Malformed };
+enum class Arm { Off, Awake, Asleep, Cheat, Mode5, Malformed, JoinWindow };
 
-// The host: the join and the set, then (asleep) a quiet world, the bed, the fast-forward, the wake.
-// The client: (asleep) the join, the bed, the fast-forward, the wake; (cheat) its writes. The set and
-// the sleep entry both finish inside their call, so each is judged the moment it returns.
-enum class Step { WaitJoin, WaitQuiet, WaitAccelerate, WatchWake, Done, Invalid };
+// The host: the join and the set, then (asleep) a quiet world, the bed, the fast-forward, the wake;
+// (joinwindow) the set at a joiner's taken world, then the roll. The client: (asleep) the join, the bed,
+// the fast-forward, the wake; (cheat) its writes. The set and the sleep entry both finish inside their
+// call, so each is judged the moment it returns.
+enum class Step { WaitJoin, WaitQuiet, WaitAccelerate, WatchWake, WatchRoll, Done, Invalid };
 
 constexpr float kAwakeFraction  = 0.999f;  // a few game units before the wrap
 constexpr float kAsleepFraction = 0.98f;   // runway for the bed and the gate, burnt at 1x until then
+constexpr float kJoinFraction   = 0.9999f; // under a second at 1x, against a joiner's load of many
 constexpr float kNeedForTheArm  = 30.f;    // the wake loop ends a sleep at a need of 100
 constexpr int   kCheatWrites    = 3;       // one write can meet a host sample at the same tick
 constexpr int   kMode5Drops     = 12;      // past the first five backward-run lines, where they thin out
@@ -84,6 +88,10 @@ float    g_cheatDay = 0.f;     // and its `day`
 
 int      g_malformedSent = 0;  // the malformed arm, host: the samples put so far
 
+// The joinwindow arm, client: its dishes' codes as its world first showed them.
+bool     g_loadRead = false;
+uint64_t g_loadDigest = 0;
+
 // The mode5 arm, client: its master spawned, the drops of its `day` seen since and when the last came,
 // and the clock lane's count of the local writes it found, before the spawn.
 bool     g_m5Spawned = false;
@@ -115,6 +123,7 @@ Arm ArmOf() {
              : v == "cheat"  ? Arm::Cheat
              : v == "mode5"  ? Arm::Mode5
              : v == "malformed" ? Arm::Malformed
+             : v == "joinwindow" ? Arm::JoinWindow
                              : Arm::Off;
     }();
     return a;
@@ -127,6 +136,7 @@ const char* ArmName() {
     case Arm::Cheat:  return "cheat";
     case Arm::Mode5:  return "mode5";
     case Arm::Malformed: return "malformed";
+    case Arm::JoinWindow: return "joinwindow";
     default:          return "off";
     }
 }
@@ -141,6 +151,9 @@ const char* ArmPlan(bool host) {
     if (ArmOf() == Arm::Malformed)
         return host ? "sending malformed clock samples once a client's join is over"
                     : "watching; the host sends malformed clock samples";
+    if (ArmOf() == Arm::JoinWindow)
+        return host ? "setting the clock just short of midnight once a joiner's world is taken"
+                    : "reading this client's hash codes as its world loads and once joined";
     if (host) return "waiting for a client's join to end";
     return ArmOf() == Arm::Asleep ? "going to bed once joined" : "watching; the host sets the clock";
 }
@@ -318,9 +331,56 @@ void EnsureWakeWatch() {
     UE_LOGI("midnight_drill: the wakeup watch is LIVE; each entry on the gamemode names its caller");
 }
 
+// The joinwindow arm, host: the midnight inside a join, after this host has taken the joiner's world (the
+// save it loads) and before that world is up, so what the rollover changes reaches the joiner only
+// through the lanes' replays at its world-ready.
+void ArmJoinWindow(coop::net::Session* s) {
+    for (int slot = 1; slot < static_cast<int>(coop::players::kMaxPeers) && g_slot < 0; ++slot)
+        if (coop::save_transfer::WorldTakenFor(slot) && !s->IsSlotWorldReady(slot)) g_slot = slot;
+    if (g_slot < 0) return;
+    int32_t h = 0, m = 0;
+    if (!DNC::ReadSavedTime(h, m, g_setDayZ)) return;
+    UE_LOGI("midnight_drill: [H] arm joinwindow -- slot %d's world is taken and not yet up; setting the clock to "
+            "%.4f of day %d", g_slot, kJoinFraction, g_setDayZ);
+    ClearMusicsForTheMidnight('H');
+    PrintRunway(kJoinFraction);
+    if (!coop::dev::set_clock::ApplyTimeFraction(kJoinFraction)) {
+        Invalid('H', "the clock set was refused (the dev gate, or a clock that did not resolve)");
+        return;
+    }
+    g_step = Step::WatchRoll;
+}
+
+// The roll must come while the joiner's world is still loading, else the arm measured an ordinary midnight.
+// A day that moved in the same tick as the world came up cannot say which came first, so it is not counted.
+void WatchRoll(coop::net::Session* s) {
+    const bool up = s->IsSlotWorldReady(g_slot);
+    if (!HostDayMoved()) {
+        if (up) Invalid('H', "the joiner's world came up before this host's midnight");
+        else if (!coop::save_transfer::WorldTakenFor(g_slot)) Invalid('H', "the joiner left before the midnight");
+        return;
+    }
+    if (up) {
+        Invalid('H', "the midnight and the joiner's world-ready came in one tick; their order is unknown");
+        return;
+    }
+    ue_wrap::dish::HashDigest hd{};
+    ue_wrap::dish::ReadHashDigest(hd);
+    int32_t h = 0, m = 0, z = 0;
+    DNC::ReadSavedTime(h, m, z);
+    UE_LOGI("midnight_drill: [H] joinwindow -- the midnight rolled inside slot %d's join: day %d -> %d; this host's "
+            "hash digest %016llx, %d of %d filled -- the joiner's must end equal", g_slot, g_setDayZ, z,
+            static_cast<unsigned long long>(hd.digest), hd.filled, hd.dishes);
+    g_step = Step::Done;
+}
+
 void TickHost(coop::net::Session* s) {
     switch (g_step) {
     case Step::WaitJoin: {
+        if (ArmOf() == Arm::JoinWindow) {
+            ArmJoinWindow(s);
+            return;
+        }
         for (int slot = 1; slot < static_cast<int>(coop::players::kMaxPeers) && g_slot < 0; ++slot)
             if (s->IsSlotWorldReady(slot) && coop::prop_snapshot::IsBracketClosed(slot)) g_slot = slot;
         if (g_slot < 0) return;
@@ -393,8 +453,36 @@ void TickHost(coop::net::Session* s) {
     }
     case Step::WaitAccelerate: CheckAccelerate('H'); return;
     case Step::WatchWake:      WatchWake('H'); return;
+    case Step::WatchRoll:      WatchRoll(s); return;
     default:                   return;
     }
+}
+
+// The joinwindow arm, client: its codes as its world first shows them (the save's, unless a lane's rows
+// were already waiting for its dishes) and once joined, when every replay of its world-ready has landed.
+// The verdict is the host's joinwindow line: equal digests PASS. The digest hashes every code, so it is read
+// until the dishes first show and then once more, joined.
+void TickJoinWindow() {
+    if (g_step == Step::Done || g_step == Step::Invalid) return;
+    ue_wrap::dish::HashDigest hd{};
+    if (!g_loadRead) {
+        if (!ue_wrap::dish::ReadHashDigest(hd) || hd.dishes <= 0) return;
+        g_loadRead = true;
+        g_loadDigest = hd.digest;
+        UE_LOGI("midnight_drill: [C] arm joinwindow -- this client's world shows its dishes: hash digest %016llx, "
+                "%d of %d filled%s", static_cast<unsigned long long>(hd.digest), hd.filled, hd.dishes,
+                coop::net_pump::HasAnnouncedWorldReady() ? " (read after its world-ready announce)" : "");
+        return;
+    }
+    if (!coop::net_pump::HasAnnouncedWorldReady() ||
+        coop::join_progress::CurrentPhase() != coop::join_progress::Phase::Idle ||
+        !ue_wrap::dish::ReadHashDigest(hd))
+        return;
+    UE_LOGI("midnight_drill: [C] joinwindow DONE -- joined on host day %d; this client's hash digest %016llx, %d of "
+            "%d filled (%s its world's first read, %016llx); equal to the host's joinwindow line is PASS",
+            coop::time_sync::LastHostDayZ(), static_cast<unsigned long long>(hd.digest), hd.filled, hd.dishes,
+            hd.digest == g_loadDigest ? "unchanged since" : "moved since", static_cast<unsigned long long>(g_loadDigest));
+    g_step = Step::Done;
 }
 
 // The clock latch's own control, both arms: once joined, write a rate into this client's clock as a
@@ -529,6 +617,10 @@ void TickClient() {
         TickMode5();
         return;
     }
+    if (ArmOf() == Arm::JoinWindow) {
+        TickJoinWindow();
+        return;
+    }
     if (coop::net_pump::HasAnnouncedWorldReady() &&
         coop::join_progress::CurrentPhase() == coop::join_progress::Phase::Idle)
         ClearMusicsForTheMidnight('C');
@@ -585,6 +677,8 @@ void OnDisconnect() {
     g_pokedRate = false;
     g_musicsCleared = false;
     g_malformedSent = 0;
+    g_loadRead = false;
+    g_loadDigest = 0;
     g_cheatWrites = g_cheatRolled = g_cheatHeld = g_cheatMet = g_cheatUnaccounted = 0;
     g_cheatPending = false;
     g_cheatHashRan = 0;

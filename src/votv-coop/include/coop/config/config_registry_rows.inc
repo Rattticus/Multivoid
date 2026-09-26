@@ -449,7 +449,7 @@ CFG_FLAG(load_reroll_watch, "load_reroll_watch", "dev", false, "VOTVCOOP_LOAD_RE
     "since both run inside the load, and logs the first calls with their callers. It holds the "
     "script gate on while set, with or without a session, so every lane's gate watch also runs "
     "outside a session for that run; read-only otherwise.")
-CFG_ENUM(midnight_drill, "midnight_drill", "dev", "off", "off|awake|asleep|cheat|mode5|malformed",
+CFG_ENUM(midnight_drill, "midnight_drill", "dev", "off", "off|awake|asleep|cheat|mode5|malformed|joinwindow",
     "VOTVCOOP_MIDNIGHT_DRILL",
     "Drill (BOTH peers, with rollover_watch), once a client's join is over. awake and asleep: the "
     "host sets its clock just short of midnight; awake: both peers stay up; asleep: both go to bed "
@@ -457,7 +457,9 @@ CFG_ENUM(midnight_drill, "midnight_drill", "dev", "off", "off|awake|asleep|cheat
     "clock alone and the client writes a day onto its own, three times, as the cheat menu's day "
     "button does. mode5: each peer spawns game mode 5's master, which resets the day every second, "
     "and the client says whether its own reset kept running. malformed: the host puts three clock "
-    "samples whose day is not a number, and the client's log says where each was refused. Run it on a "
+    "samples whose day is not a number, and the client's log says where each was refused. joinwindow: "
+    "the host sets its clock just short of midnight once it has taken a joiner's world, so the midnight "
+    "falls inside the join, and both peers print their dishes' hash digest; equal is a pass. Run it on a "
     "fresh host world; every refused step is logged and ends the arm as invalid.")
 CFG_ENUM(world_roll_drill, "world_roll_drill", "dev", "off",
     "off|eye_host|eye_client|eye_join|jelly_host|jelly_client|jelly_join|redsky_host|redsky_client|redsky_join",
