@@ -122,6 +122,16 @@ struct HashDigest {
 };
 bool ReadHashDigest(HashDigest& out);
 
+// One dish's `hashcode` by its gamemode.dishs index. ReadHashcode leaves `out` empty for an empty
+// code, and is false while the dish or the field is unresolved or the text is past the bound;
+// WriteHashcode replaces the field and frees the buffer it replaced (field_io). Game thread.
+inline constexpr int32_t kMaxHashcodeChars = 4096;
+bool ReadHashcode(int32_t index, std::wstring& out);
+bool WriteHashcode(int32_t index, const std::wstring& code);
+
+// The gamemode.dishs index `dish` sits at, or -1 (not in the array, or the array unresolved).
+int32_t IndexOf(void* dish);
+
 // Reflected mainGamemode.checkFordDishes() -- the native arm/display tail
 // (gate Contains(activeDishes,true) -> ret; all-false -> dishesStop broadcast
 // + camera aim + objectRenderer.begin() + signalFound). The L4 client ARM

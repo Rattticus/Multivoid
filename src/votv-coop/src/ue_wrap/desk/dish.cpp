@@ -3,6 +3,7 @@
 #include "ue_wrap/desk/dish.h"
 
 #include "ue_wrap/core/call.h"
+#include "ue_wrap/core/field_io.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/world/world_singleton.h"
@@ -456,6 +457,34 @@ bool ReadHashDigest(HashDigest& out) {
     out.digest = h;
     out.dishes = a->num;
     return true;
+}
+
+bool ReadHashcode(int32_t index, std::wstring& out) {
+    out.clear();
+    ResolvePass();
+    void* d = DishByIndex(index);
+    if (!d || g_offHashcode < 0) return false;
+    const auto* s = reinterpret_cast<const TArrayView*>(reinterpret_cast<uint8_t*>(d) + g_offHashcode);
+    if (!s->data || s->num <= 1) return true;
+    if (s->num - 1 > kMaxHashcodeChars) return false;
+    out.assign(reinterpret_cast<const wchar_t*>(s->data), static_cast<size_t>(s->num - 1));
+    return true;
+}
+
+bool WriteHashcode(int32_t index, const std::wstring& code) {
+    ResolvePass();
+    void* d = DishByIndex(index);
+    if (!d || g_offHashcode < 0 || code.size() > static_cast<size_t>(kMaxHashcodeChars)) return false;
+    return ue_wrap::field_io::WriteFStringField(d, g_offHashcode, code);
+}
+
+int32_t IndexOf(void* dish) {
+    ResolvePass();
+    TArrayView* a = Dishs();
+    if (!dish || !a || a->num < 0 || a->num > 64) return -1;
+    for (int32_t i = 0; i < a->num; ++i)
+        if (reinterpret_cast<void**>(a->data)[i] == dish) return i;
+    return -1;
 }
 
 bool CallCheckFordDishes() {
