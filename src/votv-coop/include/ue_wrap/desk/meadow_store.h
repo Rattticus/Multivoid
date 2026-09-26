@@ -31,8 +31,9 @@ void* Database();
 // The live ui_laptop widget (gamemode.laptop) with a live device back-pointer (widget.laptop);
 // nullptr when either is unresolved or dead, which is the apply gate. The widget is created ONCE at
 // mainGamemode BeginPlay and stored on the gamemode, so it is persistent per world whether or not
-// the screen is open, and the laptop DEVICE's BeginPlay repoints widget.laptop := self.
-void* Widget();
+// the screen is open, and the laptop DEVICE's BeginPlay repoints widget.laptop := self. A null is said
+// (throttled) unless `quiet`: the lane's own away test expects one through a travel and says it itself.
+void* Widget(bool quiet = false);
 
 // Element count of saveSlot.savedSignals_0 (-1 if unresolved / no world).
 int32_t Count();

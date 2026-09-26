@@ -27,6 +27,11 @@ bool ConsumeDelete(uint64_t hash);
 // The held deletes past their time go, each said.
 void ExpireDeletes(Clock::time_point now);
 
+// A held delete's clock stands still while its append may be waiting for this peer's database: the lane
+// stops expiring while anything is parked or the database is away, and on its way back gives every held
+// delete a full hold again, from now.
+void RestampDeletes(Clock::time_point now);
+
 // Offer each held delete to `apply` again: true when it found its row and applied, which retires it.
 using ApplyDeleteFn = bool (*)(uint64_t hash);
 void RetryDeletes(ApplyDeleteFn apply);
@@ -34,24 +39,27 @@ void RetryDeletes(ApplyDeleteFn apply);
 size_t HeldDeletes();
 
 // The lines that came while this peer's database or its laptop widget was away -- a travel between the
-// gamemode that held them and the next, or a load -- kept in the order they came, an append, a delete and
-// an order line alike, since each is a step of the database the next one assumes. Past the bound a line is
-// refused (said), not an older one evicted; a travel's worth of edits is a handful. `hash` names an
-// append's or a delete's row. False when refused.
+// gamemode that held them and the next (a load is a new database, which drops them) -- kept in the order
+// they came, an append, a delete and an order line alike, since each is a step of the database the next one
+// assumes. An order line right behind one of the same sender's replaces it, as the newer order the older
+// one. Past the bounds (lines and bytes) a line is refused, not an older one evicted; the first refusal of
+// an episode is said, and the count when the episode ends. A travel's worth of edits is a handful. `hash`
+// names an append's or a delete's row. False when refused.
 enum class Kind : uint8_t { Append, Delete, Order };
 bool Park(Kind kind, std::vector<uint8_t>&& blob, uint64_t hash, uint8_t senderSlot);
 
-// Hand the parked lines back in order until `replay` answers false -- the database went again -- keeping
-// that line and the ones after it. Returns the lines replayed.
+// Hand at most `budget` parked lines back in order, each taken out before its replay, until `replay`
+// answers false -- the database went again -- which puts that line back at the head. A Clear inside a
+// replay ends the drain with nothing put back. Returns the lines replayed.
 using ReplayFn = bool (*)(Kind kind, const std::vector<uint8_t>& blob, uint64_t hash, uint8_t senderSlot);
-size_t Drain(ReplayFn replay);
+size_t Drain(ReplayFn replay, size_t budget);
 
 size_t Parked();
 
 // [dev] Whether an append of this row waits among the parked lines.
 bool ParkedAppend(uint64_t hash);
 
-// Both kinds of waiting line go: a new database, or the session's end.
-void Clear();
+// Both kinds of waiting line go: a new database, or the session's end. Returns the parked lines dropped.
+size_t Clear();
 
 }  // namespace coop::meadow_db_park

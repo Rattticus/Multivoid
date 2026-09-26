@@ -7,6 +7,7 @@
 
 #include "coop/interactables/meadow_db_hash.h"
 #include "coop/interactables/meadow_db_internal.h"
+#include "coop/interactables/meadow_db_park.h"
 #include "coop/interactables/signal_wire.h"
 #include "coop/net/blob_chunks.h"
 #include "coop/net/session.h"
@@ -33,6 +34,9 @@ struct SlotSnap {
     std::map<uint64_t, int32_t> counts;
 };
 SlotSnap g_snap[coop::net::kMaxPeers];
+// Joiners whose world-ready came while this host's own pen held lines: the session relayed those lines to the
+// peers ready when they came, not to these, so their seed waits until the pen has drained into the database.
+uint32_t g_seedOwed = 0;
 bool g_seededOnce[coop::net::kMaxPeers] = {};  // the connect replay re-fires on every world-change re-announce; only the first missing snapshot warns
 
 }  // namespace
@@ -73,6 +77,12 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
         return;
     }
     g_seededOnce[peerSlot] = true;
+    if (meadow_db_park::Parked() > 0) {
+        g_seedOwed |= 1u << peerSlot;
+        UE_LOGI("meadow_db: the seed for slot %d waits for this host's %zu parked line(s)", peerSlot,
+                meadow_db_park::Parked());
+        return;
+    }
     if (!MS::EnsureResolved()) { snap.valid = false; return; }
 
     std::map<uint64_t, int32_t> cur;
@@ -139,6 +149,7 @@ void CancelJoinSnapshot(int peerSlot) {
     if (peerSlot <= 0 || peerSlot >= coop::net::kMaxPeers) return;
     g_snap[peerSlot] = SlotSnap{};
     g_seededOnce[peerSlot] = false;
+    g_seedOwed &= ~(1u << peerSlot);
     I::ForgetSlot(static_cast<uint8_t>(peerSlot));
     const uint32_t bit = 1u << peerSlot;
     for (auto& p : I::Waiting()) {
@@ -152,6 +163,14 @@ namespace internal {
 void ResetJoinSeeds() {
     for (auto& sn : g_snap) sn = SlotSnap{};
     for (auto& so : g_seededOnce) so = false;
+    g_seedOwed = 0;
+}
+
+void RunOwedSeeds() {
+    const uint32_t owed = g_seedOwed;
+    g_seedOwed = 0;
+    for (int slot = 1; slot < coop::net::kMaxPeers; ++slot)
+        if (owed & (1u << slot)) QueueConnectBroadcastForSlot(slot);
 }
 
 }  // namespace internal

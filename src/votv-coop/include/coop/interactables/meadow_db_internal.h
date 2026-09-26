@@ -51,5 +51,7 @@ void ForgetSlot(uint8_t slot);
 
 // meadow_db_join.cpp: every slot's snapshot and first-seed mark dropped, at the session's end.
 void ResetJoinSeeds();
+// The seeds owed to joiners whose world-ready came while this host's pen held lines, now that it has drained.
+void RunOwedSeeds();
 
 }  // namespace coop::meadow_db_sync::internal

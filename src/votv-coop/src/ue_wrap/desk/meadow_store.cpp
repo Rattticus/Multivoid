@@ -135,15 +135,21 @@ void* Database() {
     return LiveAt(world_singleton::Gamemode(), g_offGmSaveSlot);
 }
 
-void* Widget() {
+void* Widget(bool quiet) {
     void* gm = world_singleton::Gamemode();
     if (!gm || g_offGmLaptop < 0 || g_offWidgetLaptop < 0) return nullptr;
     void* w = *reinterpret_cast<void**>(
         reinterpret_cast<uint8_t*>(gm) + g_offGmLaptop);
-    if (!w || !R::IsLive(w)) { LogWidgetGate("gamemode.laptop null/dead"); return nullptr; }
+    if (!w || !R::IsLive(w)) {
+        if (!quiet) LogWidgetGate("gamemode.laptop null/dead");
+        return nullptr;
+    }
     void* dev = *reinterpret_cast<void**>(
         reinterpret_cast<uint8_t*>(w) + g_offWidgetLaptop);
-    if (!dev || !R::IsLive(dev)) { LogWidgetGate("widget.laptop back-ptr null/dead"); return nullptr; }
+    if (!dev || !R::IsLive(dev)) {
+        if (!quiet) LogWidgetGate("widget.laptop back-ptr null/dead");
+        return nullptr;
+    }
     return w;
 }
 

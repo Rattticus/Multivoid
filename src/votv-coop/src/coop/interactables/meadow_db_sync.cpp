@@ -40,6 +40,8 @@ using Clock = std::chrono::steady_clock;
 std::atomic<coop::net::Session*> g_session{nullptr};
 
 constexpr auto kRetryInterval = std::chrono::milliseconds(1000);
+// Parked lines replayed per tick: an order line re-reads the whole database, so a long pen drains over frames.
+constexpr size_t kDrainPerTick = 16;
 constexpr auto kAssemblyTTL   = std::chrono::seconds(20);
 
 // The database's writers are coop/interactables/meadow_db_writers'. Each body's entry takes the shadow if
@@ -95,6 +97,8 @@ bool g_debugHoldAppends = false;
 // that must wait.
 bool g_debugAway = false;
 bool g_awaySaid = false;  // the lines waiting for the database, said once an episode
+bool g_wasParking = false;  // last tick, lines waited for the database or it was away: held deletes stood still
+size_t g_drained = 0;       // parked lines replayed since the pen last emptied, said when it empties
 
 coop::blob_chunks::Assembler g_assembler;
 uint32_t g_nextSeq = 1;
@@ -171,12 +175,14 @@ bool EnsurePrimed() {
     if (g_primed && db && g_primedIn.Is(db)) return true;
     if (!db) return false;
     if (g_primed) {
-        UE_LOGI("meadow_db: a new database -- the shadow and %zu waiting line(s) dropped",
-                g_pending.size() + meadow_db_park::HeldDeletes());
+        const size_t outgoing = g_pending.size(), held = meadow_db_park::HeldDeletes();
+        const size_t parked = meadow_db_park::Clear();
+        UE_LOGI("meadow_db: a new database -- the shadow, %zu waiting line(s), %zu held delete(s) and %zu parked "
+                "line(s) dropped", outgoing, held, parked);
+        g_awaySaid = false;
         g_primed = false;
         g_shadow.clear();
         g_pending.clear();
-        meadow_db_park::Clear();
         g_orderBase.clear();
         g_orderPending = false;
         g_owedAll = false;
@@ -192,9 +198,10 @@ bool EnsurePrimed() {
 }
 
 // Whether this peer's database or its laptop widget is away -- a travel between the gamemode that held them
-// and the next, or a load: an inbound line waits in the pen instead of applying.
+// and the next: an inbound line waits in the pen instead of applying. The lane says it itself, so the
+// store's widget test is the quiet one.
 bool Away() {
-    return g_debugAway || !EnsurePrimed() || !MS::Widget();
+    return g_debugAway || !EnsurePrimed() || !MS::Widget(/*quiet*/ true);
 }
 
 // An inbound line into the pen, while the database is away or lines already wait there, so none overtakes
@@ -477,7 +484,7 @@ void ApplyAppendBlob(const std::vector<uint8_t>& blob, uint8_t senderSlot) {
 
 // True when the delete resolved and applied, the shadow decremented.
 bool ApplyDeleteByHash(uint64_t hash) {
-    if (!EnsurePrimed() || !MS::Widget()) return false;
+    if (Away()) return false;
     const int32_t idx = MH::IndexOf(hash);
     if (idx < 0) return false;
     bool removed;
@@ -565,9 +572,6 @@ void ApplyOrderBlob(const std::vector<uint8_t>& blob, uint8_t senderSlot) {
     }
 }
 
-// Asked until the gate has settled every name watch: a watch refused at registration or dead in a full
-// table never goes live, and asking after that would walk the table every tick. A writer still waiting
-// for its name is not dead yet, so the settling waits for the gate's own count.
 // A delete that found no row waits in the pen for its row's append (the pen says a refusal).
 void DeleteOrHold(uint64_t hash, uint8_t senderSlot) {
     if (!ApplyDeleteByHash(hash)) meadow_db_park::HoldDelete(hash, senderSlot, Clock::now());
@@ -619,13 +623,26 @@ void Tick() {
     if (!g_writersSettled) g_writersSettled = meadow_db_writers::Settle();
     const auto now = Clock::now();
     LogTotals(now);
-    // Lines that waited for the database go back, in order, once it is here again.
-    if (meadow_db_park::Parked() > 0 && !Away()) {
-        const size_t n = meadow_db_park::Drain(&ReplayParked);
-        if (meadow_db_park::Parked() == 0) {
-            g_awaySaid = false;
-            UE_LOGI("meadow_db: the database is back -- %zu waiting line(s) applied in their order", n);
+    // Lines that waited for the database go back, in order, once it is here again, a bounded few a tick.
+    // A held delete's append may be among them, or still on its way, so the held deletes keep no clock while
+    // anything is parked or the database is away, and get a full hold again when it is back. Away() is read
+    // only while one of the two waits.
+    if (meadow_db_park::Parked() > 0 || meadow_db_park::HeldDeletes() > 0) {
+        const bool away = Away();
+        if (meadow_db_park::Parked() > 0 && !away) {
+            g_drained += meadow_db_park::Drain(&ReplayParked, kDrainPerTick);
+            if (meadow_db_park::Parked() == 0) {
+                g_awaySaid = false;
+                UE_LOGI("meadow_db: the database is back -- %zu waiting line(s) applied in their order", g_drained);
+                g_drained = 0;
+                internal::RunOwedSeeds();
+            }
         }
+        const bool parking = away || meadow_db_park::Parked() > 0;
+        if (g_wasParking && !parking) meadow_db_park::RestampDeletes(now);
+        g_wasParking = parking;
+    } else {
+        g_wasParking = false;
     }
     // The retries -- a line whose send failed or waits for this client's world-ready, a delete that
     // came before its row, an order held behind them, a row's chunks in flight -- once a second, and
@@ -637,7 +654,7 @@ void Tick() {
     g_nextRetry = now + kRetryInterval;
     g_assembler.Sweep(now, kAssemblyTTL);
     g_orderAsm.Sweep(now, kAssemblyTTL);
-    meadow_db_park::ExpireDeletes(now);
+    if (!g_wasParking) meadow_db_park::ExpireDeletes(now);
     if (!EnsurePrimed()) return;
     meadow_db_park::RetryDeletes(&ApplyDeleteByHash);
     RetryPending(s);
@@ -718,6 +735,8 @@ void OnDisconnect() {
     g_debugHoldAppends = false;
     g_debugAway = false;
     g_awaySaid = false;
+    g_wasParking = false;
+    g_drained = 0;
     internal::ResetJoinSeeds();
     g_primed = false;
     g_primeMissed = false;
