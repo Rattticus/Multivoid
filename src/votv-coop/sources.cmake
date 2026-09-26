@@ -29,6 +29,7 @@ set(VOTVCOOP_SOURCES
     src/ue_wrap/core/engine_heap.cpp
     src/ue_wrap/core/hook.cpp
     src/ue_wrap/core/hook_drill.cpp
+    src/ue_wrap/core/hot_path_guard.cpp
     src/ue_wrap/core/game_thread.cpp
     src/ue_wrap/core/game_thread_wait.cpp
     src/ue_wrap/core/walk_census.cpp

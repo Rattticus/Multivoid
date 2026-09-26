@@ -19,6 +19,8 @@
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 
+#include <intrin.h>
+
 #include <atomic>
 
 namespace ue_wrap::hot_path {
@@ -26,6 +28,12 @@ namespace ue_wrap::hot_path {
 // Per-site log budget: enough to confirm a violation and the small burst that follows it, without
 // ever spamming a log. Correct operation never trips it.
 inline constexpr int kMaxFiresPerSite = 8;
+
+// A violation names who made it: the guarded accessor's return address less this module's base, which
+// the build's linker map (main.map) resolves to the calling function, and the thread it came from. A
+// site string alone says which table, never which caller -- a rare off-thread call left nothing else.
+unsigned long long CallerRva(const void* returnAddress);
+unsigned long CurrentThreadId();
 
 }  // namespace ue_wrap::hot_path
 
@@ -55,8 +63,11 @@ inline constexpr int kMaxFiresPerSite = 8;
             static ::std::atomic<int> s_gtGuardFires{0};                       \
             if (s_gtGuardFires.fetch_add(1, ::std::memory_order_relaxed) <     \
                 ::ue_wrap::hot_path::kMaxFiresPerSite) {                       \
-                UE_LOGE("HotPathGuard: %s accessed OFF the game thread -- "    \
-                        "GT-only-by-convention invariant violated", (site));   \
+                UE_LOGE("HotPathGuard: %s accessed OFF the game thread "       \
+                        "(thread %lu, caller rva 0x%llx) -- "                 \
+                        "GT-only-by-convention invariant violated", (site),    \
+                        ::ue_wrap::hot_path::CurrentThreadId(),                \
+                        ::ue_wrap::hot_path::CallerRva(_ReturnAddress()));     \
             }                                                                  \
             UE_WRAP_DEBUG_BREAK();                                             \
         }                                                                      \
