@@ -152,6 +152,17 @@ void Hold(void* actor) {
     UE_LOGI("portable_pc_lid: a lid edge on a portable PC no element names yet -- held until it is named");
 }
 
+// A held edge for this PC, taken off the list: the caller sends it.
+bool TakeHeld(void* actor) {
+    for (auto it = g_held.begin(); it != g_held.end(); ++it) {
+        if (it->pc.Is(actor)) {
+            g_held.erase(it);
+            return true;
+        }
+    }
+    return false;
+}
+
 sg::Verdict OnOpenPre(const sg::Call& call) {
     DropFrom(call.depth);
     bool before = false;
@@ -278,7 +289,18 @@ void OnLid(const coop::net::LaptopStatePayload& p, uint8_t senderSlot) {
     }
     g_pending.erase(p.eid);  // this line is newer than any that waits for the PC
     bool cur = false;
-    if (ReadLid(actor, cur)) {
+    if (ReadLid(actor, cur) && TakeHeld(actor)) {
+        // This peer's edge on the PC waited for its name and has not gone: whoever sent this line had not
+        // seen it, and the host, which gets the edge after the line, ends at the edge. So the edge goes now,
+        // with the lid as it is, and the line is not applied.
+        if (s->connected()) {
+            SendOut(s, LidLine(p.eid, cur), 0);
+            ++g_counts.sent;
+            UE_LOGI("portable_pc_lid: a held lid edge sent over an older line (eid=%u opened=%u)", p.eid,
+                    static_cast<unsigned>(cur));
+        }
+        return;  // a host sends on the edge, not the line it supersedes
+    } else if (ReadLid(actor, cur)) {
         if (Apply(actor, opened))
             UE_LOGI("portable_pc_lid: wire lid applied (eid=%u opened=%u, from slot %u)", p.eid,
                     static_cast<unsigned>(opened), static_cast<unsigned>(senderSlot));

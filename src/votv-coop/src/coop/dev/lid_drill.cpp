@@ -189,9 +189,18 @@ void HostTick(coop::net::Session& s) {
         return;
     }
     case HostStep::JoinerClose: {
-        // A new session: the lane's counts began again at the last one's end.
+        // A new session: the lane's counts began again at the last one's end. The hold cannot tell its
+        // client leaving from this host's own session ending; after the latter the PC went with its world,
+        // and the drill starts over.
         void* pc = g_pc.Get();
         bool opened = true;
+        if (!pc && g_pc.Raw()) {
+            UE_LOGI("[lid_drill] host: the held PC went with its world -- starting over");
+            g_pc.Reset();
+            g_readyTicks = 0;
+            Enter(HostStep::Ready);
+            return;
+        }
         if (!LidOf(pc, opened)) {
             UE_LOGW("[lid_drill] FAIL: the host's portable PC went away");
             EndHostLeg();
@@ -274,8 +283,9 @@ void OnDisconnect() {
         UE_LOGI("[lid_drill] host: the session ended with the lid held open -- waiting for a joiner");
         return;
     }
-    // Any other end takes the drill's PC out: left open, the next session's client would find two PCs.
-    // The session ends before the world does (a quit tears the coop state down, then travels).
+    // Any other end takes the drill's PC out: left open, the next session's client would find two PCs. A
+    // flee tears the coop state down before its travel; the pause menu's own quit tears it down after,
+    // when the PC went with its world and Get() is null.
     if (void* pc = g_pc.Get()) E::DestroyActor(pc);
     g_host = HostStep::Ready;
     g_pc.Reset();
