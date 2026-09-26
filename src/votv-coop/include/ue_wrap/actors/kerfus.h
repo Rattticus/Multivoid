@@ -33,6 +33,11 @@ bool WriteCharging(void* k, bool on);
 bool ReadEnergy(void* k, float& energy);
 bool WriteEnergy(void* k, float energy);
 
+// Its navigation pawn (`pawn`): the Character its BeginPlay spawns 40 cm above it and welds onto its body, whose
+// AI controller finds the path its wheel drives along. Null when not spawned, not live, or the field did not
+// resolve.
+void* NavPawn(void* k);
+
 // The game's own refresh after `active` changes: upd(skipFace) -- the face, the sounds, the camera.
 bool RunUpd(void* k, bool skipFace);
 

@@ -26,6 +26,13 @@ struct StateFields {
 };
 StateFields g_state;
 
+// The navigation pawn: its `pawn`.
+struct PawnField {
+    State   s;
+    int32_t pawnOff = -1;
+};
+PawnField g_pawn;
+
 // Latches `s` on the result and names a missing field once.
 bool Settle(State& s, bool ok, const char* missing, const char* group) {
     s.latch = ok ? 1 : -1;
@@ -47,6 +54,13 @@ bool ResolveState(void* k) {
     f.s = g_state.s;
     g_state = f;
     return Settle(g_state.s, missing == nullptr, missing, "on, charging and energy");
+}
+
+bool ResolvePawn(void* k) {
+    if (g_pawn.s.latch != 0) return g_pawn.s.latch > 0;
+    if (!k || !IsKerfus(k)) return false;  // not tried: a Kerfus names the layout
+    g_pawn.pawnOff = R::FindPropertyOffset(R::ClassOf(k), L"pawn");
+    return Settle(g_pawn.s, g_pawn.pawnOff >= 0, "pawn", "navigation pawn");
 }
 
 uint8_t* At(void* k, int32_t off) { return static_cast<uint8_t*>(k) + off; }
@@ -114,6 +128,12 @@ bool WriteEnergy(void* k, float energy) {
     if (!ResolveState(k)) return false;
     *reinterpret_cast<float*>(At(k, g_state.energyOff)) = energy;
     return true;
+}
+
+void* NavPawn(void* k) {
+    if (!ResolvePawn(k)) return nullptr;
+    void* pawn = *reinterpret_cast<void* const*>(At(k, g_pawn.pawnOff));
+    return (pawn && R::IsLive(pawn)) ? pawn : nullptr;
 }
 
 bool RunUpd(void* k, bool skipFace) {
