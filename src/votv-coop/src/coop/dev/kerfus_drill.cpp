@@ -15,7 +15,6 @@
 
 #include "ue_wrap/actors/kerfus.h"
 #include "ue_wrap/core/log.h"
-#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/engine/engine.h"
 
@@ -31,14 +30,9 @@ namespace {
 
 namespace EL = coop::element;
 namespace E  = ue_wrap::engine;
-namespace OI = ue_wrap::object_index;
 namespace R  = ue_wrap::reflection;
 namespace UK = ue_wrap::kerfus;
 
-// The Kerfus and its colour variants, each an exact class to the object index.
-constexpr const wchar_t* kKerfusClasses[] = {
-    L"p_kerfus_C", L"p_kerfus_p_C", L"p_kerfus_r_C", L"p_kerfus_y_C", L"p_kerfus_col_C", L"p_kerfus_col_gamer_C",
-};
 constexpr uint8_t  kActionToggle    = 8;       // on/off
 constexpr float    kPressReachCm    = 250.f;   // inside the host's 400 uu reach test
 constexpr float    kAwayMinCm       = 1000.f;  // a walk, or a possess, 10 to 30 m out
@@ -77,24 +71,6 @@ bool IsEnabled_() {
 }
 
 // ---- shared ----
-
-// The first live Kerfus of the family that `accept` takes, with `arg`.
-void* FindKerfus(bool (*accept)(void* obj, const void* arg), const void* arg) {
-    for (const wchar_t* name : kKerfusClasses) {
-        void* cls = OI::ClassByName(name);
-        if (!cls) continue;
-        struct Ctx { bool (*accept)(void*, const void*); const void* arg; void* found; } ctx{accept, arg, nullptr};
-        OI::ForEachInstance(cls, [](void* p, void* obj, int32_t index) {
-            auto* c = static_cast<Ctx*>(p);
-            if (c->found || !obj) return;
-            if (R::SlotFlags(index) & (R::slot_flags::Dying | R::slot_flags::NotYetReadable)) return;
-            if (R::NameStartsWith(R::NameOf(obj), L"Default__")) return;
-            if (c->accept(obj, c->arg)) c->found = obj;
-        }, &ctx);
-        if (ctx.found) return ctx.found;
-    }
-    return nullptr;
-}
 
 bool IsWireMirror(void* obj, const void*) {
     auto& reg = EL::Registry::Get();
@@ -209,7 +185,7 @@ void TickHost(coop::net::Session* s, uint64_t ms) {
         void* k = nullptr;
         if (BodyAt(g_joined, cp) && BodyAt(0, hp) && Dist(cp, hp) >= kClientAwayCm) {
             const Near byClient{cp, kFollowCm};
-            k = FindKerfus(&IsOnNear, &byClient);
+            k = UK::FindLive(&IsOnNear, &byClient);
         }
         if (!k) {
             g_hostSince = 0;
@@ -420,7 +396,7 @@ void TickClient() {
     switch (g_client) {
     case ClientStep::WaitQuiet: {
         if (!coop::join_membership_sweep::HasLoadTailQuiesced()) return;
-        void* k = FindKerfus(&IsWireMirror, nullptr);
+        void* k = UK::FindLive(&IsWireMirror, nullptr);
         if (!k) { ClientInvalid("no Kerfus mirror once the join's load tail quiesced"); return; }
         g_kerfus = k;
         g_kerfusIdx = R::InternalIndexOf(k);

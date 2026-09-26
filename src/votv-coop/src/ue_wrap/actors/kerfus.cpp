@@ -70,6 +70,27 @@ bool IsKerfus(void* obj) {
     return kerfus && cls && R::IsDescendantOfAny(cls, &kerfus, 1);
 }
 
+void* FindLive(bool (*accept)(void* obj, const void* arg), const void* arg) {
+    // The Kerfus and its colour variants, each an exact class to the object index.
+    static constexpr const wchar_t* kClasses[] = {
+        L"p_kerfus_C", L"p_kerfus_p_C", L"p_kerfus_r_C", L"p_kerfus_y_C", L"p_kerfus_col_C", L"p_kerfus_col_gamer_C",
+    };
+    for (const wchar_t* name : kClasses) {
+        void* cls = OI::ClassByName(name);
+        if (!cls) continue;
+        struct Ctx { bool (*accept)(void*, const void*); const void* arg; void* found; } ctx{accept, arg, nullptr};
+        OI::ForEachInstance(cls, [](void* p, void* obj, int32_t index) {
+            auto* c = static_cast<Ctx*>(p);
+            if (c->found || !obj) return;
+            if (R::SlotFlags(index) & (R::slot_flags::Dying | R::slot_flags::NotYetReadable)) return;
+            if (R::NameStartsWith(R::NameOf(obj), L"Default__")) return;
+            if (!c->accept || c->accept(obj, c->arg)) c->found = obj;
+        }, &ctx);
+        if (ctx.found) return ctx.found;
+    }
+    return nullptr;
+}
+
 bool ReadActive(void* k, bool& on) {
     return ResolveState(k) && ReadBit(k, g_state.activeOff, g_state.activeMask, on);
 }

@@ -20,6 +20,10 @@ constexpr const wchar_t* kClassName = L"p_kerfus_C";
 // p_kerfus_C or a colour variant; false while the class is not loaded.
 bool IsKerfus(void* obj);
 
+// The first live Kerfus, of any colour, that `accept` takes with `arg` (a null `accept` takes the first):
+// default objects and dying or unreadable slots are passed over. Walks the object index by each exact class.
+void* FindLive(bool (*accept)(void* obj, const void* arg) = nullptr, const void* arg = nullptr);
+
 // `active` (on or off), `charging` (on its cord) and `energy`: false when this group did not resolve,
 // the value left as it was.
 bool ReadActive(void* k, bool& on);
