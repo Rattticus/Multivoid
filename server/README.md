@@ -44,8 +44,10 @@ limits and per-IP caps are the wrong fixture for many synthetic rows from one ad
   Re-read at most every thirty seconds, capped at 64 KiB, 404 when it cannot be served whole.
   Publishing a name is copying the file to the box; nothing restarts.
 - **The TURN credential**, the byte-exact spot: `username = "<unixExp>:<label>"`,
-  `password = base64(HMAC-SHA1(TURN_SECRET, username))`, `ttl = 120`, two `?transport` URIs.
-  Unit-tested against a fixed reference vector; a mismatch breaks coturn auth silently.
+  `password = base64(HMAC-SHA1(TURN_SECRET, username))`, two `?transport` URIs, and a `ttl` per
+  holder (`src/ice.rs`): 120 s for a joiner, 600 s for a host, whose heartbeat reports the one it
+  holds and is answered with a new one once the master's record is half spent. Unit-tested against
+  a fixed reference vector; a mismatch breaks coturn auth silently.
 - **Signaling**: a `<token> <identity>` greeting, then `<dest> <hex>` relay lines; pre-auth and
   authed pools; per-IP caps; a duplicate identity evicts the older connection. The registration
   challenge (a peer proves its key before it may be addressed) is drilled against a live relay,

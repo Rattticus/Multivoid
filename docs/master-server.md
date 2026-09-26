@@ -30,8 +30,12 @@ browser within a minute and a half (`coop/net/lobby_announcer`). A client fetche
 version and, on a join, asks the master for the way to dial the host: the credentials, both
 identities and the ICE configuration (`coop/net/lobby_client`). For a brokered lobby that
 includes short-lived TURN credentials the master mints from a shared secret, the same recipe the
-TURN server checks. The master also answers the update check with the latest released pair; with
-no released record it answers nothing, and the client stays silent. And it serves the thanks
+TURN server checks (`server/src/ice.rs`): a joiner's lives two minutes, spent within seconds of its
+join; a host's lives ten, because the host allocates with it for every joiner its lobby takes, and
+each heartbeat reports the one the host's session holds and is answered with a new one once the
+master's record of it is half spent, or with the record's again when the host missed it. The
+master also answers the update check with the latest released pair; with no released record it
+answers nothing, and the client stays silent. And it serves the thanks
 list the main menu rolls ([ui.md](ui.md)): the text of one file on the box, named by
 `COOP_THANKS_FILE` and re-read at most every thirty seconds, so publishing a name is moving a
 file into place, with no restart. **Three answers, and only one of them is destructive.** The text
@@ -127,7 +131,7 @@ locally for a scripted run, and serves a synthetic lobby list to the browser in 
 
 | Route | Who | Carries |
 |---|---|---|
-| `/v1/host`, `/v1/heartbeat`, `/v1/visibility`, `/v1/leave` | the host | the announce; the keepalive with players and listing; the listing flip; the leave |
+| `/v1/host`, `/v1/heartbeat`, `/v1/visibility`, `/v1/leave` | the host | the announce; the keepalive with players, listing and the TURN credential the host holds, answered with its renewal; the listing flip; the leave |
 | `/v1/lobbies`, `/v1/join` | the client | the list for a version; the dialing information for a lobby |
 | `/v1/latest`, `/healthz` | the client; an operator | the released pair; liveness |
 | `/v1/thanks` | the client, on opening the browser | the thanks list's text |

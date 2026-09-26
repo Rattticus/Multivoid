@@ -3,7 +3,8 @@
 //! snapshot and the sweeper that reaps what stopped heartbeating.
 
 use crate::common::{clamp_str, ct_eq, identity_shape_ok, ip_bucket, log, token_hex, token_urlsafe};
-use crate::ice::ice_block;
+use crate::ice::{heartbeat_turn, ice_block, turn_creds, HostTurn, TURN_TTL_HOST, TURN_TTL_JOIN};
+use crate::master_config::CFG;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -79,6 +80,9 @@ pub struct Lobby {
     pub ip: String,
     pub conn: String, // "p2p" | "direct"
     pub direct_port: i64,
+    // The host's TURN credential by this record; None for a lobby that holds none (a direct one, or a
+    // master with no TURN configured).
+    pub turn: Option<HostTurn>,
 }
 
 impl Lobby {
@@ -105,6 +109,7 @@ impl Lobby {
             ip: ip.to_string(),
             conn: "p2p".to_string(),
             direct_port: 0,
+            turn: None,
         }
     }
 }
@@ -426,7 +431,11 @@ pub fn h_host(state: &mut MasterState, ip: &str, body: &Value) -> (u16, Value) {
     // A DIRECT host never touches signaling/ICE -> no creds. P2P hosts get the block.
     // TURN cred is bound to the client's IP bucket (audit M2), not the host identity.
     if !is_direct {
-        resp.extend(ice_block(&ip_bucket(ip)));
+        let block = ice_block(&ip_bucket(ip), TURN_TTL_HOST);
+        if let (Some(turn), Some(lo)) = (block.get("turn"), state.lobbies.get_mut(&session_id)) {
+            lo.turn = HostTurn::minted_now(turn, Instant::now());
+        }
+        resp.extend(block);
     }
     (200, Value::Object(resp))
 }
@@ -440,23 +449,29 @@ pub fn h_heartbeat(state: &mut MasterState, ip: &str, body: &Value) -> (u16, Val
         Some(lo) => lo.session_id.clone(),
         None => return (403, json!({"error": "unknown session or bad token"})),
     };
-    {
-        let lo = state.lobbies.get_mut(&sid).expect("just authed");
-        let pc = as_int(body, "players_cur", lo.players_cur);
-        lo.players_cur = pc.clamp(0, lo.players_max);
-        if body_has(body, "listed") {
-            lo.listed = as_bool(body, "listed", lo.listed);
-        }
-        lo.last_seen = Instant::now();
+    let now = Instant::now();
+    let lo = state.lobbies.get_mut(&sid).expect("just authed");
+    let pc = as_int(body, "players_cur", lo.players_cur);
+    lo.players_cur = pc.clamp(0, lo.players_max);
+    if body_has(body, "listed") {
+        lo.listed = as_bool(body, "listed", lo.listed);
     }
-    // SECURITY: this endpoint used to re-mint a TURN
-    // credential on EVERY heartbeat -- an HMAC signature handed out at RL_MUTATE rate to
-    // anyone holding a token for their own lobby. The minting was retired whole (RULE 2)
-    // rather than rate-limited, because it had NO CONSUMER: the only caller is
-    // LobbyAnnouncer's heartbeat thread, and it reads ONLY resp.ok and resp.status --
-    // it never parses the heartbeat's response body at all, in contrast with the
-    // /v1/host announce, which does ParseObject on it. Credentials are issued where
-    // they are actually consumed, at /v1/host and /v1/join.
+    lo.last_seen = now;
+    // The host's TURN credential: it allocates with it for every joiner its lobby takes, so the one from
+    // /v1/host alone left a relay-only host unjoinable after its lifetime. A beat reports the username of the
+    // credential its session holds; one that reports none is from a mod that takes no renewal and is
+    // answered without one. SECURITY (A6): this endpoint once minted on EVERY beat, at RL_MUTATE rate, with
+    // nothing reading the answer, and that minting was retired. The one mint here is bounded by the record's
+    // own half-life, one per lobby per TURN_TTL_HOST / 2, so an address at MAX_LOBBIES_PER_IP lobbies mints
+    // fewer a minute than /v1/join's own RL_JOIN lets it; it goes only to a host that reads it, and a re-send
+    // of the record mints nothing.
+    let before = lo.turn.as_ref().map(|t| t.username.clone());
+    let minted = || turn_creds(&CFG.turn_uri, &CFG.turn_secret, &ip_bucket(ip), TURN_TTL_HOST);
+    if let Some(block) = heartbeat_turn(&mut lo.turn, as_str(body, "turn_user"), now, minted) {
+        let renewed = lo.turn.as_ref().map(|t| &t.username) != before.as_ref();
+        log(&format!("heartbeat {} turn {}", lo.lobby_id, if renewed { "renewed" } else { "re-sent" }));
+        return (200, json!({"ok": true, "turn": block}));
+    }
     (200, json!({"ok": true}))
 }
 
@@ -566,7 +581,7 @@ pub fn h_join(state: &mut MasterState, ip: &str, body: &Value) -> (u16, Value) {
     resp.insert("hostIdentity".into(), json!(host_identity));
     resp.insert("conn".into(), json!("p2p"));
     // TURN cred bound to the joiner's IP bucket (audit M2), not the fresh peer id.
-    resp.extend(ice_block(&ip_bucket(ip)));
+    resp.extend(ice_block(&ip_bucket(ip), TURN_TTL_JOIN));
     (200, Value::Object(resp))
 }
 
