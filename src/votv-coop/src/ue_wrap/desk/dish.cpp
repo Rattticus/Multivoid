@@ -5,6 +5,7 @@
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/field_io.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/world/world_singleton.h"
 
@@ -17,11 +18,9 @@ namespace R = ue_wrap::reflection;
 
 struct TArrayView { uint8_t* data; int32_t num; int32_t max; };
 
-void* g_gamemodeCls = nullptr;
 int32_t g_offDishs = -1;        // mainGamemode_C::dishs (TArray<Adish_C*>)
 int32_t g_offActiveDishes = -1; // mainGamemode_C::activeDishes (TArray<bool>)
 
-void* g_dishCls = nullptr;
 int32_t g_offLookAt = -1;       // Adish_C::lookAt (FVector -- absolute post-write)
 int32_t g_offIsMoving = -1;     // Adish_C::isMoving
 int32_t g_offAxisY = -1;        // Adish_C::axis_Y (UBillboardComponent*)
@@ -31,8 +30,6 @@ int32_t g_offCue = -1;          // Adish_C::satellite_Cue
 int32_t g_offCalibration = -1;  // Adish_C::calibration (float)
 int32_t g_offTechName = -1;     // Adish_C::techName (FString)
 int32_t g_offHashcode = -1;     // Adish_C::hashcode (FString), outside the L4 set: nothing mirrors it
-void* g_startMovingToFn = nullptr;  // startMovingTo(lookAt) -- the relative slew entry
-void* g_stopFn = nullptr;           // stop() -- two flag writes
 
 // Engine-class functions -- resolved on their DECLARING class (FindFunction
 // is exact-owner, no SuperStruct climb).
@@ -43,8 +40,6 @@ void* g_deactivateFn = nullptr; // UActorComponent::Deactivate()
 void* g_isActiveFn = nullptr;   // UActorComponent::IsActive() -> bool
 
 // Tickers: singletons the gamemode's BeginPlay creates.
-void* g_disherCls = nullptr;
-void* g_disherBeginPlayFn = nullptr;   // ticker_disher_C::ReceiveBeginPlay (BP override)
 void* g_kismetSysCdo = nullptr;
 void* g_clearTimerFn = nullptr;        // KismetSystemLibrary::K2_ClearTimer
 
@@ -56,32 +51,30 @@ void ResolvePass() {
     const auto now = std::chrono::steady_clock::now();
     if (now < g_nextResolve) return;
     g_nextResolve = now + std::chrono::seconds(2);
-    if (!g_gamemodeCls) g_gamemodeCls = R::FindClass(L"mainGamemode_C");
-    if (!g_dishCls) g_dishCls = R::FindClass(L"dish_C");
-    if (!g_gamemodeCls || !g_dishCls) return;
-    if (g_offDishs < 0) g_offDishs = R::FindPropertyOffset(g_gamemodeCls, L"dishs");
-    if (g_offLookAt < 0) g_offLookAt = R::FindPropertyOffset(g_dishCls, L"lookAt");
-    if (g_offIsMoving < 0) g_offIsMoving = R::FindPropertyOffset(g_dishCls, L"isMoving");
-    if (!g_startMovingToFn) g_startMovingToFn = R::FindFunction(g_dishCls, L"startMovingTo");
-    const bool core = g_offDishs >= 0 && g_offLookAt >= 0 && g_offIsMoving >= 0 &&
-                      g_startMovingToFn != nullptr;
+    // The classes are looked up each pass, never kept: a member offset outlives its class object, a class pointer
+    // need not.
+    void* gamemodeCls = object_index::ClassByName(L"mainGamemode_C");
+    void* dishCls = object_index::ClassByName(L"dish_C");
+    if (!gamemodeCls || !dishCls) return;
+    if (g_offDishs < 0) g_offDishs = R::FindPropertyOffset(gamemodeCls, L"dishs");
+    if (g_offLookAt < 0) g_offLookAt = R::FindPropertyOffset(dishCls, L"lookAt");
+    if (g_offIsMoving < 0) g_offIsMoving = R::FindPropertyOffset(dishCls, L"isMoving");
+    const bool core = g_offDishs >= 0 && g_offLookAt >= 0 && g_offIsMoving >= 0;
     if (core && !g_coreResolved) {
         g_coreResolved = true;
-        UE_LOGI("dish: resolved (dishs=0x%X lookAt=0x%X isMoving=0x%X startMovingTo=yes)",
-                g_offDishs, g_offLookAt, g_offIsMoving);
+        UE_LOGI("dish: resolved (dishs=0x%X lookAt=0x%X isMoving=0x%X)", g_offDishs, g_offLookAt, g_offIsMoving);
     }
 
     // L4 surface (pose mirror + park + calibration).
     if (g_offActiveDishes < 0)
-        g_offActiveDishes = R::FindPropertyOffset(g_gamemodeCls, L"activeDishes");
-    if (g_offAxisY < 0) g_offAxisY = R::FindPropertyOffset(g_dishCls, L"axis_Y");
-    if (g_offAxisZ < 0) g_offAxisZ = R::FindPropertyOffset(g_dishCls, L"axis_Z");
-    if (g_offMoveCue < 0) g_offMoveCue = R::FindPropertyOffset(g_dishCls, L"satellite_move_Cue");
-    if (g_offCue < 0) g_offCue = R::FindPropertyOffset(g_dishCls, L"satellite_Cue");
-    if (g_offCalibration < 0) g_offCalibration = R::FindPropertyOffset(g_dishCls, L"calibration");
-    if (g_offTechName < 0) g_offTechName = R::FindPropertyOffset(g_dishCls, L"techName");
-    if (g_offHashcode < 0) g_offHashcode = R::FindPropertyOffset(g_dishCls, L"hashcode");
-    if (!g_stopFn) g_stopFn = R::FindFunction(g_dishCls, L"stop");
+        g_offActiveDishes = R::FindPropertyOffset(gamemodeCls, L"activeDishes");
+    if (g_offAxisY < 0) g_offAxisY = R::FindPropertyOffset(dishCls, L"axis_Y");
+    if (g_offAxisZ < 0) g_offAxisZ = R::FindPropertyOffset(dishCls, L"axis_Z");
+    if (g_offMoveCue < 0) g_offMoveCue = R::FindPropertyOffset(dishCls, L"satellite_move_Cue");
+    if (g_offCue < 0) g_offCue = R::FindPropertyOffset(dishCls, L"satellite_Cue");
+    if (g_offCalibration < 0) g_offCalibration = R::FindPropertyOffset(dishCls, L"calibration");
+    if (g_offTechName < 0) g_offTechName = R::FindPropertyOffset(dishCls, L"techName");
+    if (g_offHashcode < 0) g_offHashcode = R::FindPropertyOffset(dishCls, L"hashcode");
     if (g_offRelRot < 0 || !g_setRelRotFn) {
         if (void* sc = R::FindClass(L"SceneComponent")) {
             if (g_offRelRot < 0) g_offRelRot = R::FindPropertyOffset(sc, L"RelativeRotation");
@@ -95,9 +88,6 @@ void ResolvePass() {
             if (!g_isActiveFn) g_isActiveFn = R::FindFunction(ac, L"IsActive");
         }
     }
-    if (!g_disherCls) g_disherCls = R::FindClass(L"ticker_disher_C");
-    if (g_disherCls && !g_disherBeginPlayFn)
-        g_disherBeginPlayFn = R::FindFunction(g_disherCls, L"ReceiveBeginPlay");
     if (!g_kismetSysCdo) g_kismetSysCdo = R::FindClassDefaultObject(L"KismetSystemLibrary");
     if (g_kismetSysCdo && !g_clearTimerFn) {
         if (void* kc = R::FindClass(L"KismetSystemLibrary"))
@@ -105,13 +95,12 @@ void ResolvePass() {
     }
     const bool l4 = g_offActiveDishes >= 0 && g_offAxisY >= 0 && g_offAxisZ >= 0 &&
                     g_offMoveCue >= 0 && g_offCue >= 0 && g_offCalibration >= 0 &&
-                    g_offTechName >= 0 && g_stopFn && g_offRelRot >= 0 && g_setRelRotFn &&
-                    g_activateFn && g_deactivateFn && g_isActiveFn && g_disherCls &&
-                    g_disherBeginPlayFn && g_clearTimerFn;
+                    g_offTechName >= 0 && g_offRelRot >= 0 && g_setRelRotFn &&
+                    g_activateFn && g_deactivateFn && g_isActiveFn && g_clearTimerFn;
     if (l4 && !g_l4Resolved) {
         g_l4Resolved = true;
         UE_LOGI("dish: L4 surface resolved (axes=0x%X/0x%X cues=0x%X/0x%X activeDishes=0x%X "
-                "calib=0x%X stop=yes ticker=yes)",
+                "calib=0x%X)",
                 g_offAxisZ, g_offAxisY, g_offMoveCue, g_offCue, g_offActiveDishes,
                 g_offCalibration);
     }
@@ -283,8 +272,9 @@ int32_t StartMovingAll(const ue_wrap::FVector& slew) {
     int32_t dispatched = 0;
     for (int32_t i = 0; i < a->num; ++i) {
         void* d = DishAt(a, i);
-        if (!d) continue;
-        ue_wrap::ParamFrame f(g_startMovingToFn);
+        void* fn = d ? R::FindDispatchFunctionCached(R::ClassOf(d), L"startMovingTo") : nullptr;
+        if (!fn) continue;
+        ue_wrap::ParamFrame f(fn);
         if (!f.valid()) return dispatched;
         struct { float X, Y, Z; } v{ slew.X, slew.Y, slew.Z };
         if (!f.SetRaw(L"lookAt", &v, sizeof(v))) return dispatched;
@@ -364,7 +354,8 @@ bool WriteIsMoving(int32_t index, bool moving) {
 bool StopDish(int32_t index) {
     if (!g_l4Resolved) return false;
     void* d = DishByIndex(index);
-    return d && CallNoArg(d, g_stopFn);
+    void* fn = d ? R::FindDispatchFunctionCached(R::ClassOf(d), L"stop") : nullptr;
+    return fn && CallNoArg(d, fn);
 }
 
 bool DeactivateCues(int32_t index) {
@@ -508,23 +499,19 @@ int32_t IndexOf(void* dish) {
 
 bool CallCheckFordDishes() {
     void* gm = Gamemode();
-    if (!gm || !g_gamemodeCls) return false;
-    static void* sFn = nullptr;
-    if (!sFn) sFn = R::FindFunction(g_gamemodeCls, L"checkFordDishes");
-    return sFn && CallNoArg(gm, sFn);
+    void* fn = gm ? R::FindDispatchFunctionCached(R::ClassOf(gm), L"checkFordDishes") : nullptr;
+    return fn && CallNoArg(gm, fn);
 }
 
 bool CallSetPrec() {
     void* gm = Gamemode();
-    if (!gm || !g_gamemodeCls) return false;
-    static void* sFn = nullptr;
-    if (!sFn) sFn = R::FindFunction(g_gamemodeCls, kSetPrec);
-    return sFn && CallNoArg(gm, sFn);
+    void* fn = gm ? R::FindDispatchFunctionCached(R::ClassOf(gm), kSetPrec) : nullptr;
+    return fn && CallNoArg(gm, fn);
 }
 
 void* DisherInstance() {
     ResolvePass();
-    return SingletonOf(g_disherCls, L"ticker_disher_C", g_disherCache);
+    return SingletonOf(object_index::ClassByName(L"ticker_disher_C"), L"ticker_disher_C", g_disherCache);
 }
 
 bool ParkDisher(void* inst) {
@@ -547,7 +534,8 @@ bool RestoreDisher(void* inst) {
     // arms a one-shot K2_SetTimerDelegate for a random 1800-3600 s. Nothing spawns, `do` itself is
     // never called, and the engine keys a dynamic timer by object and function name, so a second
     // arm re-arms that timer instead of stacking another.
-    return inst && CallNoArg(inst, g_disherBeginPlayFn);
+    void* fn = inst ? R::FindDispatchFunctionCached(R::ClassOf(inst), L"ReceiveBeginPlay") : nullptr;
+    return fn && CallNoArg(inst, fn);
 }
 
 }  // namespace ue_wrap::dish
