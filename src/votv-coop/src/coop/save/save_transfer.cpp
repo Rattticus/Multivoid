@@ -27,7 +27,9 @@
 #include "ue_wrap/actors/prop.h"        // IsChipPile: a grabbed clump belongs to the convert stream
 #include "ue_wrap/core/reflection.h"  // IsLive
 #include "ue_wrap/engine/save_capture.h"
+#include "ue_wrap/engine/world_identity.h"  // whether a world is coming in
 #include "ue_wrap/world/game_mode.h"   // the host's own mode, for the begin
+#include "ue_wrap/world/world_singleton.h"  // the gamemode that owns the world's save
 
 #include <windows.h>
 
@@ -91,6 +93,8 @@ std::atomic<uint32_t> g_hostSlotSerial{0};  // one per SetHostSlot, i.e. per wor
 constexpr uint64_t kStablePollMs = 300;
 
 struct HostStream {
+    // The joiner asked while the host's world was still coming in: TickHost captures it once it is in.
+    bool     waitWorld = false;
     bool     active = false;
     bool     blobReady = false;
     // The pump owns Begin's delivery: a fire-and-forget send under backpressure was silently
@@ -365,6 +369,15 @@ void BeginSink_(int senderPeerSlot, const uint8_t* data, int len) {
     OnBegin(p);
 }
 
+// The gamemode that owns the world's save is not there yet, and the host is not in a world without one (the
+// menu): it is loading the gameplay map, or between worlds on the way. A world the identity layer cannot
+// read at all (Degraded) waits for nothing.
+bool HostWorldComingIn_() {
+    namespace WI = ue_wrap::world_identity;
+    if (ue_wrap::world_singleton::Gamemode() || WI::Degraded()) return false;
+    return WI::CurrentWorldKind() != WI::WorldKind::Other;
+}
+
 void DeleteFileLogged_(const fs::path& p) {
     std::error_code ec;
     if (fs::remove(p, ec)) UE_LOGI("save_transfer: deleted '%ls'", p.c_str());
@@ -398,20 +411,11 @@ void SetHostSlot(const std::wstring& slot) {
 // canonical slot.
 constexpr const wchar_t* kHostXferSlot = L"zcoop_hostxfer";
 
-void OnRequest(int peerSlot) {
-    if (!g_session || peerSlot < 1 || peerSlot >= coop::net::kMaxPeers) return;
-    HostStream& hs = g_host[peerSlot];
-    hs = HostStream{};  // reset any prior stream for this slot (rejoin)
+namespace {
 
-    // The join-window cue, behind the pile_delta_probe flag: the joiner requested the save, so a
-    // pile moved from here until the joiner's world-ready is in-window and reconciles by its
-    // save-time key.
-    static const bool s_pileProbe =
-        coop::config::ResolveFlag(::coop::config_registry::rows::pile_delta_probe);
-    if (s_pileProbe)
-        coop::chat_feed::Push(L"[1c-test] JOIN-WINDOW OPEN -- joiner loading; move/drop test piles NOW (close at 'JOIN-WINDOW CLOSED')",
-                              coop::chat_feed::Keep::Transient);
-
+// The live capture and the begin of its stream, or the canonical slot when the capture cannot run. Runs at
+// the joiner's request, or once the host's world it waited for is in.
+void CaptureAndBegin_(int peerSlot, HostStream& hs) {
     // The host's world is serialised live, now, into a scratch slot instead of shipping the stale
     // on-disk save: an entity the host changed since its last autosave (a kerfur turned on, now an
     // NPC) is captured in its live state, so the joiner's loadObjects builds a correct world and
@@ -504,10 +508,48 @@ void OnRequest(int peerSlot) {
             "slot '%ls' (stale; torn-read guard)", peerSlot, g_hostSlot.c_str());
 }
 
+}  // namespace
+
+void OnRequest(int peerSlot) {
+    if (!g_session || peerSlot < 1 || peerSlot >= coop::net::kMaxPeers) return;
+    HostStream& hs = g_host[peerSlot];
+    hs = HostStream{};  // reset any prior stream for this slot (rejoin)
+
+    // The join-window cue, behind the pile_delta_probe flag: the joiner requested the save, so a
+    // pile moved from here until the joiner's world-ready is in-window and reconciles by its
+    // save-time key.
+    static const bool s_pileProbe =
+        coop::config::ResolveFlag(::coop::config_registry::rows::pile_delta_probe);
+    if (s_pileProbe)
+        coop::chat_feed::Push(L"[1c-test] JOIN-WINDOW OPEN -- joiner loading; move/drop test piles NOW (close at 'JOIN-WINDOW CLOSED')",
+                              coop::chat_feed::Keep::Transient);
+
+    // A joiner that asks while the host's world is still coming in -- a world is current, but not yet the
+    // gamemode that owns its save, the seconds after a load that a quick rejoin lands in -- waits for it
+    // rather than taking the canonical slot: the live capture carries what the host changed since its
+    // save, and the lanes' join snapshots are taken in the same breath, so their seeds run. The wait is
+    // the CapturingWorld beacon, which renews the joiner's own.
+    if (HostWorldComingIn_()) {
+        hs.waitWorld = true;
+        UE_LOGI("save_transfer: slot %d -- the host's world is still coming in; the transfer waits for it",
+                peerSlot);
+        return;
+    }
+    CaptureAndBegin_(peerSlot, hs);
+}
+
 void TickHost() {
     if (!g_session) return;
     for (int slot = 1; slot < coop::net::kMaxPeers; ++slot) {
         HostStream& hs = g_host[slot];
+        if (hs.waitWorld) {
+            coop::join_beacon::NotePhase(slot, coop::net::HostJoinPhase::CapturingWorld, 0, 0);
+            if (HostWorldComingIn_()) continue;
+            hs.waitWorld = false;
+            UE_LOGI("save_transfer: slot %d -- the host's world is in; capturing it", slot);
+            CaptureAndBegin_(slot, hs);
+            continue;
+        }
         if (!hs.active) continue;
         if (!hs.blobReady) {
             TryCaptureBlob_(slot, hs);
