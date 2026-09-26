@@ -7,6 +7,7 @@
 #include "coop/net/protocol.h"  // kProtocolVersion -- announced for the browser's join gate
 #include "coop/session/shutdown.h"
 #include "coop/version.h"  // kGameTarget -- the announced identity pair's game half
+#include "ice_config.h"  // co-located: AppliedTurnUser, QueueTurnRenewal
 #include "json_util.h"  // internal, co-located in src/coop/net/ (not a public API header)
 #include "ue_wrap/core/log.h"
 
@@ -83,6 +84,8 @@ HostInfo LobbyAnnouncer::Host(const std::string& masterUrl, const std::string& n
             sessionId_ = info.sessionId;
             token_     = info.token;
             lobbyId_   = info.lobbyId;
+            turnCur_   = info.turn.user;
+            turnPrev_.clear();
             listed_    = true;
         }
         stop_.store(false);
@@ -103,11 +106,16 @@ void LobbyAnnouncer::HeartbeatLoop() {
             std::this_thread::sleep_for(std::chrono::milliseconds(500));
         if (stop_.load() || coop::shutdown::IsShuttingDown()) break;
 
+        // The credential the host's session holds is reported while it is one of this lobby's, so the
+        // master can renew it or re-send the renewal the host missed; a session holding another is not
+        // this lobby's (a late beat of a retired lobby) and asks for nothing.
+        const std::string held = AppliedTurnUser();
         std::string url, sid, tok;
-        bool listed;
+        bool listed, ours;
         {
             std::lock_guard<std::mutex> lk(mu_);
             url = masterUrl_; sid = sessionId_; tok = token_; listed = listed_;
+            ours = !held.empty() && (held == turnCur_ || held == turnPrev_);
         }
         int (*const countFn)() = playerCountFn_.load(std::memory_order_acquire);
         const int pc = countFn ? countFn() : 1;
@@ -117,10 +125,26 @@ void LobbyAnnouncer::HeartbeatLoop() {
         b["token"] = tok;
         b["players_cur"] = pc;
         b["listed"] = listed;
+        if (ours) b["turn_user"] = held;
         const http::Response resp = http::Post(url, "/v1/heartbeat", J::Dump(b), 8000);
         if (!resp.ok || resp.status != 200) {
             UE_LOGW("lobby: heartbeat -> %s (status=%d) -- lobby may expire if this persists",
                     resp.ok ? "non-200" : "unreachable", resp.status);
+            continue;
+        }
+        // A renewal in the answer goes to the net thread, which writes it where no accept runs.
+        if (!ours || stop_.load()) continue;
+        J::Json j;
+        if (!J::ParseObject(resp.body, j)) continue;
+        const TurnCredential fresh = J::ParseTurnCredential(j);
+        if (fresh.user.empty()) continue;
+        // Only a queued renewal becomes one of this lobby's: rotating on a refused one would leave the
+        // session's own credential in neither slot, and the host would never report it again.
+        if (!QueueTurnRenewal(held, fresh)) continue;
+        std::lock_guard<std::mutex> lk(mu_);
+        if (fresh.user != turnCur_) {
+            turnPrev_ = turnCur_;
+            turnCur_ = fresh.user;
         }
     }
 }
@@ -166,7 +190,7 @@ void LobbyAnnouncer::Stop() {
         // its fresh sessionId can never be consumed by THIS call's /leave below.
         std::lock_guard<std::mutex> lk(mu_);
         url = masterUrl_; sid = sessionId_; tok = token_;
-        sessionId_.clear(); token_.clear(); lobbyId_.clear();
+        sessionId_.clear(); token_.clear(); lobbyId_.clear(); turnCur_.clear(); turnPrev_.clear();
     }
     if (!was) return;  // nothing was announced -> no /leave to send
     if (!url.empty() && !sid.empty()) {

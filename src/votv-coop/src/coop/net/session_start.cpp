@@ -464,6 +464,9 @@ void Session::Stop() {
     // cleared above the join, this write raced a pass still in flight during the few milliseconds
     // until the thread exited.
     peer_admission::ClientReset();
+    // And the TURN credential it held: a lobby's heartbeat that outlives the session must not report it,
+    // nor a renewal queued for it be written into the next.
+    ForgetTurnCredential();
     // Every slot's receive state and epoch latch, and with slot 0 the host's own streams: the close
     // path resets a slot when its peer closes or the link fails, but a connection this side closes is
     // neither, and the loop below empties its slot first, so a session that ends here would carry its

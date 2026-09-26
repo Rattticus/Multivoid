@@ -6,7 +6,8 @@
 // leave on stop.
 //
 //   POST /v1/host        sessionId, an opaque lobbyId, the host token, identities and ICE
-//   POST /v1/heartbeat   every 30 s: keep the lobby alive, refresh the current player count
+//   POST /v1/heartbeat   every 30 s: keep the lobby alive, refresh the current player count, report
+//                        the host's TURN credential and take a renewal of it from the answer
 //   POST /v1/visibility  the "hide from the browser" toggle
 //   POST /v1/leave       on stop
 //
@@ -91,6 +92,10 @@ private:
     std::string sessionId_;
     std::string token_;
     std::string lobbyId_;
+    // The last two TURN credentials the master handed this lobby's host: while its session holds one of
+    // them, the session is this lobby's, and a beat reports it and takes a renewal.
+    std::string turnCur_;
+    std::string turnPrev_;
     bool listed_ = true;
 
     std::atomic<bool> active_{false};
