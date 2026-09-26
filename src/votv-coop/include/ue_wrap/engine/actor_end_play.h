@@ -39,9 +39,15 @@ using Sink = void (*)(void* actor, Reason reason);
 // work on. A field read; any thread that holds the actor live.
 bool HasBegunPlay(const void* actor);
 
-// Resolve AActor::EndPlay from Actor's vtable, check its body, and detour it. Idempotent; false
-// (logged) when Default__Actor is not found, the slot does not lead to EndPlay's body on this build,
-// or the detour does not install. Boot, after the health checks.
+// Patch AActor::EndPlay, found from the image alone by its body's begun-play test, behind a guard that
+// forwards every call until Install arms it. At the loader's call, on its thread, before any other
+// hooker in the process runs (bootstrap/boot.cpp says why). Idempotent; false (logged) when the body is
+// not found exactly once or the detour does not install.
+bool Patch();
+
+// Arm the patched function once Actor's vtable, read from its class default object, names it.
+// Idempotent; false (logged) when nothing was patched, Default__Actor is not found, or the vtable names
+// another function. Boot, after the health checks.
 bool Install();
 bool IsInstalled();
 

@@ -52,8 +52,14 @@ enum class Verdict : uint8_t { Run, Cancel };
 using PreFn  = Verdict (*)(const Call&);
 using PostFn = void (*)(const Call&);
 
-// Detour the loop. Idempotent; false when the loop cannot be derived from the exec-handler table
-// (logged with what each derivation found). Boot, after reflection has resolved.
+// Patch the loop, found from the image alone (script_loop::ByCode), behind a guard that forwards every
+// body until Install arms it. At the loader's call, on its thread, before any other hooker in the
+// process runs (bootstrap/boot.cpp says why). Idempotent; false when the loop is not found (logged).
+bool Patch();
+
+// Arm the patched loop, once the exec-handler table is filled and its two local-call handlers name the
+// same function. Idempotent; false, and every watch refused, when nothing was patched or the handlers
+// name another function (logged). Boot, after reflection has resolved.
 bool Install();
 bool IsInstalled();
 

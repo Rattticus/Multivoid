@@ -15,8 +15,12 @@ namespace ue_wrap::game_thread {
 
 using Task = std::function<void()>;
 
-// Install the ProcessEvent hook. Idempotent; false if ProcessEvent is unresolved or the hook
-// fails.
+// Patch ProcessEvent behind a guard that forwards every dispatch until Install arms it. At the loader's
+// call, on its thread, before any other hooker in the process runs (bootstrap/boot.cpp says why).
+// Idempotent; false if ProcessEvent's signature does not match or the hook fails.
+bool Patch();
+
+// Arm the patched ProcessEvent: the dispatcher goes live. Idempotent; false if nothing was patched.
 bool Install();
 
 // Remove the hook. Posted tasks no longer run after this.

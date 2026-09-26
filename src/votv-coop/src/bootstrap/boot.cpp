@@ -138,8 +138,8 @@ DWORD WINAPI BootThread(LPVOID rawTag) {
     // (mod built for cook X running on exe Y) one-look diagnosable from the log.
     UE_LOGI("boot: compiled %s %s", __DATE__, __TIME__);
     // Entry + load-moment marker: which entry point brought us in (start_mod, entry=cppmod, is
-    // the only one this binary can print) and how late relative to process creation, since
-    // UE4SS's mod scan runs after its own sig-scan phase.
+    // the only one this binary can print) and how late relative to process creation. UE4SS starts
+    // its C++ mods from its constructor, before any scan of its own.
     UE_LOGI("boot: entry=%s since-process-start=%llums pid=%lu", entryTag,
             MsSinceProcessStart(), ::GetCurrentProcessId());
     LogUe4ssPresence();
@@ -163,11 +163,11 @@ DWORD WINAPI BootThread(LPVOID rawTag) {
     // THE VERDICT IS A DECISION, NOT A LOG LINE.
     //
     // This is the one place that knows whether our offsets match the running game, so a failed
-    // check STOPS the boot instead of installing the ProcessEvent detour and driving VOTV's
-    // UFunctions through offsets the check has just called wrong. The hazard is NOT a null pointer
-    // -- `game_thread::Install` refuses to install over an unresolved ProcessEvent -- it is an AOB
-    // that matched the WRONG SITE: non-null, caught only by the functional round-trips, and
-    // writing through wrong offsets into a live game corrupts the save. So we stand down and SAY
+    // check STOPS the boot instead of arming the patched detours and driving VOTV's UFunctions
+    // through offsets the check has just called wrong. The hazard is an AOB that matched the WRONG
+    // SITE: non-null, caught only by the functional round-trips, and writing through wrong offsets
+    // into a live game corrupts the save. The patches made at the loader's call stay unarmed: each
+    // guard forwards to the function it covers and runs nothing of ours. So we stand down and SAY
     // SO on a surface that exists -- the Win32 modal shared with the loader, never
     // `ui::boot_warning_dialog`, which renders from an overlay this path must not install.
     int healthFails = ue_wrap::reflection::RunHealthCheck();
@@ -207,27 +207,13 @@ DWORD WINAPI BootThread(LPVOID rawTag) {
         return 0;
     }
 
-    // Establish a game-thread execution context: hook ProcessEvent so we have a
+    // Establish a game-thread execution context: arm the ProcessEvent detour so we have a
     // guaranteed game-thread callback to drive UFunction calls from (ProcessEvent
     // must NOT be called from this boot thread). Then post a self-test task to
     // prove it: the task runs on the game thread (a different thread than this
     // one) and reads engine state safely from there.
     const unsigned long bootTid = ::GetCurrentThreadId();
     UE_LOGI("boot: BootThread tid=%lu", bootTid);
-    {
-        // `VOTVCOOP_PE_INSTALL_DELAY_MS` delays the ProcessEvent MinHook install, so the patch
-        // lands while the game thread is deep in live ProcessEvent traffic -- the state that makes
-        // a patch-time access violation reproducible instead of intermittent. Inert unless set.
-        char v[16] = {};
-        if (::GetEnvironmentVariableA("VOTVCOOP_PE_INSTALL_DELAY_MS", v, sizeof(v)) > 0) {
-            const unsigned long ms = ::strtoul(v, nullptr, 10);
-            if (ms > 0) {
-                UE_LOGW("boot: PE-install DELAY diagnostic armed: sleeping %lu ms before hook", ms);
-                ue_wrap::log::Flush();
-                ::Sleep(ms);
-            }
-        }
-    }
     if (ue_wrap::game_thread::Install()) {
         ue_wrap::game_thread::Post([bootTid] {
             const unsigned long tid = ::GetCurrentThreadId();
@@ -242,12 +228,12 @@ DWORD WINAPI BootThread(LPVOID rawTag) {
         // The script-body gate beside it: the second detour, on the VM's own body loop, so a
         // Blueprint-internal call can be watched and refused per call.
         if (!ue_wrap::script_gate::Install())
-            UE_LOGE("boot: the script-body gate did not install; Blueprint-internal calls are invisible "
+            UE_LOGE("boot: the script-body gate did not arm; Blueprint-internal calls are invisible "
                     "and every watch will be refused");
         // Every actor's end of play, by any route, from one detour on the engine's own AActor::EndPlay.
         ue_wrap::actor_end_play::Install();  // logs its own failure
         // The entries UE4SS also patches still hold our jumps over the functions' own bytes.
-        ue_wrap::hook::VerifyEntries("after the installs");
+        ue_wrap::hook::VerifyEntries("at the arm");
 
         // Autonomous test harness (ported from the UE4SS Lua coopTestHarness):
         // skip the menus into gameplay, screenshot, report -- standalone.
@@ -256,6 +242,19 @@ DWORD WINAPI BootThread(LPVOID rawTag) {
         UE_LOGE("boot: failed to install game-thread dispatcher");
     }
     return 0;
+}
+
+// The engine code patches, made on the loader's own call before it returns. Under the UE4SS proxy that
+// call runs on the game's main thread from an APC queued in DllMain, before the exe's entry point: no
+// engine code runs yet, and UE4SS's own threads, which resolve and patch ProcessEvent, the script loop
+// and AActor::EndPlay themselves, do not exist yet. Its resolves then always find our jumps and compose
+// on our relays. Made later, from the boot thread, both sides patched the same entries at once, and a
+// patch that landed between our read of an entry and our write left our trampoline returning into it:
+// every Blueprint call faulted. The detours stay inert until the boot thread's health check arms them.
+void PatchEngine() {
+    ue_wrap::game_thread::Patch();
+    ue_wrap::script_gate::Patch();
+    ue_wrap::actor_end_play::Patch();
 }
 
 }  // namespace
@@ -291,6 +290,8 @@ StartResult StartOnce(const char* entryTag) {
         ue_wrap::log::Flush();
         return StartResult::kRefusedDupMutex;
     }
+
+    PatchEngine();
 
     // LATCH AFTER THE SPAWN, NOT BEFORE. `Started()` means "the boot thread exists", not
     // "we intended to make one": latching first makes a failed CreateThread

@@ -32,8 +32,8 @@ namespace D = detail;
 using ProcessEventFn = void(__fastcall*)(void* self, void* function, void* params);
 
 ProcessEventFn g_peTrampoline = nullptr;  // trampoline to the real ProcessEvent
-void* g_hookTarget = nullptr;
-bool g_installed = false;
+void* g_hookTarget = nullptr;             // the patched ProcessEvent, set by Patch
+std::atomic<bool> g_installed{false};     // armed: the dispatcher is live
 
 // The transparent-bypass deadline (steady_clock ms; 0 = off): while it holds, the detour
 // forwards straight to the engine, skipping interceptors, observers, the pump, the diagnostics
@@ -383,7 +383,8 @@ int RunDetourSEH(void* self, void* function, void* params) {
     }
 }
 
-void __fastcall ProcessEventDetour(void* self, void* function, void* params) {
+// Not inlined, so the guard below stays a bare test and two tail jumps.
+__declspec(noinline) void __fastcall ProcessEventDetour(void* self, void* function, void* params) {
     // The transparent bypass: straight to the engine with all our logic skipped, so a world
     // teardown runs as with no DLL present; it expires on the deadline.
     const long long until = g_bypassUntilMs.load(std::memory_order_relaxed);
@@ -446,6 +447,15 @@ void __fastcall ProcessEventDetour(void* self, void* function, void* params) {
         }
         t_sampleWhole = false;
     }
+}
+
+// Until the arm, ProcessEvent runs as if no detour were there: the guard forwards every dispatch.
+void __fastcall ProcessEventGuard(void* self, void* function, void* params) {
+    if (g_installed.load(std::memory_order_acquire)) {
+        ProcessEventDetour(self, function, params);
+        return;
+    }
+    g_peTrampoline(self, function, params);
 }
 
 }  // namespace
@@ -554,41 +564,48 @@ void RunAvLatchDrill() {
     UE_LOGW("av_latch_drill: END -- count the [ERROR] lines tagged drillA / drillB above.");
 }
 
-bool Install() {
-    if (g_installed) return true;
-
+bool Patch() {
+    if (g_hookTarget) return true;
+    reflection::Resolve();  // signatures only: no engine state is read
     void* pe = reinterpret_cast<void*>(reflection::ProcessEventAddr());
     if (!pe) {
-        UE_LOGE("game_thread: ProcessEvent unresolved; resolve reflection first");
+        UE_LOGE("game_thread: ProcessEvent's signature did not match -- NOT patched");
         return false;
     }
     if (!hook::Init()) return false;
-    // ProcessEvent is the one function UE4SS's PolyHook also detours, so the MinHook relay must be
-    // followJmp-immune, or the two detours corrupt each other at boot (a reproducible crash whose
-    // dump matched the field cohort byte for byte). Unconditional: the corruptible relay has no
-    // caller on this hook.
-    if (!hook::Install(pe, reinterpret_cast<void*>(&ProcessEventDetour),
+    // ProcessEvent is a function UE4SS's PolyHook also detours, so the MinHook relay must be
+    // followJmp-immune, or the two detours corrupt each other (a reproducible crash whose dump matched
+    // the field cohort byte for byte). Unconditional: the corruptible relay has no caller on this hook.
+    if (!hook::Install(pe, reinterpret_cast<void*>(&ProcessEventGuard),
                        reinterpret_cast<void**>(&g_peTrampoline), /*followJmpImmune=*/true)) {
         return false;
     }
-    UE_LOGI("game_thread: PE relay followJmp-immune (composes with a co-resident PolyHook PE detour)");
     g_hookTarget = pe;
-    g_installed = true;
-    UE_LOGI("game_thread: ProcessEvent hooked; game-thread dispatcher live");
-    // After the hook is live, never before: run at the top of Install the drill destabilised boot
-    // (123 reflection lookups and formatted log writes on the loader thread while the engine is
-    // still building its object graph), and a drill that kills the process teaches that the latch
-    // is broken when it is not.
+    UE_LOGI("game_thread: patched ProcessEvent (relay followJmp-immune); inert until armed");
+    return true;
+}
+
+bool Install() {
+    if (g_installed.load(std::memory_order_acquire)) return true;
+    if (!g_hookTarget) {
+        UE_LOGE("game_thread: ProcessEvent was not patched at the loader's call -- the dispatcher is NOT live");
+        return false;
+    }
+    g_installed.store(true, std::memory_order_release);
+    UE_LOGI("game_thread: ProcessEvent armed; game-thread dispatcher live");
+    // After the arm, never before: run earlier the drill destabilised boot (123 reflection lookups and
+    // formatted log writes while the engine is still building its object graph), and a drill that kills
+    // the process teaches that the latch is broken when it is not.
     RunAvLatchDrill();
-    // The double-detour diagnostic (VOTVCOOP_PE_DIAG=1) lives in pe_diag.cpp and needs both
-    // TU-locals, final by this line.
-    pe_diag::ArmIfEnabled(reinterpret_cast<void*>(&ProcessEventDetour),
+    // The double-detour diagnostic (VOTVCOOP_PE_DIAG=1) lives in pe_diag.cpp and needs both TU-locals,
+    // final by this line; the relay targets the guard.
+    pe_diag::ArmIfEnabled(reinterpret_cast<void*>(&ProcessEventGuard),
                           reinterpret_cast<void*>(g_peTrampoline));
     return true;
 }
 
 void Uninstall() {
-    if (!g_installed) return;
+    if (!g_installed.load(std::memory_order_acquire)) return;
     ClearAllObservers();
     detail::ClearAllInterceptors();
     // Disable, never remove (hook.h, Retirement): the patch at ProcessEvent lifts so no new
@@ -596,7 +613,7 @@ void Uninstall() {
     hook_drill::SampleTrampoline("pre-disable", 0, reinterpret_cast<void*>(g_peTrampoline));
     hook::Disable(g_hookTarget);
     hook_drill::SampleTrampoline("post-disable", 0, reinterpret_cast<void*>(g_peTrampoline));
-    g_installed = false;
+    g_installed.store(false, std::memory_order_release);
     g_hookTarget = nullptr;
     // g_peTrampoline is MinHook's trampoline slot, not the engine's entry point, and MH_RemoveHook
     // frees that slot and writes the free-list link over its first bytes, so a removal clobbered
@@ -606,7 +623,7 @@ void Uninstall() {
     ::Sleep(50);
 }
 
-bool IsInstalled() { return g_installed; }
+bool IsInstalled() { return g_installed.load(std::memory_order_acquire); }
 
 void SetTransparentBypass(int ms) {
     g_bypassResumeFn.store(nullptr, std::memory_order_relaxed);  // pure timer mode

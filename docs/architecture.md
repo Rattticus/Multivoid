@@ -234,12 +234,26 @@ through (in 59.0.3071.15, the `+0x241D8` call, then the `+0x241E0` store), so a 
 between calls a null pointer: the crash at game start that the dumps show in the boot thread's hook
 installs `[V]`. That the lock ends it is `[RD]` until enough boots have run without it.
 
-One target needs more. `ProcessEvent` is detoured by UE4SS as well, whose PolyHook follows jump
-chains, and MinHook's classic relay is an indirect jump through an absolute pointer slot — a
-follower resolves it onto that slot and clobbers it. The relay for a shared target is therefore
-rewritten to a non-branching `MOV RAX, imm64 ; JMP RAX` form before it is enabled: the follower
-stops at the MOV and hooks the relay itself, absolute-jump semantics are unchanged, and the two
-detours compose.
+Three targets need more: `ProcessEvent`, the VM's script loop and `AActor::EndPlay`, which UE4SS
+detours as well. Two things make that safe.
+
+The order. Our patches go in on the loader's own call to `start_mod`, before it returns
+(`bootstrap/boot.cpp`). Under UE4SS's proxy that call runs on the game's main thread, before the
+exe's entry point: no engine code runs yet, and UE4SS's own threads, which resolve and patch the
+same three functions, do not exist yet. UE4SS then always finds our jump. Patched later from a
+second thread, the two engines wrote the same entries at once, and a patch that landed between our
+read of an entry and our write left our trampoline returning into it: in one boot every Blueprint
+call faulted for five seconds. Each patch's detour is a guard that tail-calls its trampoline until
+the boot thread's health check arms it. The function is found from the image alone (the loop by its
+references to the exec-handler table, `ue_wrap/core/script_loop`), and the arm checks it against the
+engine's own objects. `hook::VerifyEntries` re-reads each shared entry against what our patch left,
+at the arm and at the script gate's first hold.
+
+The relay. PolyHook follows jump chains, and MinHook's classic relay is an indirect jump through an
+absolute pointer slot — a follower resolves it onto that slot and clobbers it. The relay for a
+shared target is therefore rewritten to a non-branching `MOV RAX, imm64 ; JMP RAX` form before it
+is enabled: the follower stops at the MOV and hooks the relay itself, absolute-jump semantics are
+unchanged, and the two detours compose.
 
 ## Where the authority is going
 

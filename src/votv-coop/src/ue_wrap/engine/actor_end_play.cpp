@@ -22,8 +22,9 @@ namespace prof = ue_wrap::profile;
 // void AActor::EndPlay(const EEndPlayReason::Type Reason): this in RCX, the reason in EDX.
 using EndPlayFn = void(__fastcall*)(void* actor, uint32_t reason);
 EndPlayFn g_trampoline = nullptr;
+std::uintptr_t g_target = 0;           // the patched AActor::EndPlay, set by Patch
 
-std::atomic<bool> g_installed{false};
+std::atomic<bool> g_installed{false};  // armed: the patched function is the one Actor's vtable names
 
 // The sinks: a slot is written once with release and read with acquire.
 std::atomic<Sink> g_sinks[kMaxSinks] = {};
@@ -47,7 +48,8 @@ void RunSinksSEH(void* actor, Reason reason) {
     }
 }
 
-void __fastcall EndPlayDetour(void* actor, uint32_t reason) {
+// Not inlined, so the guard below stays a bare test and two tail jumps.
+__declspec(noinline) void __fastcall EndPlayDetour(void* actor, uint32_t reason) {
     if (actor && HasBegunPlay(actor)) {
         g_seen.fetch_add(1, std::memory_order_relaxed);
         if (GT::IsDefinitelyOffGameThread())
@@ -56,6 +58,36 @@ void __fastcall EndPlayDetour(void* actor, uint32_t reason) {
             RunSinksSEH(actor, static_cast<Reason>(reason));
     }
     g_trampoline(actor, reason);
+}
+
+// Until the arm, EndPlay runs as if no detour were there: the guard forwards every call.
+void __fastcall EndPlayGuard(void* actor, uint32_t reason) {
+    if (g_installed.load(std::memory_order_acquire)) {
+        EndPlayDetour(actor, reason);
+        return;
+    }
+    g_trampoline(actor, reason);
+}
+
+// AActor::EndPlay from the image alone: the one function whose body, past its prologue and stack cookie,
+// holds the begun-play test at kActorEndPlayBodyOff. Read past the prologue, so an entry another hooker
+// already jumps from is found as well. 0 unless exactly one.
+std::uintptr_t FindByCode() {
+    std::uintptr_t text = 0;
+    size_t textSize = 0;
+    if (!ue_wrap::MainTextRange(text, textSize)) return 0;
+    std::uintptr_t found = 0;
+    for (std::uintptr_t from = text; from < text + textSize;) {
+        const std::uintptr_t hit = ue_wrap::FindPatternIn(from, text + textSize - from, prof::kActorEndPlayBody);
+        if (!hit) break;
+        const std::uintptr_t fn = hit - prof::kActorEndPlayBodyOff;
+        if (ue_wrap::FunctionStart(hit) == fn) {
+            if (found) return 0;
+            found = fn;
+        }
+        from = hit + 1;
+    }
+    return found;
 }
 
 }  // namespace
@@ -67,14 +99,46 @@ bool HasBegunPlay(const void* actor) {
     return (state & prof::kActor_BegunPlayMask) == prof::kActor_HasBegunPlay;
 }
 
+bool Patch() {
+    if (g_target) return true;
+    const std::uintptr_t addr = FindByCode();
+    if (!addr) {
+        UE_LOGE("actor_end_play: AActor::EndPlay was not found from the image once (sdk_profile.h "
+                "kActorEndPlayBody) -- NOT patched, no actor's end of play is seen");
+        return false;
+    }
+    ue_wrap::hook::Init();  // idempotent
+    // UE4SS detours the same function (its HookEndPlay, on by default). Patched here, before it can run,
+    // it finds our jump and follows it into our relay: the immune relay, the one ProcessEvent and the
+    // script loop install through, lets both detours compose.
+    if (!ue_wrap::hook::Install(reinterpret_cast<void*>(addr), reinterpret_cast<void*>(&EndPlayGuard),
+                                reinterpret_cast<void**>(&g_trampoline), /*followJmpImmune=*/true)) {
+        UE_LOGE("actor_end_play: the detour on AActor::EndPlay@%p did not install -- no actor's end of play "
+                "is seen", reinterpret_cast<void*>(addr));
+        return false;
+    }
+    g_target = addr;
+    std::uintptr_t image = 0;
+    size_t imageSize = 0;
+    ue_wrap::MainModuleRange(image, imageSize);
+    UE_LOGI("actor_end_play: patched AActor::EndPlay (%p, exe+0x%zX); inert until armed",
+            reinterpret_cast<void*>(addr), static_cast<size_t>(addr - image));
+    return true;
+}
+
 bool Install() {
     if (g_installed.load(std::memory_order_acquire)) return true;
+    if (!g_target) {
+        UE_LOGE("actor_end_play: nothing was patched at the loader's call -- no actor's end of play is seen");
+        return false;
+    }
     // Where the engine finds it: RouteEndPlay calls EndPlay through the vtable, and Actor's own, read
-    // from its class default object, names the function every actor reaches through Super. Its first
-    // bytes are no guide: a detour installed before ours owns them.
+    // from its class default object, names the function every actor reaches through Super. It must be
+    // the patched one.
     void* const cdo = ue_wrap::reflection::FindClassDefaultObject(L"Actor");
     if (!cdo) {
-        UE_LOGE("actor_end_play: Default__Actor is not in the object array -- no actor's end of play is seen");
+        UE_LOGE("actor_end_play: Default__Actor is not in the object array -- NOT armed, no actor's end of play is "
+                "seen");
         return false;
     }
     uintptr_t image = 0;
@@ -84,35 +148,15 @@ bool Install() {
     const auto* const vtbl = *static_cast<const uintptr_t* const*>(cdo);
     const uintptr_t addr = inImage(reinterpret_cast<uintptr_t>(vtbl))
                                ? vtbl[prof::kActor_EndPlay_VtblOff / sizeof(uintptr_t)] : 0;
-    if (!inImage(addr) || !ue_wrap::MatchesAt(addr + prof::kActorEndPlayBodyOff, prof::kActorEndPlayBody)) {
-        UE_LOGE("actor_end_play: Actor's vtable at +0x%zX (%p) does not lead to AActor::EndPlay's begun-play "
-                "test on this build (sdk_profile.h kActor_EndPlay_VtblOff, kActorEndPlayBody) -- no actor's "
-                "end of play is seen", prof::kActor_EndPlay_VtblOff, reinterpret_cast<void*>(addr));
-        return false;
-    }
-    // Whose bytes the entry held: the engine's prologue, a jump (rel32, rel8 or through a pointer, the
-    // forms a detour writes), or something else.
-    const auto* entry = reinterpret_cast<const uint8_t*>(addr);
-    const char* const held = ue_wrap::MatchesAt(addr, prof::kActorEndPlayPrologue) ? "the engine's prologue"
-                             : (entry[0] == 0xE9 || entry[0] == 0xEB || (entry[0] == 0xFF && entry[1] == 0x25))
-                                 ? "another detour's jump, which now runs after ours"
-                                 : "neither the engine's prologue nor a jump";
-    ue_wrap::hook::Init();  // idempotent
-    // UE4SS detours the same function (its HookEndPlay, on by default), after ours or before it. After,
-    // it follows the jmp it finds there: it resolved EndPlay into our relay and patched that, and the
-    // host hung at boot; the immune relay, the one ProcessEvent and the script loop install through,
-    // lets both detours compose. Before, MinHook carries its jump into our trampoline: with the boot's
-    // VOTVCOOP_PE_INSTALL_DELAY_MS holding our installs back, both peers' entries held UE4SS's jump,
-    // and the sinks still heard both peers' destroys in a drill.
-    if (!ue_wrap::hook::Install(reinterpret_cast<void*>(addr), reinterpret_cast<void*>(&EndPlayDetour),
-                                reinterpret_cast<void**>(&g_trampoline), /*followJmpImmune=*/true)) {
-        UE_LOGE("actor_end_play: the detour on AActor::EndPlay@%p did not install -- no actor's end of play "
-                "is seen", reinterpret_cast<void*>(addr));
+    if (addr != g_target) {
+        UE_LOGE("actor_end_play: Actor's vtable at +0x%zX names %p, not the patched %p (sdk_profile.h "
+                "kActor_EndPlay_VtblOff) -- NOT armed, no actor's end of play is seen",
+                prof::kActor_EndPlay_VtblOff, reinterpret_cast<void*>(addr), reinterpret_cast<void*>(g_target));
         return false;
     }
     g_installed.store(true, std::memory_order_release);
-    UE_LOGI("actor_end_play: AActor::EndPlay detoured (%p, exe+0x%zX; its entry held %s) -- every actor that "
-            "began play is seen ending it", reinterpret_cast<void*>(addr), static_cast<size_t>(addr - image), held);
+    UE_LOGI("actor_end_play: armed on AActor::EndPlay (exe+0x%zX, the function Actor's vtable names) -- every "
+            "actor that began play is seen ending it", static_cast<size_t>(addr - image));
     return true;
 }
 

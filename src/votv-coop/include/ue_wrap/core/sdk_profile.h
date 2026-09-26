@@ -75,12 +75,11 @@ inline constexpr const char* kSigSaveGameToSlot =
 // EndPlay, in all 110 vtables that hold it, sits AActor::ProcessEvent (slot 68), the only neighbor that
 // calls UObject::ProcessEvent. image+0x28C5A50 on 0.9.0n.
 inline constexpr size_t kActor_EndPlay_VtblOff = 0x340;
-// What the slot must lead to, read past the prologue and the stack cookie (bytes 0 to 29), where a
-// detour writes its jump: the engine's own begun-play test, the top two bits of the byte at +0x5C
-// against 0x80, which the detour repeats. The prologue itself says whose bytes the entry held.
+// How AActor::EndPlay is found in the image, read past the prologue and the stack cookie (bytes 0 to
+// 29), where a detour writes its jump: the engine's own begun-play test, the top two bits of the byte at
+// +0x5C against 0x80, which the detour repeats.
 inline constexpr size_t      kActorEndPlayBodyOff  = 30;
 inline constexpr const char* kActorEndPlayBody     = "48 8B F1 8B EA 0F B6 49 5C 0F B6 C1 24 C0 3C 80";
-inline constexpr const char* kActorEndPlayPrologue = "4C 8B DC 55 56 48 81 EC 28 01 00 00";
 inline constexpr size_t  kActor_BegunPlayByte = 0x5C;  // EActorBeginPlayState in its top two bits
 inline constexpr uint8_t kActor_BegunPlayMask = 0xC0;
 inline constexpr uint8_t kActor_HasBegunPlay  = 0x80;  // HasBegunPlay (2) in those bits

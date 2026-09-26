@@ -1,9 +1,9 @@
 // ue_wrap/core/script_gate.cpp -- see ue_wrap/core/script_gate.h.
 // The watch surface's precedent (Relay's README) is named in the header.
 //
-// The loop is derived, not pattern-scanned (ue_wrap/core/script_loop): the filled exec-handler
-// table's two local-call handlers must name the same function, and the image alone must name it
-// too, the one function that references the table with the loop's shape.
+// The loop is derived, not pattern-scanned (ue_wrap/core/script_loop): the patch finds it from the
+// image alone, before the static initializers have filled the exec-handler table, and the arm
+// requires the filled table's two local-call handlers to name the same function.
 
 #include "ue_wrap/core/script_gate.h"
 
@@ -36,8 +36,8 @@ namespace P  = ue_wrap::profile;
 using LoopFn = std::uintptr_t(__fastcall*)(void* ctx, void* stack, void* result);
 
 LoopFn g_trampoline = nullptr;
-void*  g_target = nullptr;
-std::atomic<bool> g_installed{false};
+void*  g_target = nullptr;         // the patched loop, set by Patch
+std::atomic<bool> g_installed{false};   // armed: the patched loop is the one the handlers name
 std::atomic<bool> g_enabled{false};
 std::atomic<bool> g_countOn{false};
 
@@ -222,7 +222,8 @@ const Entry* FirstMatch(Entry* table, std::uint64_t key, void* fn) {
     return nullptr;
 }
 
-std::uintptr_t __fastcall LoopDetour(void* ctx, void* stack, void* result) {
+// Not inlined, so the guard below stays a bare test and two tail jumps.
+__declspec(noinline) std::uintptr_t __fastcall LoopDetour(void* ctx, void* stack, void* result) {
     // The tax every script call pays for the life of the process: one relaxed load and a
     // predicted branch while disabled; enabled, one hashed probe per key space, and, on a name hit
     // whose entry is class-scoped, one read of the body's owning class's name.
@@ -278,50 +279,69 @@ std::uintptr_t __fastcall LoopDetour(void* ctx, void* stack, void* result) {
     return rv;
 }
 
+// Until the arm, the patched loop runs as if no detour were there: the guard forwards every body.
+std::uintptr_t __fastcall LoopGuard(void* ctx, void* stack, void* result) {
+    if (g_installed.load(std::memory_order_acquire)) return LoopDetour(ctx, stack, result);
+    return g_trampoline(ctx, stack, result);
+}
+
 }  // namespace
+
+bool Patch() {
+    if (g_target) return true;
+    std::uintptr_t* gnatives = script_loop::ResolveGNatives();
+    int candidates = 0;
+    const std::uintptr_t loop =
+        gnatives ? script_loop::ByCode(reinterpret_cast<std::uintptr_t>(gnatives), candidates) : 0;
+    uintptr_t base = 0; size_t size = 0;
+    ue_wrap::MainModuleRange(base, size);
+    if (!loop) {
+        UE_LOGE("script_gate: the loop was not found from the image (table %p, %d functions reference it) -- "
+                "NOT patched", static_cast<void*>(gnatives), candidates);
+        return false;
+    }
+    if (!hook::Init()) return false;
+    // The loop is a function UE4SS's own PolyHook detours for its Lua script hooks, so the relay must
+    // be followJmp-immune, as ProcessEvent's is.
+    if (!hook::Install(reinterpret_cast<void*>(loop), reinterpret_cast<void*>(&LoopGuard),
+                       reinterpret_cast<void**>(&g_trampoline), /*followJmpImmune=*/true)) {
+        return false;
+    }
+    g_target = reinterpret_cast<void*>(loop);
+    UE_LOGI("script_gate: patched the VM's script loop at exe+0x%llX (the one of %d functions that reference the "
+            "exec-handler table at %p with the loop's shape); inert until armed",
+            static_cast<unsigned long long>(loop - base), candidates, static_cast<void*>(gnatives));
+    return true;
+}
 
 bool Install() {
     if (g_installed.load(std::memory_order_acquire)) return true;
+    if (!g_target) {
+        UE_LOGE("script_gate: nothing was patched at the loader's call -- NOT armed");
+        return false;
+    }
     uintptr_t base = 0; size_t size = 0;
     ue_wrap::MainModuleRange(base, size);
     std::uintptr_t* gnatives = script_loop::ResolveGNatives();
     if (!script_loop::TableFilled(gnatives)) {
-        UE_LOGE("script_gate: the exec-handler table did not resolve or validate (%p) -- NOT installed",
+        UE_LOGE("script_gate: the exec-handler table did not resolve or is not filled (%p) -- NOT armed",
                 static_cast<void*>(gnatives));
         return false;
     }
     std::uintptr_t virt = 0, fin = 0;
     const std::uintptr_t loop = script_loop::ByHandlers(gnatives, virt, fin);
-    if (!loop) {
-        UE_LOGE("script_gate: the two handlers disagree on the body loop (local-virtual -> exe+0x%llX, "
-                "local-final -> exe+0x%llX) -- NOT installed",
+    if (loop != reinterpret_cast<std::uintptr_t>(g_target)) {
+        UE_LOGE("script_gate: the handlers name another loop than the patched one (local-virtual -> exe+0x%llX, "
+                "local-final -> exe+0x%llX, patched exe+0x%llX) -- NOT armed, every watch will be refused",
                 static_cast<unsigned long long>(virt ? virt - base : 0),
-                static_cast<unsigned long long>(fin ? fin - base : 0));
+                static_cast<unsigned long long>(fin ? fin - base : 0),
+                static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(g_target) - base));
         return false;
     }
-    int candidates = 0;
-    const std::uintptr_t byCode = script_loop::ByCode(reinterpret_cast<std::uintptr_t>(gnatives), candidates);
-    if (byCode != loop) {
-        UE_LOGE("script_gate: the image alone names another loop (exe+0x%llX, of %d functions that reference the "
-                "table) than the handlers (exe+0x%llX) -- NOT installed",
-                static_cast<unsigned long long>(byCode ? byCode - base : 0), candidates,
-                static_cast<unsigned long long>(loop - base));
-        return false;
-    }
-    if (!hook::Init()) return false;
-    void* target = reinterpret_cast<void*>(loop);
-    // The loop is a function UE4SS's own PolyHook detours for its Lua script hooks, so the relay
-    // must be followJmp-immune, as ProcessEvent's is.
-    if (!hook::Install(target, reinterpret_cast<void*>(&LoopDetour),
-                       reinterpret_cast<void**>(&g_trampoline), /*followJmpImmune=*/true)) {
-        return false;
-    }
-    g_target = target;
     g_installed.store(true, std::memory_order_release);
-    UE_LOGI("script_gate: installed on the VM's script loop at exe+0x%llX (both exec handlers name it, and so does "
-            "the image alone, the one of %d functions that reference the table at %p with its shape); disabled "
-            "until something holds it", static_cast<unsigned long long>(loop - base), candidates,
-            static_cast<void*>(gnatives));
+    UE_LOGI("script_gate: armed on the VM's script loop at exe+0x%llX (both exec handlers name the patched "
+            "function); disabled until something holds it",
+            static_cast<unsigned long long>(loop - base));
     return true;
 }
 
