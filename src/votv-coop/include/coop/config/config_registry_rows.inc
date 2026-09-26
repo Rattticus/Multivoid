@@ -577,6 +577,10 @@ CFG_STRING(server_upgrade_drill, "server_upgrade_drill", "dev", "", "VOTVCOOP_SE
     "Drill (BOTH peers): a client installs an upgrade into a server box and takes one out. apply: the host "
     "applies both; refuse: the host refuses both, as if each had lost its race, and the client sees its install "
     "refunded and its take-out's upgrade go. Lines tagged [SRV-UPG-DRILL].")
+CFG_STRING(power_decay_drill, "power_decay_drill", "dev", "", "VOTVCOOP_POWER_DECAY_DRILL", false,
+    "Drill (BOTH peers): the generators' 30 s decay tick. watch: each peer says every tick's verdict, a client "
+    "refusing its own and the host running its own, and the client's second tick prints the DONE line; red: a "
+    "client runs its own tick, the negative control. Lines tagged [POWER-DECAY].")
 CFG_STRING(toggle_drill, "toggle_drill", "dev", "", "VOTVCOOP_TOGGLE_DRILL", false,
     "Drill (BOTH peers), by kind: garage, tap (a faucet or a sink), locker or lid. The device of that kind "
     "with the lowest key in its lane, toggled through its own verb by the client and toggled back by "

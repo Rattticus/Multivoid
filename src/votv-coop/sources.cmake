@@ -206,6 +206,7 @@ set(VOTVCOOP_SOURCES
     src/coop/world/day_edge.cpp
     src/coop/world/sky_sync.cpp
     src/coop/interactables/power_sync.cpp
+    src/coop/world/power_grid.cpp
     src/coop/interactables/atv_sync.cpp
     src/coop/interactables/atv_condition_sync.cpp
     src/coop/interactables/atv_corrector.cpp

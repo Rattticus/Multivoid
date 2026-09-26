@@ -153,6 +153,9 @@ an ordinary press of the door.
 The power panel carries five latched breakers, so it has its own lane with a five-bit mask, any
 peer flips a breaker, and the receiver mirrors the panel's own levers and LEDs; the effects on
 servers, doors and lights are synced by their own channels (`coop/interactables/power_sync`).
+The generators behind the panel wear on a 30 s decay tick that rolls its own dice; the host runs
+it and a client in its announced world refuses its own at the body, so a generator breaks only
+where the host's dice broke it (`coop/world/power_grid`).
 The wind turbine's heading integrator is not saved and chases the synced wind at a degree per
 second, so the host mirrors six driver floats about once a second and the turbine's own tick
 interpolates (`coop/interactables/turbine_sync`). The base window's dirt and the wall grime are
