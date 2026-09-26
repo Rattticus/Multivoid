@@ -656,6 +656,8 @@ void OnDisconnect() {
             if (void* d = D::DisherInstance()) {
                 if (D::RestoreDisher(d))
                     UE_LOGI("dish_sync: ticker_disher restored (native BeginPlay re-arm)");
+                else
+                    UE_LOGW("dish_sync: ticker_disher restore failed -- its ReceiveBeginPlay could not be called");
             } else {
                 UE_LOGW("dish_sync: ticker_disher restore declined -- no live instance");
             }
