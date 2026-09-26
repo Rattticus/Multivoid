@@ -96,7 +96,9 @@ std::uintptr_t ByCode(std::uintptr_t gnatives, int& candidates) {
     int n = 0;
     const auto* p = reinterpret_cast<const std::uint8_t*>(text);
     for (size_t i = 1; i + 6 < textSize; ++i) {
-        if (p[i] != 0x8D) continue;
+        const void* op = std::memchr(p + i, 0x8D, textSize - 6 - i);
+        if (!op) break;
+        i = static_cast<size_t>(static_cast<const std::uint8_t*>(op) - p);
         std::uintptr_t target;
         if (!DecodeLeaRip(p + i - 1, target) || target != gnatives) continue;
         const std::uintptr_t fn = ue_wrap::FunctionStart(text + i - 1);

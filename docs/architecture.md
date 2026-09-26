@@ -247,11 +247,12 @@ an entry and our write left our trampoline returning into it: in one boot every 
 faulted for five seconds. Each patch's detour is a guard that tail-calls its trampoline until the
 boot thread's health check arms it. The function is found from the image alone (the loop by its
 references to the exec-handler table, `ue_wrap/core/script_loop`), and the arm checks it against the
-engine's own objects. Under the proxy the game's start waits for the patches, and the boot log
-reports what they took. `hook::VerifyEntries` re-reads each shared entry against what our patch
-left, at the arm and at the script gate's first hold. A foreign patch no longer than our jump,
-written between our read and our write, is overwritten whole and leaves nothing to compare: the
-order, not the check, is what prevents the race.
+engine's own objects. Under the proxy the game's start waits for these scans, so each anchors on its
+pattern's longest run of concrete bytes (`ue_wrap/core/sig_scan`), and the boot log reports what the
+patches took. `hook::VerifyEntries` re-reads each shared entry against what our patch left, at the
+arm and at the script gate's first hold. A foreign patch no longer than our jump, written between
+our read and our write, is overwritten whole and leaves nothing to compare: the order, not the
+check, is what prevents the race.
 
 The relay. PolyHook follows jump chains, and MinHook's classic relay is an indirect jump through an
 absolute pointer slot — a follower resolves it onto that slot and clobbers it. The relay for a

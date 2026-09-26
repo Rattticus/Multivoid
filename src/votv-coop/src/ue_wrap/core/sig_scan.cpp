@@ -91,18 +91,36 @@ uintptr_t FunctionStart(uintptr_t pc) {
     return 0;
 }
 
+// How UE4SS pays for its scan: one pass for every signature, split across eight threads
+// (SinglePassSigScanner.cpp). Ours scans for a handful, on the loader's call where the game's start
+// waits, so it makes each pass cheap instead: the anchor is the pattern's longest run of concrete
+// bytes, not its first byte, which is usually a REX prefix (0x48 alone is 7% of the exe's code).
 uintptr_t FindPatternIn(uintptr_t base, size_t size, const char* pattern) {
     const std::vector<PatByte> pat = ParsePattern(pattern);
-    if (pat.empty() || size < pat.size()) return 0;
-
-    const auto* bytes = reinterpret_cast<const uint8_t*>(base);
-    const size_t last = size - pat.size();
     const size_t n = pat.size();
-    for (size_t i = 0; i <= last; ++i) {
-        size_t j = 0;
-        for (; j < n; ++j) {
-            if (!pat[j].wild && bytes[i + j] != pat[j].value) break;
+    if (n == 0 || size < n) return 0;
+    size_t at = 0, len = 0;
+    for (size_t i = 0, j = 0; i < n; i = j + 1) {
+        for (j = i; j < n && !pat[j].wild; ++j) {
         }
+        if (j - i > len) {
+            at = i;
+            len = j - i;
+        }
+    }
+    if (len == 0) return base;  // all wildcards: the first position matches
+    // Horspool on the run: the byte under the run's last position says how far the run can move
+    // without passing an occurrence of itself, so no match of the whole pattern is passed either.
+    size_t shift[256];
+    for (size_t& s : shift) s = len;
+    for (size_t k = 0; k + 1 < len; ++k) shift[pat[at + k].value] = len - 1 - k;
+    const auto* bytes = reinterpret_cast<const uint8_t*>(base);
+    const size_t last = size - n;
+    const size_t tail = at + len - 1;
+    for (size_t i = 0; i <= last; i += shift[bytes[i + tail]]) {
+        if (bytes[i + tail] != pat[tail].value) continue;
+        size_t j = 0;
+        while (j < n && (pat[j].wild || bytes[i + j] == pat[j].value)) ++j;
         if (j == n) return base + i;
     }
     return 0;
