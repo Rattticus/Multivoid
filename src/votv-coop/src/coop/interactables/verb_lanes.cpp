@@ -2,6 +2,7 @@
 
 #include "coop/interactables/verb_lanes.h"
 
+#include "coop/interactables/desk_verb_intent.h"
 #include "coop/interactables/door_state_verbs.h"
 #include "coop/interactables/door_verb_intent.h"
 #include "coop/interactables/drone_call_intent.h"
@@ -21,6 +22,7 @@ void Install(coop::net::Session& session) {
     coop::lightgroup_verbs::Install(&session);   // a light group's state moves at its runTrigger: the host sends, a client refuses its own
     coop::toggle_verbs::Install(&session);       // a symmetric device's state goes at the verb that writes it: each peer sends its own
     coop::keypad_verbs::Install(&session);       // a keypad's verbs: the host sends each, a client's own entries run on the host
+    coop::desk_verb_intent::Install(&session);   // a client's press on the desk's save family is run by the host
 }
 
 void Tick(coop::net::Session& session) {
@@ -30,12 +32,14 @@ void Tick(coop::net::Session& session) {
     coop::lightgroup_verbs::Tick();     // settle the light group watch
     coop::toggle_verbs::Tick();         // settle the toggle verb watches
     coop::keypad_verbs::Tick(session);  // settle the keypad watches; HOST: run queued keypad intents
+    { ue_wrap::ScopedWalkTimer _w{"sync:desk_verb"}; coop::desk_verb_intent::Tick(session); }  // settle its seams; HOST: run one queued desk press a tick a client
 }
 
 void OnPeerLeft(uint8_t slot) {
     coop::drone_call_intent::OnPeerLeft(slot);  // its console presses
     coop::door_verb_intent::OnPeerLeft(slot);   // its door verbs
     coop::keypad_verbs::OnPeerLeft(slot);       // its keypad entries
+    coop::desk_verb_intent::OnPeerLeft(slot);   // its desk presses
 }
 
 void OnDisconnect() {
@@ -45,6 +49,7 @@ void OnDisconnect() {
     coop::lightgroup_verbs::OnDisconnect();
     coop::toggle_verbs::OnDisconnect();
     coop::keypad_verbs::OnDisconnect();
+    coop::desk_verb_intent::OnDisconnect();
 }
 
 }  // namespace coop::verb_lanes

@@ -206,6 +206,9 @@ inline Lane LaneForKind(ReliableKind k) {
     case ReliableKind::ClientWorldReady:  return Lane::Normal;
     case ReliableKind::DishCalib:         return Lane::Normal;
     case ReliableKind::DishCalibIntent:   return Lane::Normal;
+    // A desk press names what it acts on by content, and its answers go to the presser alone: ordered
+    // against nothing. The default, by decision.
+    case ReliableKind::DeskVerb:          return Lane::Normal;
     default:                           return Lane::Normal;
     }
 }

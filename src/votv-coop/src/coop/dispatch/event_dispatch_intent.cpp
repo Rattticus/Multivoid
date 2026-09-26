@@ -21,6 +21,7 @@
 #include "coop/interactables/keypad_verbs.h"  // CLIENT->HOST digit, submit, cancel, keycard, reset
 #include "coop/interactables/drone_call_intent.h"  // CLIENT->HOST press of the drone console
 #include "coop/creatures/kerfus_intent.h"  // CLIENT->HOST a Kerfus verb (on/off, fix the servers, pat)
+#include "coop/interactables/desk_verb_intent.h"  // a press on the main desk's save family, and its answers
 #include "coop/items/coingun_sync.h"
 #include "coop/items/order_queue_sync.h"  // HOST->CLIENT the delivery order queue
 #include "coop/items/order_sync.h"
@@ -427,6 +428,20 @@ bool HandleIntentEvent(net::Session& session,
         net::KerfusIntentPayload p{};
         std::memcpy(&p, msg.payload, sizeof(p));
         coop::kerfus_intent::OnIntent(session, p, static_cast<uint8_t>(msg.senderPeerSlot));
+        break;
+    }
+    case net::ReliableKind::DeskVerb: {
+        // CLIENT->HOST a press on the desk's save family its gate refused; HOST->that CLIENT the verdict
+        // and the press's own effects for the presser's machine. The identity, the reach and the rate live
+        // in the module, the format here. coop::desk_verb_intent.
+        if (msg.payloadLen < sizeof(net::DeskVerbPayload)) {
+            UE_LOGW("event_feed: DeskVerb payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::DeskVerbPayload));
+            break;
+        }
+        net::DeskVerbPayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        coop::desk_verb_intent::OnMessage(session, p, msg.senderPeerSlot);
         break;
     }
     case net::ReliableKind::BroomStroke: {

@@ -1,0 +1,388 @@
+// coop/interactables/desk_verb_intent.cpp -- see coop/interactables/desk_verb_intent.h.
+
+#include "coop/interactables/desk_verb_intent.h"
+
+#include "coop/element/element.h"
+#include "coop/element/intent_authority.h"
+#include "coop/element/registry.h"
+#include "coop/interactables/desk_verb_effects.h"
+#include "coop/interactables/signal_wire.h"
+#include "coop/net/protocol.h"
+#include "coop/net/session.h"
+#include "coop/player/players_registry.h"
+#include "coop/player/remote_player.h"
+#include "coop/props/prop_sound.h"
+
+#include "ue_wrap/core/log.h"
+#include "ue_wrap/core/script_gate.h"
+#include "ue_wrap/desk/comp_pane.h"
+#include "ue_wrap/desk/console_desk.h"
+#include "ue_wrap/desk/desk_press.h"
+#include "ue_wrap/desk/drive_chain.h"
+#include "ue_wrap/desk/saved_signals.h"
+#include "ue_wrap/desk/signal_dynamic.h"
+
+#include <atomic>
+#include <chrono>
+#include <deque>
+
+namespace coop::desk_verb_intent {
+namespace {
+
+namespace EL = coop::element;
+namespace sg = ue_wrap::script_gate;
+namespace DP = ue_wrap::desk_press;
+namespace DC = ue_wrap::drive_chain;
+namespace SD = ue_wrap::signal_dynamic;
+namespace DV = coop::net::desk_verb;
+using coop::net::DeskVerbPayload;
+using Clock = std::chrono::steady_clock;
+
+constexpr int kTagPress = 0x44565001;  // 'DVP' 1
+constexpr const wchar_t* kDeskClass = L"analogDScreenTest_C";
+
+// The five buttons by the desk's component variables (analogDScreenTest.cpp :2860, :3048, :2606, :2691, :3128).
+constexpr const wchar_t* kButtonMember[DV::kButtons] = {
+    L"button_downl_saveSig1", L"button_downl_delSig", L"button_play_left", L"button_play_saveSig",
+    L"button_comp_upload"};
+const char* const kButtonName[DV::kButtons] = {"save", "delete", "deck drive", "send", "upload"};
+
+// The console lanes' reach, an arm's length, measured to the desk's colliding bounds.
+constexpr float kDeskReachUU = 400.0f;
+
+// A press is a person's click; the bucket bounds a stalled client's backlog, not a player. A press past a full
+// queue is dropped unanswered and said at most this often, so a flooding client costs the host no log or reply per
+// message (the Kerfus lane's shape, kerfus_intent.cpp).
+constexpr float    kBurst = 6.0f;
+constexpr float    kPerSecond = 3.0f;
+constexpr size_t   kMaxPending = 8;
+constexpr uint64_t kSayEveryMs = 10000;
+
+std::atomic<coop::net::Session*> g_session{nullptr};
+bool     g_watched = false;
+bool     g_saidLive = false;
+bool     g_saidOffline = false;
+uint32_t g_pressSeq = 0;  // CLIENT: this machine's press count
+
+struct Bucket {
+    float             tokens = kBurst;
+    Clock::time_point last{};
+    Clock::time_point nextSay{};
+};
+Bucket g_rate[coop::net::kMaxPeers];
+std::deque<DeskVerbPayload> g_pending[coop::net::kMaxPeers];
+bool g_waitSaid[coop::net::kMaxPeers] = {};
+
+unsigned long long g_sent = 0, g_ran = 0, g_refused = 0, g_dropped = 0, g_heard = 0;
+
+bool TakeToken(uint8_t slot) {
+    Bucket& b = g_rate[slot];
+    const Clock::time_point now = Clock::now();
+    if (b.last != Clock::time_point{}) {
+        b.tokens += kPerSecond * std::chrono::duration<float>(now - b.last).count();
+        if (b.tokens > kBurst) b.tokens = kBurst;
+    }
+    b.last = now;
+    if (b.tokens < 1.0f) return false;
+    b.tokens -= 1.0f;
+    return true;
+}
+
+// ---- what a button acts on ----------------------------------------------------------------------------------
+
+// As one machine's desk shows it: DeskVerbPayload's op-0 fields.
+struct Seen {
+    uint32_t driveEid = 0;
+    uint64_t driveRow = 0, selectedRow = 0, compRow = 0;
+    float    signal[4] = {};
+    bool     signalArmed = false;
+};
+
+// A row's cross-peer identity, 0 for a row with no data (size 0, the empty drive's and refiner's).
+uint64_t HashOf(const SD::Row& r) {
+    return r.size > 0 ? coop::signal_wire::ContentHash(coop::signal_wire::Serialize(r, false)) : 0;
+}
+
+uint64_t RowAt(int32_t index) {
+    SD::Row r;
+    if (index < 0 || index >= ue_wrap::saved_signals::Count() || !ue_wrap::saved_signals::ReadRow(index, r)) return 0;
+    return HashOf(r);
+}
+
+int32_t FindRow(uint64_t hash) {
+    if (!hash) return -1;
+    const int32_t n = ue_wrap::saved_signals::Count();
+    for (int32_t i = 0; i < n; ++i)
+        if (RowAt(i) == hash) return i;
+    return -1;
+}
+
+void DriveIn(int role, Seen& out) {
+    void* slot = DC::SlotActor(role);
+    void* drive = slot ? DC::SlotDrive(slot) : nullptr;
+    if (!drive) return;
+    out.driveEid = static_cast<uint32_t>(EL::Registry::Get().EidForActor(drive));
+    SD::Row r;
+    if (DC::ReadDriveRow(drive, r)) out.driveRow = HashOf(r);
+}
+
+Seen Look(void* desk, uint8_t button) {
+    Seen s;
+    if (button == DV::kSave || button == DV::kDelete) {
+        ue_wrap::console_desk::CoordSignal sig;
+        if (ue_wrap::console_desk::ReadCoordSignal(sig)) {
+            s.signal[0] = sig.x;
+            s.signal[1] = sig.y;
+            s.signal[2] = sig.z;
+            s.signal[3] = sig.frequency;
+            s.signalArmed = !sig.objectName.empty() && sig.objectName != L"None";
+        }
+    } else if (button == DV::kDeckDrive || button == DV::kDeckSend) {
+        if (button == DV::kDeckDrive) DriveIn(DC::kRoleDeskPlay, s);
+        s.selectedRow = RowAt(DP::SelectedRow(desk));
+    } else if (button == DV::kUpload) {
+        DriveIn(DC::kRoleDeskComp, s);
+        SD::Row r;
+        void* base = ue_wrap::comp_pane::CompDataPtr();
+        if (base && SD::ReadStruct(base, r)) s.compRow = HashOf(r);
+    }
+    return s;
+}
+
+// Where what the presser saw and what this desk shows first differ, for what the button acts on; null when
+// they agree. The caught signal compares exactly: every non-catcher copy is the catcher's bytes.
+const char* Differs(const DeskVerbPayload& p, const Seen& here) {
+    switch (p.button) {
+    case DV::kSave:
+    case DV::kDelete:
+        if ((p.signalArmed != 0) != here.signalArmed) return "the caught signal";
+        for (int i = 0; i < 4; ++i)
+            if (here.signalArmed && p.signal[i] != here.signal[i]) return "the caught signal";
+        return nullptr;
+    case DV::kDeckDrive:
+        if (p.driveEid != here.driveEid) return "the deck's drive";
+        return p.driveRow != here.driveRow ? "the deck drive's data" : nullptr;
+    case DV::kUpload:
+        if (p.driveEid != here.driveEid) return "the refiner's drive";
+        if (p.driveRow != here.driveRow) return "the refiner drive's data";
+        return p.compRow != here.compRow ? "the refiner's data" : nullptr;
+    default:
+        return nullptr;
+    }
+}
+
+// Send reads the deck's selected row; the drive button does when an empty drive sits in the slot (export).
+bool ReadsSelectedRow(const DeskVerbPayload& p) {
+    return p.button == DV::kDeckSend || (p.button == DV::kDeckDrive && p.driveEid != 0 && p.driveRow == 0);
+}
+
+// ---- the client's gate --------------------------------------------------------------------------------------
+
+coop::net::Session* ClientSession() {
+    auto* s = g_session.load(std::memory_order_acquire);
+    return (s && s->running() && s->role() == coop::net::Role::Client) ? s : nullptr;
+}
+
+int ButtonOf(void* desk, void* component) {
+    if (!component) return -1;
+    for (int b = 0; b < DV::kButtons; ++b)
+        if (DP::Member(desk, kButtonMember[b]) == component) return b;
+    return -1;
+}
+
+sg::Verdict OnPressPre(const sg::Call& c) {
+    auto* s = ClientSession();
+    if (!s || !c.object) return sg::Verdict::Run;  // the host's presses, its replays and single player run as ever
+    const int button = ButtonOf(c.object, DP::Pressed(c.function, c.locals));
+    if (button < 0) return sg::Verdict::Run;  // every other button runs where it is pressed (P1)
+    const Seen seen = Look(c.object, static_cast<uint8_t>(button));
+    DeskVerbPayload p{};
+    p.op = DV::kOpPress;
+    p.button = static_cast<uint8_t>(button);
+    p.seq = ++g_pressSeq;
+    p.driveEid = seen.driveEid;
+    p.driveRow = seen.driveRow;
+    p.selectedRow = seen.selectedRow;
+    p.compRow = seen.compRow;
+    for (int i = 0; i < 4; ++i) p.signal[i] = seen.signal[i];
+    p.signalArmed = seen.signalArmed ? 1 : 0;
+    if (!s->connected()) {
+        if (!g_saidOffline) {
+            g_saidOffline = true;
+            UE_LOGW("desk_verb: CLIENT refused a %s press while not connected -- nothing to ask", kButtonName[button]);
+        }
+        return sg::Verdict::Cancel;
+    }
+    s->SendReliable(coop::net::ReliableKind::DeskVerb, &p, static_cast<int>(sizeof(p)));
+    ++g_sent;
+    UE_LOGI("desk_verb: CLIENT refused its %s press #%u and asked the host (drive eid=%u row=%016llx selected=%016llx "
+            "comp=%016llx signal=%u)", kButtonName[button], p.seq, p.driveEid,
+            static_cast<unsigned long long>(p.driveRow), static_cast<unsigned long long>(p.selectedRow),
+            static_cast<unsigned long long>(p.compRow), static_cast<unsigned>(p.signalArmed));
+    return sg::Verdict::Cancel;
+}
+
+void OnVerdict(const DeskVerbPayload& p) {
+    ++g_heard;
+    const char* name = p.button < DV::kButtons ? kButtonName[p.button] : "?";
+    if (p.verdict == DV::kRan) {
+        UE_LOGI("desk_verb: CLIENT press #%u (%s) ran on the host", p.seq, name);
+        return;
+    }
+    UE_LOGI("desk_verb: CLIENT press #%u (%s) refused by the host (verdict %u)", p.seq, name,
+            static_cast<unsigned>(p.verdict));
+    coop::prop_sound::PlayDenyClick(coop::players::Registry::Get().Local());
+}
+
+// ---- the host -----------------------------------------------------------------------------------------------
+
+void Answer(coop::net::Session& s, uint8_t slot, const DeskVerbPayload& press, uint8_t verdict) {
+    DeskVerbPayload a{};
+    a.op = DV::kOpVerdict;
+    a.button = press.button;
+    a.verdict = verdict;
+    a.seq = press.seq;
+    s.SendReliableToSlot(slot, coop::net::ReliableKind::DeskVerb, &a, static_cast<int>(sizeof(a)));
+}
+
+void Refuse(coop::net::Session& s, uint8_t slot, const DeskVerbPayload& p, uint8_t verdict, const char* why) {
+    ++g_refused;
+    UE_LOGI("desk_verb: HOST refused slot %u's %s press #%u -- %s", static_cast<unsigned>(slot),
+            kButtonName[p.button], p.seq, why);
+    Answer(s, slot, p, verdict);
+}
+
+// One press, run or refused and then consumed, or left at the head of its queue while the host has no body for
+// its presser yet or the effects' seams are settling: a window, not a verdict.
+bool Execute(coop::net::Session& s, const DeskVerbPayload& p, uint8_t slot) {
+    void* desk = ue_wrap::console_desk::Instance();
+    void* button = desk ? DP::Member(desk, kButtonMember[p.button]) : nullptr;
+    if (!button || desk_verb_effects::Refused()) {
+        Refuse(s, slot, p, DV::kUnavailable, button ? "the effects' seams are refused" : "no desk or no button");
+        return true;
+    }
+    if (!desk_verb_effects::Ready()) return false;
+    const EL::IntentSubject subj = EL::IntentTarget::ForClientIntent(s, slot, kDeskReachUU).Authorize(desk);
+    if (subj.outcome == EL::IntentOutcome::NoBody) {
+        if (!g_waitSaid[slot]) {
+            g_waitSaid[slot] = true;
+            UE_LOGI("desk_verb: slot %u's desk presses wait: the host has no body for it yet",
+                    static_cast<unsigned>(slot));
+        }
+        return false;
+    }
+    if (!subj) {
+        Refuse(s, slot, p, DV::kFar, EL::OutcomeName(subj.outcome));
+        return true;
+    }
+    if (const char* what = Differs(p, Look(desk, p.button))) {
+        Refuse(s, slot, p, DV::kMissed, what);
+        return true;
+    }
+    int32_t row = -1;
+    if (ReadsSelectedRow(p)) {
+        row = FindRow(p.selectedRow);
+        if (row < 0) {
+            Refuse(s, slot, p, DV::kMissed, "the selected row");
+            return true;
+        }
+    }
+    coop::RemotePlayer* rp = coop::players::Registry::Get().Puppet(slot);
+    void* puppet = rp ? rp->GetActor() : nullptr;  // Authorize found it
+    // The deck points at the presser's row, found by its hash, and stays there: the selection is the deck's one
+    // index, carried between peers by desk_input_sync, and after a press it is the presser's, as in single player.
+    if (row >= 0) DP::SelectRow(desk, row);
+    int dropped = 0;
+    bool pressed = false;
+    {
+        desk_verb_effects::Replay replay(slot, p.seq);
+        pressed = DP::PressForAnother(desk, puppet, button, &dropped);
+    }
+    if (!pressed) {
+        Refuse(s, slot, p, DV::kUnavailable, "the press did not dispatch");
+        return true;
+    }
+    ++g_ran;
+    Answer(s, slot, p, DV::kRan);
+    UE_LOGI("desk_verb: HOST ran slot %u's %s press #%u (row %d)%s", static_cast<unsigned>(slot),
+            kButtonName[p.button], p.seq, row, dropped ? " -- it bound the wheel on this machine's player, dropped" : "");
+    return true;
+}
+
+void Register(coop::net::Session* session) {
+    if (!g_watched) g_watched = sg::WatchClassName(kDeskClass, L"actionOptionIndex", kTagPress, &OnPressPre, nullptr);
+    desk_verb_effects::Install(session);
+}
+
+}  // namespace
+
+void Install(coop::net::Session* session) {
+    g_session.store(session, std::memory_order_release);
+    Register(session);
+}
+
+void Tick(coop::net::Session& session) {
+    Register(&session);
+    if (!g_saidLive && g_watched) {
+        sg::ResolvePendingNames();
+        if (sg::ClassNameWatchLive(kDeskClass, L"actionOptionIndex", kTagPress)) {
+            g_saidLive = true;
+            UE_LOGI("desk_verb: the desk's press is watched (save, delete, deck drive, send, upload)");
+        }
+    }
+    if (!session.running() || session.role() != coop::net::Role::Host) return;
+    for (uint8_t slot = 1; slot < coop::net::kMaxPeers; ++slot) {
+        if (g_pending[slot].empty() || !TakeToken(slot)) continue;
+        if (Execute(session, g_pending[slot].front(), slot)) {
+            g_pending[slot].pop_front();
+            g_waitSaid[slot] = false;  // a consumed press ends the wait's streak
+        } else {
+            g_rate[slot].tokens += 1.0f;  // a wait runs nothing, so it spends no token
+        }
+    }
+}
+
+void OnMessage(coop::net::Session& session, const DeskVerbPayload& p, int senderSlot) {
+    if (session.role() == coop::net::Role::Host) {
+        if (p.op != DV::kOpPress || senderSlot < 1 || senderSlot >= coop::net::kMaxPeers || p.button >= DV::kButtons) {
+            ++g_dropped;  // no client of this build sends one: counted, said at the session's end
+            return;
+        }
+        const uint8_t slot = static_cast<uint8_t>(senderSlot);
+        if (g_pending[slot].size() >= kMaxPending) {
+            ++g_dropped;
+            Bucket& b = g_rate[slot];
+            const Clock::time_point now = Clock::now();
+            if (now >= b.nextSay) {
+                b.nextSay = now + std::chrono::milliseconds(kSayEveryMs);
+                UE_LOGW("desk_verb: slot %u's queue is full (%zu) -- its presses are dropped until it drains",
+                        static_cast<unsigned>(slot), g_pending[slot].size());
+            }
+            return;
+        }
+        g_pending[slot].push_back(p);
+        return;
+    }
+    // A client hears DeskVerb from the host alone: the kind is never relayed.
+    if (p.op == DV::kOpVerdict) OnVerdict(p);
+    else if (p.op == DV::kOpGloss || p.op == DV::kOpSound) desk_verb_effects::OnEffect(p);
+}
+
+void OnPeerLeft(uint8_t slot) {
+    if (slot >= coop::net::kMaxPeers) return;
+    g_pending[slot].clear();
+    g_rate[slot] = Bucket{};
+    g_waitSaid[slot] = false;
+}
+
+void OnDisconnect() {
+    if (g_sent || g_ran || g_refused || g_dropped || g_heard)
+        UE_LOGI("desk_verb: session end -- sent=%llu ran=%llu refused=%llu dropped=%llu verdicts heard=%llu", g_sent,
+                g_ran, g_refused, g_dropped, g_heard);
+    for (uint8_t slot = 0; slot < coop::net::kMaxPeers; ++slot) OnPeerLeft(slot);
+    g_sent = g_ran = g_refused = g_dropped = g_heard = 0;
+    g_saidOffline = false;
+    desk_verb_effects::OnDisconnect();
+}
+
+}  // namespace coop::desk_verb_intent

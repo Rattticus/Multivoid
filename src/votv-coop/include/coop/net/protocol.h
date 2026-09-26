@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 197;
+inline constexpr uint16_t kProtocolVersion = 198;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -891,6 +891,15 @@ enum class ReliableKind : uint8_t {
     // button, installed an upgrade into one, or hit one; a refused op is answered to its author alone.
     // Never relayed. PowerGridPayload.
     PowerGridState = 159,
+
+    // A press on the main desk's save family: SAVE and DELETE, the deck's drive button and send, the
+    // refiner's upload. Client to host: a press the client's gate refused, with what the button acts on as
+    // the client saw it; the host finds each on its own desk, within the sender's reach, and replays the
+    // press with the sender's puppet as the player, its writes reaching every peer on their own lanes.
+    // Host to that client alone: the verdict, and while the host runs the press, the glossary entry and
+    // the sounds it makes for the presser's machine to make. Never relayed; a sender's presses run at a
+    // bounded rate from a bounded queue. Late join: nothing to replay. DeskVerbPayload.
+    DeskVerb = 160,
 };
 
 #pragma pack(push, 1)
@@ -1310,6 +1319,46 @@ struct KerfusIntentPayload {
     uint8_t  _pad[3];    // zeroed
 };
 static_assert(sizeof(KerfusIntentPayload) == 8, "KerfusIntentPayload must be 8 bytes");
+
+// DeskVerb's ops, buttons and verdicts (coop/interactables/desk_verb_intent).
+namespace desk_verb {
+inline constexpr uint8_t kOpPress = 0;    // client to host: a press
+inline constexpr uint8_t kOpVerdict = 1;  // host to the presser: what became of it
+inline constexpr uint8_t kOpGloss = 2;    // host to the presser: lib_C::addGloss(text, level) for its own profile
+inline constexpr uint8_t kOpSound = 3;    // host to the presser: PlaySound2D of the sound SoundName names
+inline constexpr uint8_t kSave = 0, kDelete = 1, kDeckDrive = 2, kDeckSend = 3, kUpload = 4, kButtons = 5;
+inline constexpr uint8_t kRan = 0;          // the host ran the press
+inline constexpr uint8_t kFar = 1;          // the presser's puppet is out of the desk's reach
+inline constexpr uint8_t kMissed = 2;       // what the button acts on differs on the host's desk
+inline constexpr uint8_t kUnavailable = 3;  // the host's desk, its buttons or its seams do not resolve
+inline constexpr size_t  kTextCap = 120;
+}  // namespace desk_verb
+
+// A press on the main desk's save family and its answers (DeskVerb). A row hash is signal_wire::ContentHash
+// of the row, 0 for an empty row or none; the op-0 fields describe what the button acts on as the presser
+// saw it, and each answer echoes the press's seq.
+struct DeskVerbPayload {
+    uint8_t  op;             // desk_verb::kOp*
+    uint8_t  button;         // desk_verb::kSave..kUpload
+    uint8_t  verdict;        // op 1: desk_verb::kRan..kUnavailable
+    uint8_t  textLen;        // ops 2-3: chars in text
+    uint32_t seq;            // op 0: the presser's press count; echoed by ops 1-3
+    uint32_t driveEid;       // op 0, deck drive and upload: the slot's drive, 0 for none
+    int32_t  level;          // op 2: addGloss's level
+    uint64_t driveRow;       // op 0, deck drive and upload: the drive's row hash
+    uint64_t selectedRow;    // op 0, deck drive and send: the deck's selected row hash
+    uint64_t compRow;        // op 0, upload: the refiner's row hash
+    float    signal[4];      // op 0, save and delete: the caught signal's x, y, z and frequency
+    float    volume;         // op 3
+    float    pitch;          // op 3
+    float    startTime;      // op 3
+    uint8_t  signalArmed;    // op 0, save and delete: a signal is caught (its object name is not None)
+    uint8_t  uiSound;        // op 3: bIsUISound
+    uint8_t  _pad[2];        // zeroed
+    char     text[desk_verb::kTextCap];  // ops 2-3: the gloss name, or the sound's SoundName; ASCII
+};
+static_assert(sizeof(DeskVerbPayload) == 192, "DeskVerbPayload must be 192 bytes");
+static_assert(sizeof(DeskVerbPayload) <= 228, "DeskVerbPayload must fit the inline reliable buffer");
 
 // A release (PropRelease): the prop by key, and for a keyless trash entity the eid and its
 // generation; its world transform and its inherited linear and angular velocity at the release edge.
