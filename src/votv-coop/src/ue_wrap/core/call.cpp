@@ -5,42 +5,57 @@
 
 #include <atomic>
 #include <cstring>
+#include <memory>
 #include <mutex>
 #include <unordered_map>
+#include <vector>
 
 namespace ue_wrap {
 
 namespace {
 
 // Process-wide cache of UFunction to ParamFrame::Metadata, built lazily the first time a given
-// function is framed; entries live for the process, since UE4 UFunctions are class-static and
-// never collected while the game runs.
-//
-// It exists because the alternative is per-call: walking the FProperty chain, heap-allocating
-// a wstring per parameter and filling a fresh vector, on every frame construction. The
-// per-snapshot drive path dispatches many UFunctions per tick at 60 Hz, which puts that in the
-// tens of thousands of allocations a second under load. Cached, each later frame for the same
-// function costs one map lookup and a buffer assign; the zeroed frame itself is still per call.
+// function is framed. It exists because the alternative is per-call: walking the FProperty chain,
+// heap-allocating a wstring per parameter and filling a fresh vector, on every frame construction,
+// tens of thousands of allocations a second under the per-snapshot drive path's load. Cached, each
+// later frame costs one map lookup, two slot reads and a buffer assign.
 //
 // Thread safety: the lookup takes the mutex briefly, and the resolve work runs with it held
 // the first time a function is seen. That is not belt and braces -- the engine dispatches
 // ProcessEvent from task-graph workers too, for parallel animation, which is why the detour
 // forwards off-thread rather than draining our queue there (ue_wrap/core/pe_detour.cpp).
+
+// An entry holds while the function's object-array slot still holds it at the serial the entry
+// captured: a world can load a Blueprint class anew (127 classes did in one same-process rejoin),
+// and a new function can then sit at a dead one's address with another frame. A replaced entry is
+// retired, never freed, since a frame built from it may still be in use.
+struct MetaEntry {
+    std::unique_ptr<ParamFrame::Metadata> meta;
+    int32_t idx = -1;     // the function's object-array slot as the entry was built
+    int32_t serial = 0;   // and that slot's serial then
+};
 std::mutex g_metaMutex;
-std::unordered_map<void*, ParamFrame::Metadata> g_meta;
+std::unordered_map<void*, MetaEntry> g_meta;
+std::vector<std::unique_ptr<ParamFrame::Metadata>> g_retired;
+
+// Whether the entry still describes the function object at `fn`: two array reads.
+bool Current(const MetaEntry& e, void* fn) {
+    return e.idx >= 0 && reflection::ObjectAt(e.idx) == fn && reflection::SlotSerial(e.idx) == e.serial;
+}
 
 const ParamFrame::Metadata* GetOrBuildMetadata(void* fn) {
     {
         std::lock_guard<std::mutex> lk(g_metaMutex);
         auto it = g_meta.find(fn);
-        if (it != g_meta.end()) return &it->second;
+        if (it != g_meta.end() && Current(it->second, fn)) return it->second.meta.get();
     }
     // First sighting: build outside the cache lock, then commit under it.
     // The reflection calls don't recurse into ParamFrame, so it's safe to
     // hold the lock across the resolve too -- but doing the work outside
     // shortens the contended critical section in the (unlikely) case two
     // threads race a first-time resolve for different fns.
-    ParamFrame::Metadata built;
+    auto owned = std::make_unique<ParamFrame::Metadata>();
+    ParamFrame::Metadata& built = *owned;
     built.frameSize = reflection::FunctionFrameSize(fn);
     // Trust boundary: frameSize is UStruct::PropertiesSize read straight out of
     // engine memory. A real UFunction parameter frame is at most a few KB (UE4's
@@ -68,12 +83,19 @@ const ParamFrame::Metadata* GetOrBuildMetadata(void* fn) {
             built.offsets.emplace_back(p.name, p.offset);
         }
     }
+    const int32_t idx = reflection::InternalIndexOf(fn);
+    const int32_t serial = reflection::AllocateSlotSerial(idx);
     std::lock_guard<std::mutex> lk(g_metaMutex);
-    // Race-against-self: another thread may have inserted the same fn in
-    // the window above; emplace returns the existing entry in that case
-    // (built drops on function return).
-    auto [it, ok] = g_meta.emplace(fn, std::move(built));
-    return &it->second;
+    auto it = g_meta.find(fn);
+    if (it == g_meta.end()) {
+        auto [ins, ok] = g_meta.emplace(fn, MetaEntry{std::move(owned), idx, serial});
+        return ins->second.meta.get();
+    }
+    // Another thread may have built the same fn in the window above; a stale entry is replaced.
+    if (Current(it->second, fn)) return it->second.meta.get();
+    g_retired.push_back(std::move(it->second.meta));
+    it->second = MetaEntry{std::move(owned), idx, serial};
+    return it->second.meta.get();
 }
 
 // The frame counters behind GetFrameStats. Relaxed adds: each is read once a second by the perf
