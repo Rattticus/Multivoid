@@ -7,7 +7,8 @@
 // gate (the break flag, an efficiency sentinel) or, for the two Blueprint-internal routes, the
 // post callback that only a run body reaches. A negative arm shows the same verb running once
 // the watch is gone. A class arm watches the day-night cycle's and the wind's ReceiveTick by class and
-// name over real ticks, beside an unscoped watch on the same name that sees every class's. The gate's
+// name over real ticks, beside an unscoped watch on the same name that sees every class's; an undeclared arm
+// watches a name the cycle's class does not declare, which dies at its resolve and stays dead. The gate's
 // tally is read across the passes alone, since a peer's own lanes refuse bodies of their own. Armed by
 // script_gate_drill=1; the lines are tagged [SCRIPTGATE].
 
@@ -41,7 +42,8 @@ namespace SB = ue_wrap::serverbox;
 constexpr DWORD kWorldWaitMs = 240'000;
 constexpr DWORD kPollMs = 2000;
 constexpr int   kTagFix = 1, kTagCheck = 2, kTagCalc = 3, kTagUber = 4, kTagHealth = 5;
-constexpr int   kTagScopedCycle = 6, kTagScopedWind = 7, kTagPlainTick = 8, kTagRetireFirst = 9;
+constexpr int   kTagScopedCycle = 6, kTagScopedWind = 7, kTagPlainTick = 8, kTagRetireFirst = 9,
+                kTagUndeclared = 10;
 constexpr int   kSendNameEntry = 3501;   // the ubergraph entry sendName's stub names
 constexpr float kSentinel = -1.0f;       // no efficiency the game computes is negative
 
@@ -154,6 +156,7 @@ void PostHealth(const SG::Call& call) {
 // the arm is on, which is switched on the game thread so no callback of one tick sees half of it.
 const wchar_t* const kTickName  = L"ReceiveTick";
 const wchar_t* const kCycleName = L"daynightCycle_C";
+const wchar_t* const kNoSuchFn  = L"ReceiveTick_NoSuchFunction";  // a name the cycle's class does not declare
 const wchar_t* const kWindName  = L"directionalWind_C";
 bool g_classArmOn = false;
 struct ClassArm { int scoped = 0, scopedForeign = 0, plain = 0; };
@@ -428,6 +431,24 @@ void RunScriptGateDrill() {
         Check(v, again && liveAtOnce && pendingAfter == pendingBefore,
               "retire first: watching it again is live at once, with no new pending name");
         SG::UnwatchClassName(kCycleName, kTickName, kTagRetireFirst, nullptr, &PostNothing);
+    });
+
+    // A loaded class that declares no function of the name makes a watch that can never fire: the resolve kills it,
+    // so it reads settled and not live, and watching it again neither revives it nor leaves its name pending.
+    OnGameThread([&] {
+        const int pendingBefore = SG::PendingNameCount();
+        const bool reg = SG::WatchClassName(kCycleName, kNoSuchFn, kTagUndeclared, nullptr, &PostNothing);
+        SG::ResolvePendingNames();
+        const bool dead = !SG::ClassNameWatchLive(kCycleName, kNoSuchFn, kTagUndeclared) &&
+                          SG::ClassNameWatchSettled(kCycleName, kNoSuchFn, kTagUndeclared);
+        const bool again = SG::WatchClassName(kCycleName, kNoSuchFn, kTagUndeclared, nullptr, &PostNothing);
+        SG::ResolvePendingNames();
+        const bool stillDead = !SG::ClassNameWatchLive(kCycleName, kNoSuchFn, kTagUndeclared) &&
+                               SG::ClassNameWatchSettled(kCycleName, kNoSuchFn, kTagUndeclared);
+        Check(v, reg && dead,
+              "undeclared: a loaded class that declares no such function kills the watch at its resolve");
+        Check(v, again && stillDead && SG::PendingNameCount() == pendingBefore,
+              "undeclared: watching it again leaves it dead, with no name left pending");
     });
 
     // The tax base over a five-second window with counting armed.

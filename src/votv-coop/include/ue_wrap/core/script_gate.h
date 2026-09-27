@@ -83,7 +83,7 @@ bool Unwatch(void* ufunction, int tag, PreFn pre, PostFn post);
 // (docs/credits.md). `name` must have static lifetime. The name resolves on the game thread (the
 // string-to-name conversion dispatches ProcessEvent), so the watch is inert until
 // ResolvePendingNames has run; registration posts one attempt and a game-thread tick drives the
-// rest. Any thread.
+// rest, and asks a waiting class-scoped watch's class once the class set moves. Any thread.
 bool WatchName(const wchar_t* name, int tag, PreFn pre, PostFn post);
 void ResolvePendingNames();
 
@@ -108,7 +108,9 @@ bool NameWatchSettled(const wchar_t* name, int tag);
 // every incarnation of a class that comes back as a new object. Both names must have static lifetime
 // and resolve on the game thread as a name watch's does. The class is matched by its short name, where
 // UE4SS matches a hooked function's whole outer path, package included: two loaded classes of one name
-// would both match. Any thread.
+// would both match. The name resolves whatever it spells, since the conversion adds it, so the class is
+// asked too, at the resolve when it is loaded, else when the class set next moves: one that declares no
+// function `name`, or declares it native, kills the watch, logged. Any thread.
 bool WatchClassName(const wchar_t* className, const wchar_t* name, int tag, PreFn pre, PostFn post);
 
 // Retire a name watch, or a class-scoped one, given the literals, tag and callbacks that registered it;
@@ -122,8 +124,9 @@ bool UnwatchClassName(const wchar_t* className, const wchar_t* name, int tag, Pr
 // Any thread.
 bool ClassNameWatchLive(const wchar_t* className, const wchar_t* name, int tag);
 
-// Has that class-scoped watch SETTLED: live, or dead for good, as NameWatchSettled says of a name watch.
-// A consumer driving its watch to live stops here either way. Any thread.
+// Has that class-scoped watch SETTLED: live, or dead for good, as NameWatchSettled says of a name watch,
+// or because its class declares no such function. A consumer driving its watch to live stops here either
+// way. Any thread.
 bool ClassNameWatchSettled(const wchar_t* className, const wchar_t* name, int tag);
 
 // How many registered name watches still wait for their FName. At 0 every name watch is settled:
