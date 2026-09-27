@@ -475,6 +475,7 @@ set(VOTVCOOP_SOURCES
     src/coop/dev/kerfur_convert_drill.cpp
     src/coop/dev/kerfus_drill.cpp
     src/coop/dev/kerfus_throw_drill.cpp
+    src/coop/dev/desk_crossing_drill.cpp
     src/coop/dev/desk_verb_drill.cpp
     src/coop/dev/desk_verb_drill_desk.cpp
     src/coop/dev/kerfur_serve_drill.cpp

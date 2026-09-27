@@ -401,6 +401,15 @@ CFG_STRING(desk_verb_drill, "desk_verb_drill", "dev", "", "VOTVCOOP_DESK_VERB_DR
     "entered none, that SAVE's gloss reached its profile and the row its photo. join: the host saves a row as the "
     "client joins, and the client finds it with its photo. Lines tagged [DESK-VERB-DRILL]; 'client DONE PASS|FAIL' "
     "ends it; ABANDONED is a step that could not run.")
+CFG_STRING(desk_crossing_drill, "desk_crossing_drill", "dev", "", "VOTVCOOP_DESK_CROSSING_DRILL", false,
+    "Drill (BOTH peers): the main desk's detection needle crosses on the host alone. run: two legs, planeteater's "
+    "caught signal (its object renderer spawns the signal object fullyProcessed lives on) and looker_behind's; the "
+    "host holds its needle just below 1 for three of its play cycles, then lets its step cross. The client says its "
+    "own step never crossed, that it ran its desk's path after the step once, and on looker_behind that its autoSave "
+    "body never ran while the host's saved the one row; at the crossing canDL holds on both, and on planeteater "
+    "fullyProcessed. join: the host crosses on planeteater before the client's world is ready; the client relays no "
+    "catch of its own, reads the host's needle at 1, and finds canDL and fullyProcessed. Lines tagged "
+    "[DESK-CROSSING-DRILL]; 'client DONE PASS|FAIL' ends it; ABANDONED is a step that could not run.")
 CFG_STRING(grid_drill, "grid_drill", "dev", "", "VOTVCOOP_GRID_DRILL", false,
     "Drill (BOTH peers): the power grid, arm by arm. run: the client presses the panel's light lever, the host "
     "breaks the drill's generator (the one nearest the panel), the client's Activate press from where it stands is "
