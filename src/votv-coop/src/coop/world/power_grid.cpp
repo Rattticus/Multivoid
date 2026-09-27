@@ -12,6 +12,7 @@
 #include "coop/player/roster_ledger.h"
 #include "coop/session/net_pump.h"  // IsInAnnouncedWorld: a client's own world load runs natively
 #include "coop/world/power_panel.h"  // the canonical a client's own generator verbs rewrote
+#include "coop/world/power_puzzle.h"  // the rows' second half: each generator's repair puzzle
 
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/log.h"
@@ -56,6 +57,10 @@ constexpr float  kGeneratorReachUU = 400.0f;
 // which waits for its body without a bound, a repair or an install is a prediction its sender already shows.
 constexpr uint64_t kWaitMs = 10000;
 constexpr size_t   kMaxQueued = 32;
+// A puzzle input waits this long at the head for its sender's claim on the panel, which rides another kind.
+constexpr uint64_t kClaimWaitMs = 2000;
+// While a panel changes outside the generators' verbs (a drag), the rows go at most this often.
+constexpr uint64_t kPuzzleRowsEveryMs = 100;
 // A player swings at a generator a few times a second at most; a sender's ops run at this rate, the rest waiting
 // their turn (door_verb_intent's bound).
 constexpr float kOpBurst = 4.0f;
@@ -123,7 +128,9 @@ std::deque<Waiting> g_waiting[coop::net::kMaxPeers];
 struct Bucket { float tokens = kOpBurst; uint64_t lastMs = 0; };
 Bucket g_rate[coop::net::kMaxPeers];
 uint8_t g_owed = 0;
-uint64_t g_opsTaken = 0, g_opsRefused = 0, g_hitsAnswered = 0;
+uint64_t g_opsTaken = 0, g_opsRefused = 0, g_noisyAnswered = 0, g_inputsTaken = 0;
+bool g_puzzleDirty = false;
+uint64_t g_lastRowsMs = 0;
 
 // The generator verbs whose exit sends the rows, recorded as each begins and held by slot and serial: only the
 // outermost of them sends, so a break's rows follow the blackout canonical its solar() sent, and a client never
@@ -175,20 +182,20 @@ bool TakeToken(uint8_t slot) {
     return true;
 }
 
-// A repair, a service and an install run on their client first, and the host's rows reconcile them; a hit
-// breaks a generator, which only the host's world does.
+// An Activate press, an install and a puzzle input run on their client first, and the host's rows reconcile
+// them; a hit breaks a generator, which only the host's world does.
 bool Predicted(uint8_t op) {
-    return op == coop::net::kPowerGridOpRepair || op == coop::net::kPowerGridOpService ||
-           op == coop::net::kPowerGridOpUpgrade;
+    return op == coop::net::kPowerGridOpActivate || op == coop::net::kPowerGridOpUpgrade ||
+           op == coop::net::kPowerGridOpPuzzle;
 }
 
 const char* OpName(uint8_t op) {
     switch (op) {
-    case coop::net::kPowerGridOpRepair:  return "repair";
-    case coop::net::kPowerGridOpUpgrade: return "upgrade";
-    case coop::net::kPowerGridOpHit:     return "hit";
-    case coop::net::kPowerGridOpService: return "service";
-    default:                             return "?";
+    case coop::net::kPowerGridOpActivate: return "Activate press";
+    case coop::net::kPowerGridOpUpgrade:  return "upgrade";
+    case coop::net::kPowerGridOpHit:      return "hit";
+    case coop::net::kPowerGridOpPuzzle:   return "puzzle input";
+    default:                              return "?";
     }
 }
 
@@ -208,6 +215,7 @@ bool ReadRows(PowerGridPayload& p) {
         w.cyc = r.cyc ? 1 : 0;
         w.upgradeLevel = static_cast<uint8_t>(std::clamp(r.upgradeLevel, 0, kMaxUpgrade));
         w.cycle = r.cycle;
+        coop::power_puzzle::Fill(gens[i], w.puzzle);
     }
     return true;
 }
@@ -218,7 +226,7 @@ bool SameRows(const PowerGridPayload& a, const PowerGridPayload& b) {
         const auto& x = a.rows[i];
         const auto& y = b.rows[i];
         if (x.present != y.present || x.broken != y.broken || x.cyc != y.cyc || x.upgradeLevel != y.upgradeLevel ||
-            x.cycle != y.cycle)
+            x.cycle != y.cycle || !coop::power_puzzle::SamePuzzle(x.puzzle, y.puzzle))
             return false;
     }
     return true;
@@ -236,11 +244,13 @@ void HostSendRows(coop::net::Session* s, int onlySlot = -1) {
         s->SendReliableToSlot(onlySlot, coop::net::ReliableKind::PowerGridState, &p, sizeof(p));
         return;
     }
+    g_puzzleDirty = false;
     if (!g_ackDirty && g_haveSent && SameRows(p, g_lastSent)) return;
     s->SendReliable(coop::net::ReliableKind::PowerGridState, &p, sizeof(p));
     g_lastSent = p;
     g_haveSent = true;
     g_ackDirty = false;
+    g_lastRowsMs = NowMs();
 }
 
 // A hit is a swing: the player's attack swings only an item whose list_weapons row carries a montage and the
@@ -275,16 +285,29 @@ Take HostTakeOp(coop::net::Session* s, const Waiting& wt, uint8_t sender) {
     EL::IntentSubject reach{};
     if (read) reach = EL::IntentTarget::ForClientIntent(*s, sender, kGeneratorReachUU).Authorize(gen);
     if (reach.outcome == EL::IntentOutcome::NoBody && !waited) return Take::Wait;
+    std::wstring item;
+    const char* refusal = !read ? "that generator is not there" : !reach ? EL::OutcomeName(reach.outcome) : nullptr;
+    if (!refusal && p.op == coop::net::kPowerGridOpPuzzle) {
+        // Judged and, when taken, written here: an input changes nothing the rows' verbs below run.
+        bool wait = false;
+        refusal = coop::power_puzzle::HostTake(sender, p, gen, r.broken, NowMs() - wt.arrivedMs >= kClaimWaitMs,
+                                               wait);
+        if (wait) return Take::Wait;
+    }
+    // A press judged on a panel whose last click is still moving would read the flags before the values: its move's
+    // end runs the setters. The press waits for it, a fifth of a second at most.
+    if (!refusal && p.op == coop::net::kPowerGridOpActivate && coop::power_puzzle::Settling(gen) && !waited)
+        return Take::Wait;
     if (predicted) {
         g_ack[sender] = p.seq;
         g_ackDirty = true;
     }
-    std::wstring item;
-    const char* refusal = !read ? "that generator is not there" : !reach ? EL::OutcomeName(reach.outcome) : nullptr;
     if (!refusal) {
         switch (p.op) {
-        case coop::net::kPowerGridOpService:
-            if (r.broken) refusal = "it is broken, and a broken generator's Activate press is its repair";
+        case coop::net::kPowerGridOpActivate:
+            // The button's own check (generator actionOptionIndex @3044), on the host's copy of the puzzle, which
+            // the presser's inputs reached ahead of the press.
+            if (!coop::power_puzzle::Solved(gen)) refusal = "its puzzle is not solved on the host";
             break;
         case coop::net::kPowerGridOpUpgrade:
             // The insert takes a held upgrade and spends it before the op comes; two players installing at the last
@@ -299,7 +322,8 @@ Take HostTakeOp(coop::net::Session* s, const Waiting& wt, uint8_t sender) {
         }
     }
     const bool hit = p.op == coop::net::kPowerGridOpHit;
-    const bool say = !hit || ++g_hitsAnswered <= 3 || g_hitsAnswered % 20 == 0;  // melee swings several a second
+    const bool quiet = hit || p.op == coop::net::kPowerGridOpPuzzle;  // swings and drags come several a second
+    const bool say = !quiet || ++g_noisyAnswered <= 3 || g_noisyAnswered % 20 == 0;
     if (refusal) {
         ++g_opsRefused;
         if (say)
@@ -309,14 +333,11 @@ Take HostTakeOp(coop::net::Session* s, const Waiting& wt, uint8_t sender) {
         return Take::Done;
     }
     switch (p.op) {
-    case coop::net::kPowerGridOpRepair:
-        // Run as the Activate route runs it, which the host cannot press itself while its own copy of the puzzle
-        // is unsolved. A second repair of one generator finds it mended: the presser's copy already reads as the
-        // host's.
+    case coop::net::kPowerGridOpActivate:
+        // The button's branch by the host's own generator (@1257): a broken one mended as the Activate route
+        // mends it, a whole one serviced, which is all the press writes to it but its 2D cue.
         if (r.broken) GEN::Repair(gen);
-        break;
-    case coop::net::kPowerGridOpService:
-        GEN::WriteCycle(gen, kFullWear);  // all the Activate press writes to a whole generator but its 2D cue
+        else GEN::WriteCycle(gen, kFullWear);
         break;
     case coop::net::kPowerGridOpUpgrade:
         GEN::WriteUpgradeLevel(gen, r.upgradeLevel + 1);
@@ -327,7 +348,8 @@ Take HostTakeOp(coop::net::Session* s, const Waiting& wt, uint8_t sender) {
         break;
     default: break;
     }
-    ++g_opsTaken;
+    if (p.op == coop::net::kPowerGridOpPuzzle) ++g_inputsTaken;
+    else ++g_opsTaken;
     if (say)
         UE_LOGI("power_grid: host took slot %u's %s of generator %u (seq %u)%s%ls", sender, OpName(p.op), p.index,
                 p.seq, hit ? " with " : "", item.c_str());
@@ -347,14 +369,22 @@ void HostRefuseQueue(coop::net::Session* s, uint8_t slot, uint16_t newestSeq) {
     HostSendRows(s, slot);
 }
 
-// An op from the wire is taken at once when its slot has none waiting and a token to spend.
+// A puzzle input is a value a drag writes several times a second, the rest a player's act: only acts spend the
+// sender's rate, and an input still waits its turn behind them.
+bool Spend(uint8_t slot, uint8_t op) { return op == coop::net::kPowerGridOpPuzzle || TakeToken(slot); }
+
+void Refund(uint8_t slot, uint8_t op) {
+    if (op != coop::net::kPowerGridOpPuzzle) g_rate[slot].tokens += 1.0f;  // a wait runs nothing
+}
+
+// An op from the wire is taken at once when its slot has none waiting and, for an act, a token to spend.
 void HostOffer(coop::net::Session* s, const PowerGridPayload& p, uint8_t sender) {
     if (sender == 0 || sender >= coop::net::kMaxPeers || p.op == coop::net::kPowerGridOpRows) return;
     auto& q = g_waiting[sender];
     const Waiting w{p, NowMs()};
-    if (q.empty() && TakeToken(sender)) {
+    if (q.empty() && Spend(sender, p.op)) {
         if (HostTakeOp(s, w, sender) == Take::Done) return;
-        g_rate[sender].tokens += 1.0f;  // a wait runs nothing, so it spends no token
+        Refund(sender, p.op);
     }
     if (q.size() >= kMaxQueued) {
         HostRefuseQueue(s, sender, p.seq);
@@ -366,9 +396,9 @@ void HostOffer(coop::net::Session* s, const PowerGridPayload& p, uint8_t sender)
 void HostDrainWaiting(coop::net::Session* s) {
     for (uint8_t slot = 1; slot < coop::net::kMaxPeers; ++slot) {
         auto& q = g_waiting[slot];
-        while (!q.empty() && TakeToken(slot)) {
+        while (!q.empty() && Spend(slot, q.front().p.op)) {
             if (HostTakeOp(s, q.front(), slot) == Take::Wait) {
-                g_rate[slot].tokens += 1.0f;
+                Refund(slot, q.front().p.op);
                 break;
             }
             q.pop_front();
@@ -389,12 +419,13 @@ void HostServeOwed(coop::net::Session* s) {
 // ---- a client ------------------------------------------------------------------------------------------------
 
 void ClientSendOp(coop::net::Session* s, uint8_t op, int32_t index, float damage = 0.f) {
+    coop::power_puzzle::FlushInputs();  // an op rests on the inputs before it
     PowerGridPayload p{};
     p.op = op;
     p.index = static_cast<uint8_t>(index);
     p.damage = damage;
     if (Predicted(op)) {
-        p.seq = ++g_seq;
+        p.seq = NextSeq();
         g_pending.push_back({p.seq, op, p.index});
     }
     s->SendReliableToSlot(0, coop::net::ReliableKind::PowerGridState, &p, sizeof(p));
@@ -412,10 +443,8 @@ GEN::Row Expected(const coop::net::PowerGridRow& w, int32_t index) {
     e.upgradeLevel = w.upgradeLevel;
     for (const Pending& d : g_pending) {
         if (d.index != index) continue;
-        if (d.op == coop::net::kPowerGridOpRepair && e.broken) {
-            e.broken = false;
-            e.cycle = kFullWear;
-        } else if (d.op == coop::net::kPowerGridOpService && !e.broken) {
+        if (d.op == coop::net::kPowerGridOpActivate) {
+            e.broken = false;  // a broken one mended, a whole one serviced: the wear full either way
             e.cycle = kFullWear;
         } else if (d.op == coop::net::kPowerGridOpUpgrade && e.upgradeLevel < kMaxUpgrade) {
             ++e.upgradeLevel;
@@ -469,6 +498,8 @@ void ClientReconcile() {
     // A break's solar() cleared this panel's breakers along with the power; only the canonical writes them, and a
     // rolled-back repair's break has no canonical behind it.
     if (panelVerbs) coop::power_panel::ReassertCanonical();
+    // The puzzles last: the verbs above may have solved one (fullFix), and the host's is the one it holds.
+    coop::power_puzzle::Reconcile(gens);
     ++g_rowsApplied;
 }
 
@@ -479,6 +510,7 @@ void ClientTakeRows(const PowerGridPayload& p) {
     for (const Pending& d : g_pending)
         if (SeqAfter(d.seq, ack)) g_pending[kept++] = d;
     g_pending.resize(kept);
+    coop::power_puzzle::OnRows(p, ack);
     g_rows = p;
     g_haveRows = true;
     if (GEN::EnsureResolved()) ClientReconcile();
@@ -550,7 +582,8 @@ sg::Verdict OnActivatePre(const sg::Call& call) {
 }
 
 // ...and as it ends. A broken generator it left whole was repaired, a whole one whose wear it restored was
-// serviced: either ran here as the prediction, and goes to the host. The host's own press sends the rows.
+// serviced: either ran here as the prediction, and goes to the host as the press, whose branch the host's own
+// generator decides. The host's own press sends the rows.
 void OnActivatePost(const sg::Call& call) {
     auto* s = Connected();
     if (!s || !call.object) return;
@@ -564,10 +597,8 @@ void OnActivatePost(const sg::Call& call) {
     const int32_t idx = GEN::IndexOf(call.object);
     GEN::Row r{};
     if (idx < 0 || idx >= kPowerGridGenerators || !GEN::ReadRow(call.object, r)) return;
-    if (g_pressRow.broken && !r.broken)
-        ClientSendOp(s, coop::net::kPowerGridOpRepair, idx);
-    else if (!g_pressRow.broken && !r.broken && r.cycle > g_pressRow.cycle)
-        ClientSendOp(s, coop::net::kPowerGridOpService, idx);
+    if ((g_pressRow.broken && !r.broken) || (!g_pressRow.broken && !r.broken && r.cycle > g_pressRow.cycle))
+        ClientSendOp(s, coop::net::kPowerGridOpActivate, idx);
 }
 
 // A client's own hit: its player's goes to the host, whose world breaks the generator; every other hit, a
@@ -618,6 +649,7 @@ bool g_settled = false;
 
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
+    coop::power_puzzle::Install(session);
     if (g_registered) return;
     g_registered = true;
     for (const WatchDef& w : kWatches)
@@ -630,9 +662,11 @@ void Tick() {
     if (auto* s = Connected(); s && s->role() == coop::net::Role::Host) {
         HostDrainWaiting(s);
         HostServeOwed(s);
+        if (g_puzzleDirty && NowMs() - g_lastRowsMs >= kPuzzleRowsEveryMs) HostSendRows(s);
     } else if (g_rowsWaiting && GEN::EnsureResolved()) {
         ClientReconcile();
     }
+    coop::power_puzzle::Tick();
     if (g_settled || !g_registered) return;
     sg::ResolvePendingNames();
     int live = 0, settled = 0;
@@ -671,6 +705,10 @@ void QueueConnectBroadcastForSlot(int slot) {
         UE_LOGI("power_grid: slot %d's rows wait for the host's generators to resolve", slot);
 }
 
+uint16_t NextSeq() { return ++g_seq; }
+
+void HostPuzzleChanged() { g_puzzleDirty = true; }
+
 void OnPeerLeft(uint8_t slot) {
     if (slot == 0 || slot >= coop::net::kMaxPeers) return;
     g_waiting[slot].clear();
@@ -689,19 +727,21 @@ bool LastRows(coop::net::PowerGridPayload& out) {
 }
 
 void OnDisconnect() {
+    coop::power_puzzle::OnDisconnect();
     if (g_decayRefused || g_decayRan)
         UE_LOGI("power_grid: session end -- decay ticks refused %llu, run %llu",
                 static_cast<unsigned long long>(g_decayRefused), static_cast<unsigned long long>(g_decayRan));
-    if (g_editsRefused || g_opsSent || g_rowsApplied || g_opsTaken || g_opsRefused)
+    if (g_editsRefused || g_opsSent || g_rowsApplied || g_opsTaken || g_inputsTaken || g_opsRefused)
         UE_LOGI("power_grid: session end -- own edits refused %llu, ops sent %llu, rows applied %llu; as host: ops "
-                "taken %llu, refused %llu",
+                "taken %llu, puzzle inputs taken %llu, refused %llu",
                 static_cast<unsigned long long>(g_editsRefused), static_cast<unsigned long long>(g_opsSent),
                 static_cast<unsigned long long>(g_rowsApplied), static_cast<unsigned long long>(g_opsTaken),
-                static_cast<unsigned long long>(g_opsRefused));
+                static_cast<unsigned long long>(g_inputsTaken), static_cast<unsigned long long>(g_opsRefused));
     g_decayRefused = g_decayRan = 0;
     g_editsRefused = g_opsSent = g_hitsSent = g_rowsApplied = 0;
-    g_opsTaken = g_opsRefused = g_hitsAnswered = 0;
-    g_haveSent = g_ackDirty = false;
+    g_opsTaken = g_opsRefused = g_noisyAnswered = g_inputsTaken = 0;
+    g_haveSent = g_ackDirty = g_puzzleDirty = false;
+    g_lastRowsMs = 0;
     for (int slot = 0; slot < coop::net::kMaxPeers; ++slot) {
         g_waiting[slot].clear();
         g_rate[slot] = Bucket{};

@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 198;
+inline constexpr uint16_t kProtocolVersion = 199;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -885,11 +885,11 @@ enum class ReliableKind : uint8_t {
     DishCalibIntent = 158,
 
     // The base's generators. Host to all: every generator's row (broken, wear, upgrades) by its
-    // gamemode.generators place, after each of the host's break, repair, wear and upgrade verbs, and at a
-    // joiner's world-ready; a client runs the verbs itself from the rows and never breaks or repairs a
-    // generator on its own. Client to host: my player repaired or serviced a generator at its Activate
-    // button, installed an upgrade into one, or hit one; a refused op is answered to its author alone.
-    // Never relayed. PowerGridPayload.
+    // gamemode.generators place, its repair puzzle with it, after each of the host's break, repair, wear and
+    // upgrade verbs and each change of a puzzle, and at a joiner's world-ready; a client runs the verbs itself
+    // from the rows and never breaks, repairs or rolls a generator on its own. Client to host: my player
+    // pressed a generator's Activate button, installed an upgrade into one, hit one, or set a value on its
+    // puzzle panel; a refused op is answered to its author alone. Never relayed. PowerGridPayload.
     PowerGridState = 159,
 
     // A press on the main desk's save family: SAVE and DELETE, the deck's drive button and send, the
@@ -2017,36 +2017,56 @@ static_assert(sizeof(PowerPanelPayload) == 20, "PowerPanelPayload must be 20 byt
 inline constexpr uint32_t kPowerPanelTerminalUnnamed = 0xFFFFFFFEu;
 
 // The base's generators (PowerGridState) in gamemode.generators order; a slot past `count` is unused. Op 0, the
-// host's rows, with `ack` per slot the last predicted op it took. A client's ops name generator `index`: 1 its
-// repair at the Activate button (its own copy of the puzzle solved), 2 an upgrade its insert spent, 4 its service
-// at the Activate button (a whole generator's wear restored), each predicted and counted by `seq` per session;
-// 3 its player's hit (`damage`), which only the host runs.
+// host's rows, with `ack` per slot the last predicted op it took; each row carries its generator's repair puzzle
+// (coop/world/power_puzzle). A client's ops name generator `index`, each predicted and counted by `seq` per
+// session but the hit: 1 its Activate press (the host judges it on its own panel and branches as the button does:
+// a broken generator's repair, a whole one's service), 2 an upgrade its insert spent, 4 its player's input to the
+// generator's panel (`field` and its absolute `value`, PowerGridPuzzle's order); 3 its player's hit (`damage`),
+// which only the host runs.
 inline constexpr int kPowerGridGenerators = 4;
 inline constexpr uint8_t kPowerGridOpRows = 0;
-inline constexpr uint8_t kPowerGridOpRepair = 1;
+inline constexpr uint8_t kPowerGridOpActivate = 1;
 inline constexpr uint8_t kPowerGridOpUpgrade = 2;
 inline constexpr uint8_t kPowerGridOpHit = 3;
-inline constexpr uint8_t kPowerGridOpService = 4;
+inline constexpr uint8_t kPowerGridOpPuzzle = 4;
+// Op 4's fields: the three sines (offset, frequency, amplitude), the switches as one byte, then the nine rotators.
+inline constexpr uint8_t kPowerPuzzleFieldSwitches = 3;
+inline constexpr uint8_t kPowerPuzzleFieldRotator0 = 4;
+inline constexpr uint8_t kPowerPuzzleFields = 13;
+struct PowerGridPuzzle {
+    uint8_t valid;          // 1  -- 0 when the host's panel was not yet readable
+    uint8_t targetSine[3];  // 3  -- offset, frequency, amplitude, each 0..15
+    uint8_t switchesTarget; // 1
+    uint8_t colors[18];     // 18 -- the grid, 9 cells of 4 edges (top, right, bottom, left), 4 bits an edge,
+                            //       edge k of the 36 in byte k/2, the low nibble first
+    uint8_t sine[3];        // 3
+    uint8_t switches;       // 1  -- bit i: switch i on
+    uint8_t rotators[3];    // 3  -- rotator i's turn (0..3) in bits 2i..2i+1 of the three bytes, little-endian
+};
 struct PowerGridRow {
-    uint8_t broken;        // 1
-    uint8_t cyc;           // 1
-    uint8_t upgradeLevel;  // 1  -- 0..6
-    uint8_t present;       // 1  -- 0 when the host's slot holds no live generator
-    int32_t cycle;         // 4  -- the wear, 100 new, 0 broken
+    uint8_t broken;          // 1
+    uint8_t cyc;             // 1
+    uint8_t upgradeLevel;    // 1  -- 0..6
+    uint8_t present;         // 1  -- 0 when the host's slot holds no live generator
+    int32_t cycle;           // 4  -- the wear, 100 new, 0 broken
+    PowerGridPuzzle puzzle;  // 30
 };
 struct PowerGridPayload {
     uint8_t      op;       // 1
     uint8_t      count;    // 1  -- rows: gamemode.generators.Num at send, capped
     uint8_t      index;    // 1  -- ops 1..4: the generator's place
-    uint8_t      _pad;     // 1
+    uint8_t      field;    // 1  -- op 4
     uint16_t     seq;      // 2  -- ops 1, 2, 4
     uint16_t     ack[4];   // 8  -- op 0, by slot (kMaxPeers)
     float        damage;   // 4  -- op 3
-    uint8_t      _pad2[2]; // 2
-    PowerGridRow rows[kPowerGridGenerators];  // 32
+    uint8_t      value;    // 1  -- op 4
+    uint8_t      _pad;     // 1
+    PowerGridRow rows[kPowerGridGenerators];  // 152
 };
-static_assert(sizeof(PowerGridRow) == 8, "PowerGridRow must be 8 bytes");
-static_assert(sizeof(PowerGridPayload) == 52, "PowerGridPayload must be 52 bytes");
+static_assert(sizeof(PowerGridPuzzle) == 30, "PowerGridPuzzle must be 30 bytes");
+static_assert(sizeof(PowerGridRow) == 38, "PowerGridRow must be 38 bytes");
+static_assert(sizeof(PowerGridPayload) == 172, "PowerGridPayload must be 172 bytes");
+static_assert(sizeof(PowerGridPayload) <= 256 - 20 - 8, "PowerGridPayload must fit one reliable datagram");
 
 // The ATV's rig pose, velocity and condition (AtvState), keyed by its Key. A receiver keeps its own
 // physics running and is corrected: the velocity is written from the wire every packet, the

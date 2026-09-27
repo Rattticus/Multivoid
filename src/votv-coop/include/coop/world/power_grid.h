@@ -2,11 +2,12 @@
 // generators wear on the dice of generatorFuckuper's 30 s decay tick, which a client in its announced world
 // refuses at the body; a client refuses its own generator break, wear and fullFix too, so a generator breaks,
 // wears and mends only on the host, whose rows every client applies by running the same edges itself, a repair as
-// the Activate route runs one, after the panel canonical the verbs produced. A client's player acts on a generator
-// as ops to the host, taken a few a second from a player within reach; a refused op is answered to its author
-// alone. Its repair and its service at the Activate button (its own copy of the puzzle solved) and its upgrade
-// install run on the client first and are reconciled like the panel's presses (coop/world/power_panel.h), the rows
-// carrying the last op taken from each slot: the element-data shape. Its hit is the host's to run, the
+// the Activate route runs one, after the panel canonical the verbs produced; each row carries its generator's
+// repair puzzle (coop/world/power_puzzle.h). A client's player acts on a generator as ops to the host, taken in
+// its order from a player within reach; a refused op is answered to its author alone. Its Activate press, which
+// the host judges on its own copy of the puzzle, its upgrade install and its puzzle inputs run on the client first
+// and are reconciled like the panel's presses (coop/world/power_panel.h), the rows carrying the last op taken from
+// each slot: the element-data shape. Its hit is the host's to run, the
 // request-and-confirm shape, since a break blacks the whole base out:
 // reference/mtasa-blue/Client/mods/deathmatch/logic/CClientPed.cpp:6711-6737 sends and waits,
 // reference/mtasa-blue/Server/mods/deathmatch/logic/CGame.cpp:3079 validates. Every peer still arms the timers and
@@ -39,8 +40,16 @@ void QueueConnectBroadcastForSlot(int slot);
 // HOST: a leaver's waiting ops go with it. Game thread.
 void OnPeerLeft(uint8_t slot);
 
+// The lane's two halves share one sequence and one send of the rows. CLIENT: the next op's seq, which
+// power_puzzle's inputs take here, so the rows' acknowledgement covers both. HOST: a panel changed outside the
+// generators' verbs; the rows go at most every 100 ms while changes continue, and the last change always goes.
+// Game thread.
+uint16_t NextSeq();
+void HostPuzzleChanged();
+
 // [dev] the grid drill's readings. CLIENT: my ops the host has not yet taken, those sent this session, and the
-// host's last rows (false before they came). HOST: the ops it took this session. Game thread.
+// host's last rows (false before they came). HOST: the ops it took this session, puzzle inputs not counted. Game
+// thread.
 size_t PendingOps();
 uint64_t ClientOpsSent();
 bool LastRows(coop::net::PowerGridPayload& out);

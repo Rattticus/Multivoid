@@ -168,14 +168,18 @@ and a client refuses its own tick, break, wear and fullFix at the body. The host
 generator's row after the outermost of its generator verbs and its Activate presses, so a break's
 rows follow the blackout canonical it produced; a client runs the same edges from the rows and then
 puts its breakers back to the canonical, since a break's own blackout rewrote them
-(`coop/world/power_grid`). A client's player acts on a generator as ops, a few a second: its repair
-and its service at the Activate button (its own copy of the puzzle solved) and its upgrade install,
-with an upgrade in hand, run on the client first and are reconciled like the panel's presses, and
-its hit is the host's to run, with a held item that swings. The host takes an op from a player
-within reach. A repair, the host's of a client's op and a client's of the host's rows alike, runs
-as the game's repair with the puzzle solved followed by the Activate route's turn-on at the
-generator and its completion trigger; until the puzzle itself crosses, the host repairs on the
-presser's word.
+(`coop/world/power_grid`). A client's player acts on a generator as ops: its Activate press and its
+upgrade install, with an upgrade in hand, run on the client first and are reconciled like the
+panel's presses, and its hit is the host's to run, with a held item that swings. The host takes an
+op from a player within reach, in the player's order, and judges an Activate press on its own copy
+of the repair puzzle, branching as the button does: a broken generator is mended, a whole one
+serviced. A repair, the host's of a client's press and a client's of the host's rows alike, runs as
+the game's repair with the puzzle solved followed by the Activate route's turn-on at the generator
+and its completion trigger. The puzzle crosses in the rows (`coop/world/power_puzzle`): its targets
+are the host's rolls, which a client never makes, and its values belong to the one player inside the
+panel (the device lock). That player's knob, switch and rotator inputs run on its client first and
+reach the host as values, taken in its order, so a press follows the inputs it rests on; every peer
+draws the host's puzzle with the panel's own setters and moves, and a joiner gets it with the rows.
 The wind turbine's heading integrator is not saved and chases the synced wind at a degree per
 second, so the host mirrors six driver floats about once a second and the turbine's own tick
 interpolates (`coop/interactables/turbine_sync`). The base window's dirt and the wall grime are
