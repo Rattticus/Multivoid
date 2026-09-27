@@ -15,8 +15,10 @@
 #include "coop/interactables/drive_rack_sync.h"  // MarkDirtyFromVerb (owner API)
 #include "coop/net/session.h"
 #include "coop/props/remote_prop.h"           // EndAnyHoldOn: an insert ends the hold on the drive
+#include "coop/session/net_pump.h"            // IsInAnnouncedWorld: a client's own edges are its world's
 
 #include "ue_wrap/actors/prop.h"  // IsFrozen, CallAwakeUnfreeze: a conflicting drive's eject
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/script_gate.h"
@@ -24,6 +26,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdio>
 #include <vector>
 
 namespace coop::drive_sync {
@@ -45,15 +48,37 @@ bool g_verbsRegistered = false;
 
 // ---- dirty marks (set in the VM bracket -- relaxed atomics, drained at Tick) ----
 std::atomic<bool> g_slotDirty[DC::kRoleCount] = {};
-// Eject capture: at drivePulledOut ENTRY slot.drive is STILL SET -- stash the
-// occupant eid so the empty line can name it (the latch completion needs it).
-// EidForActor takes the registry mutex (held microseconds, GT-safe) -- a
-// deliberate, justified in-bracket read (design R2/R3: memory + own maps only).
-std::atomic<uint32_t> g_lastEjectEid[DC::kRoleCount] = {};
+// Eject capture: at drivePulledOut ENTRY slot.drive is STILL SET -- the occupant is kept, and the empty
+// line names it by the eid it has when the line is sent (the latch completion needs it, and the host
+// takes an eject only for the drive its own slot holds): a bind landing between the verb and the drain
+// is then already in the name. Game thread, like the watch that sets it.
+ue_wrap::CachedObjRef g_lastEjected[DC::kRoleCount];
 
 // ---- baselines ----
-struct SlotBase { bool known = false; bool occupied = false; uint32_t eid = 0; };
+// The drive is held as well as its eid: the same drive under a new eid is a re-key (the reconcile binding the drive a
+// load seated), not a slot edge.
+struct SlotBase {
+    bool known = false;
+    bool occupied = false;
+    uint32_t eid = 0;
+    ue_wrap::CachedObjRef drive;
+};
 SlotBase g_slotBase[DC::kRoleCount];
+
+void SetBase(int role, bool occupied, uint32_t eid, void* drive) {
+    SlotBase& b = g_slotBase[role];
+    b.known = true;
+    b.occupied = occupied;
+    b.eid = eid;
+    b.drive.Set(occupied ? drive : nullptr);
+}
+
+// An eid for a log line: a drive the registry has not bound reads "unbound".
+const char* EidText(uint32_t eid, char (&buf)[16]) {
+    if (eid == coop::element::kInvalidId) return "unbound";
+    std::snprintf(buf, sizeof(buf), "%u", eid);
+    return buf;
+}
 
 bool g_primed = false;
 bool g_wasConnected = false;
@@ -79,6 +104,9 @@ std::atomic<uint64_t> g_cMarksSlot{0};
 uint64_t g_cSlotSent = 0, g_cSlotApplied = 0;
 uint64_t g_cLatchCompleted = 0;
 uint64_t g_cGrabKept = 0;  // this player's grab left alone inside a replayed insert
+uint64_t g_cPrimedOffWorld = 0;  // CLIENT: slot edges outside the world it announced, primed
+uint64_t g_cRekeyed = 0;         // a slot's drive under a new eid, primed
+uint64_t g_cEjectRefused = 0;    // HOST: client ejects naming another drive, answered
 
 // ---- the local player is never the subject of a replayed insert ----
 // The slot's putDriveIn, and the eraser's handler of the slot's driveIn, end the grab of the machine's
@@ -150,10 +178,7 @@ sg::Verdict OnVerbEntry(const sg::Call& b) {
         case kVerbPulledOut: {
             const int role = DC::RoleOfSlotActor(b.object);
             if (role >= 0) {
-                void* d = DC::SlotDrive(b.object);  // still set at ENTRY (measured)
-                const uint32_t eid = d ? static_cast<uint32_t>(
-                    coop::element::Registry::Get().EidForActor(d)) : 0;
-                g_lastEjectEid[role].store(eid, std::memory_order_relaxed);
+                g_lastEjected[role].Set(DC::SlotDrive(b.object));  // still set at ENTRY (measured)
                 g_slotDirty[role].store(true, std::memory_order_relaxed);
                 g_cMarksSlot.fetch_add(1, std::memory_order_relaxed);
             }
@@ -187,6 +212,8 @@ void AnnounceSlot(int role, bool occupied, uint32_t eid) {
     const coop::net::DriveSlotStatePayload p = Line(role, occupied, eid);
     s->SendReliable(coop::net::ReliableKind::DriveSlotState, &p, sizeof(p));
     ++g_cSlotSent;
+    char buf[16];
+    UE_LOGI("drive_sync: slot role=%d %s eid=%s announced", role, occupied ? "INSERT" : "EJECT", EidText(eid, buf));
 }
 
 // HOST: a client's line it accepted, to every other client whose world is ready; a joiner still loading gets the slot
@@ -213,6 +240,12 @@ void AnswerSlot(int role, uint8_t sourceSlot, bool occupied, uint32_t eid) {
 
 // Read a slot's live state; diff vs baseline; announce the edge. `announce`
 // false = prime-only (the connect seed).
+//
+// Two changes are primed rather than announced, because neither is anyone's edit of the slot. A client's slot outside
+// the world it announced world-ready in -- before the announce, and while a world change waits for its re-announce --
+// is the host's save being restored: the menu join connects at the menu, before any slot exists, and the host's seed
+// converges the loaded slots at world-ready. And the drive a slot holds under a new eid is the reconcile binding it,
+// which moves the eid the role's pending lines were queued against as well, so they still replay.
 void ProcessSlot(int role, bool announce) {
     void* slot = DC::SlotActor(role);
     if (!slot) return;
@@ -222,10 +255,32 @@ void ProcessSlot(int role, bool announce) {
     const bool occupied = drive != nullptr;
     SlotBase& b = g_slotBase[role];
     if (b.known && b.occupied == occupied && b.eid == eid) return;
-    const uint32_t ejectEid = g_lastEjectEid[role].exchange(0, std::memory_order_relaxed);
-    b = {true, occupied, eid};
-    if (announce)
-        AnnounceSlot(role, occupied, occupied ? eid : ejectEid);
+    void* ejected = g_lastEjected[role].Get();
+    g_lastEjected[role].Reset();
+    const uint32_t ejectEid = ejected ? static_cast<uint32_t>(
+        coop::element::Registry::Get().EidForActor(ejected)) : 0;
+    const bool rekey = b.known && b.occupied && occupied && b.drive.Is(drive);
+    const uint32_t was = b.eid;
+    SetBase(role, occupied, eid, drive);
+    if (rekey) {
+        for (Pending& pd : g_pending)
+            if (pd.slotLine.role == role) pd.slotAtQueue.eid = eid;
+    }
+    if (!announce) return;
+    char a[16], z[16];
+    if (rekey) {
+        if (++g_cRekeyed <= 20)
+            UE_LOGI("drive_sync: slot role=%d's drive re-keyed eid=%s -> %s -- primed, not an edge", role,
+                    EidText(was, a), EidText(eid, z));
+        return;
+    }
+    if (!IsHost() && !coop::net_pump::IsInAnnouncedWorld(slot)) {
+        if (++g_cPrimedOffWorld <= 20)
+            UE_LOGI("drive_sync: slot role=%d %s eid=%s outside the announced world -- the host's save being "
+                    "restored, primed", role, occupied ? "holds" : "emptied", EidText(occupied ? eid : ejectEid, a));
+        return;
+    }
+    AnnounceSlot(role, occupied, occupied ? eid : ejectEid);
 }
 
 void OnSlotLine(const coop::net::DriveSlotStatePayload& p, uint8_t senderSlot, bool fromPending);
@@ -245,7 +300,7 @@ void OnSlotLine(const coop::net::DriveSlotStatePayload& p, uint8_t senderSlot, b
 
     if (p.occupied) {
         if (cur && curEid == p.driveEid) {  // already true: prime-only no-op
-            g_slotBase[p.role] = {true, true, curEid};
+            SetBase(p.role, true, curEid, cur);
             return;
         }
         void* drive = LivePropActor(p.driveEid);
@@ -298,13 +353,24 @@ void OnSlotLine(const coop::net::DriveSlotStatePayload& p, uint8_t senderSlot, b
             ReplayingInsert replaying;
             LaneApply apply;
             DC::CallPutDriveIn(slot, drive);
-            g_slotBase[p.role] = {true, true, p.driveEid};
+            SetBase(p.role, true, p.driveEid, drive);
         }
         ++g_cSlotApplied;
         if (IsHost()) RelaySlot(p.role, true, p.driveEid, senderSlot);
         UE_LOGI("drive_sync: slot role=%u INSERT eid=%u applied (from slot %u)",
                 p.role, p.driveEid, senderSlot);
     } else {
+        // A client's eject names the drive it saw leave its copy of the slot. One naming another drive, or none, is a
+        // stale view of this slot and not an edit of it: the host keeps its drive, and the role's pending lines with
+        // it, and answers the source with the slot as it stands.
+        if (IsHost() && cur && p.driveEid != curEid) {
+            ++g_cEjectRefused;
+            char a[16], z[16];
+            UE_LOGI("drive_sync: slot role=%u eject from slot %u names eid=%s, not this slot's drive eid=%s -- refused, "
+                    "the slot answered to its source", p.role, senderSlot, EidText(p.driveEid, a), EidText(curEid, z));
+            AnswerSlot(p.role, senderSlot, true, curEid);
+            return;
+        }
         // A newer line supersedes an older pending one for the role, an eject as much as an insert:
         // the slot's base can read the same after an eject as when the insert was queued, so the
         // base check at replay would let a stale insert put the drive back in a slot it has left.
@@ -315,7 +381,7 @@ void OnSlotLine(const coop::net::DriveSlotStatePayload& p, uint8_t senderSlot, b
             }
         }
         if (!cur) {  // already empty: prime + belt latch completion
-            g_slotBase[p.role] = {true, false, 0};
+            SetBase(p.role, false, 0, nullptr);
             DC::CompleteEjectLatch(slot, LivePropActor(p.driveEid));
             return;
         }
@@ -330,7 +396,7 @@ void OnSlotLine(const coop::net::DriveSlotStatePayload& p, uint8_t senderSlot, b
             DC::CallDrivePulledOut(slot);
             frozen = ue_wrap::prop::IsFrozen(cur);  // 0 once the hold's first pose has unfrozen it
             DC::CompleteEjectLatch(slot, cur);
-            g_slotBase[p.role] = {true, false, 0};
+            SetBase(p.role, false, 0, nullptr);
         }
         ++g_cSlotApplied;
         ++g_cLatchCompleted;
@@ -372,7 +438,7 @@ void RetryPendingTick() {
 void PrimeAll() {
     for (int r = 0; r < DC::kRoleCount; ++r) {
         g_slotBase[r] = {};
-        g_lastEjectEid[r].store(0, std::memory_order_relaxed);
+        g_lastEjected[r].Reset();
         ProcessSlot(r, /*announce*/false);
     }
 }
@@ -432,10 +498,11 @@ void Tick() {
     if (now >= g_nextStats) {
         g_nextStats = now + std::chrono::seconds(60);
         UE_LOGI("drive_sync: 60s marks slot=%llu | sent slot=%llu | applied slot=%llu | latchFix=%llu pending=%zu "
-                "grabKept=%llu",
+                "grabKept=%llu | primed offWorld=%llu rekey=%llu | ejectRefused=%llu",
                 (unsigned long long)g_cMarksSlot.load(std::memory_order_relaxed), (unsigned long long)g_cSlotSent,
                 (unsigned long long)g_cSlotApplied, (unsigned long long)g_cLatchCompleted, g_pending.size(),
-                (unsigned long long)g_cGrabKept);
+                (unsigned long long)g_cGrabKept, (unsigned long long)g_cPrimedOffWorld,
+                (unsigned long long)g_cRekeyed, (unsigned long long)g_cEjectRefused);
     }
 }
 
@@ -478,7 +545,7 @@ uint64_t AnnouncedCount() { return g_cSlotSent; }
 void OnDisconnect() {
     for (int r = 0; r < DC::kRoleCount; ++r) {
         g_slotDirty[r].store(false, std::memory_order_relaxed);
-        g_lastEjectEid[r].store(0, std::memory_order_relaxed);
+        g_lastEjected[r].Reset();
         g_slotBase[r] = {};
     }
     g_pending.clear();
@@ -486,6 +553,7 @@ void OnDisconnect() {
     g_wasConnected = false;
     g_replayingInsert = false;
     g_cGrabKept = 0;
+    g_cPrimedOffWorld = g_cRekeyed = g_cEjectRefused = 0;
     g_session.store(nullptr, std::memory_order_release);
     UE_LOGI("drive_sync: teardown (slot baselines + pending cleared)");
 }

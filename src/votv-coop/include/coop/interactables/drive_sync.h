@@ -26,11 +26,14 @@ void Tick();
 // Router entries (event_dispatch_signal.cpp).
 //
 // DriveSlotState carries idempotent per-slot lines for the desk play, comp and eraser slots. Slot
-// actors have no eids, so a line is keyed by role. ANY peer announces its organic transitions; a
-// receiver-side overlap SELF-SIMULATES inserts and never ejects, then pre-checks and applies --
-// reflected putDriveIn or drivePulledOut, plus the deterministic eject-latch completion. The HOST
-// is canonical on conflict and on the connect seed: a client's line reaches the host alone, which
-// relays a line it accepted to every other client and answers a conflict to its source.
+// actors have no eids, so a line is keyed by role. ANY peer announces its organic transitions -- a
+// client only in the world it announced world-ready in, since its load of the host's save is the
+// host's state, and never the drive a slot holds taking a new eid; a receiver-side overlap
+// SELF-SIMULATES inserts and never ejects, then pre-checks and applies -- reflected putDriveIn or
+// drivePulledOut, plus the deterministic eject-latch completion. The HOST is canonical on conflict
+// and on the connect seed: a client's line reaches the host alone, which relays a line it accepted
+// to every other client and answers a conflict, or an eject naming another drive than its slot
+// holds, to its source.
 void OnDriveSlotState(const coop::net::DriveSlotStatePayload& p, uint8_t senderSlot);
 
 // HOST: whether a slot line for `role` naming `driveEid` waits here for its drive to bind. Game thread.
