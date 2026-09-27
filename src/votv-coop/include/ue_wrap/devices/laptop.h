@@ -47,6 +47,12 @@ bool ReadPower(PowerState& out);
 // stores that parameter without ever reading it.
 bool CallPowerToggle();
 
+// [dev] The laptop's own insert, as the game's overlap runs it with no player: processFloppy through its floppy
+// hitbox with `disc` as the manual actor, which casts it to a disc and runs insertFloppy (the disc destroyed, the
+// slot filled). And its ejectFloppy. False when unresolved or the call failed.
+bool CallInsertDisc(void* disc);
+bool CallEjectDisc();
+
 // ---- the file-buffer quad ----
 struct BufferQuad {
     std::vector<std::wstring> data;      // floppyData (also slot-owned; quad reads it whole)
