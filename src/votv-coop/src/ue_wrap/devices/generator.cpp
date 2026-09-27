@@ -146,13 +146,23 @@ bool EnsureResolved() {
     return true;
 }
 
-size_t ReadGenerators(std::vector<void*>& out) {
-    if (!EnsureResolved()) return 0;
+namespace {
+
+// gamemode.generators in place, or null before the game mode resolves or when the list reads implausible.
+const field_io::TArrayView* List() {
+    if (!EnsureResolved()) return nullptr;
     void* gm = world_singleton::Gamemode();
-    if (!gm) return 0;
+    if (!gm) return nullptr;
     const auto* arr =
         reinterpret_cast<const field_io::TArrayView*>(reinterpret_cast<const uint8_t*>(gm) + g_offList);
-    if (!arr->data || arr->num <= 0 || arr->num > 64) return 0;
+    return (arr->data && arr->num > 0 && arr->num <= 64) ? arr : nullptr;
+}
+
+}  // namespace
+
+size_t ReadGenerators(std::vector<void*>& out) {
+    const field_io::TArrayView* arr = List();
+    if (!arr) return 0;
     void* const* elems = reinterpret_cast<void* const*>(arr->data);
     const size_t before = out.size();
     for (int32_t i = 0; i < arr->num; ++i)  // positions kept: a peer names a generator by its place in the list
@@ -160,11 +170,13 @@ size_t ReadGenerators(std::vector<void*>& out) {
     return out.size() - before;
 }
 
+// Read in place: it runs on every client install, press and hit, and on every changed frame of a drag.
 int32_t IndexOf(void* gen) {
-    std::vector<void*> gens;
-    ReadGenerators(gens);
-    for (size_t i = 0; i < gens.size(); ++i)
-        if (gen && gens[i] == gen) return static_cast<int32_t>(i);
+    const field_io::TArrayView* arr = gen && R::IsLive(gen) ? List() : nullptr;
+    if (!arr) return -1;
+    void* const* elems = reinterpret_cast<void* const*>(arr->data);
+    for (int32_t i = 0; i < arr->num; ++i)
+        if (elems[i] == gen) return i;
     return -1;
 }
 
