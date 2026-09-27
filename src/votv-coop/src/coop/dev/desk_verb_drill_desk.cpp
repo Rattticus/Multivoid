@@ -182,7 +182,7 @@ void* Button(int leg) {
 }
 
 // The download unit's DELETE sits under the desk's own cap, its `cap` mesh. A press on the cap flips `capOpened`
-// and turns DELETE's collision on (analogDScreenTest.cpp:3339-3350), so a player presses the cap first.
+// and turns DELETE's collision on (analogDScreenTest.cpp:3339-3354), so a player presses the cap first.
 bool CapOpened(void*) {
     static R::InstanceOffset sOff{L"capOpened"};
     return DeskBool(sOff);
