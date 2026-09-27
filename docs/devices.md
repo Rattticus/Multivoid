@@ -142,7 +142,10 @@ reads the set-new-code mode and writes the pair. On a client every call of those
 verbs is refused but the lane's own; a player's own entries -- a digit, the accept or cancel key,
 the numpad's (told apart by the key, since the numpad's accept passes the copy's own verdict), a
 keycard's swipe, a pass changer -- go to the host as an intent, and the host runs the verb on its
-copy, judging a submit against its own password. The entries run in order, and the next one waits
+copy, judging a submit against its own password. A digit clicked on the keys needs the light's power
+on the presser's own copy, as single player's click does, and a client's copy holds the host's
+light power, since every peer runs the panel's own setPower from the host's canonical: a client's
+clicks stop in a blackout and come back with the power. The entries run in order, and the next one waits
 while the host has no body for the sender and while the keypad's open is in the 0.2 s tail that
 clears its buffer, so none is lost to either wait (a full queue still refuses). A keycard's
 verdict is taken only while the sender holds a keycard. An accept unlocks a door; opening it is

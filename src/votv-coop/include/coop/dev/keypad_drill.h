@@ -2,17 +2,15 @@
 // judges it, and the client's copy lands on the host's verdict. CLIENT -- once its join is over,
 // walks with the director to the keypad its navmesh reaches first among the named ones that gate a
 // door and have a code of digits, and runs five legs there, each started in one tick and ended by its
-// own copy's state: PRESS the door while the keypad is unlocked (first when it starts so): its open
-// flips; ACCEPT the code on the numpad: active 1, the buffer empty, the door's 1; CANCEL two numpad
-// digits, once shown, with "-": active 0; DENY a wrong code on the keys: active 0, the door's 0; TAIL,
-// the same and two digits more in that tick, held through the deny's 0.2 s tail: the buffer ends as
-// those two. Straight after each start its own copy reads as before. HOST -- logs every change of
-// every keypad that gates a door. LATE: once slot 1's world is taken for its join, before it is
-// ready, the host negates as its own chain would the verdict of the first named keypad (by key) that
-// gates a door with a code the keys cannot type; the client, at its end, reads that door as its
-// keypad, which only the snapshot carried. Both census the keypads that gate a door, door beside
-// keypad: host at start and after the flip, client at start and end. A leg not landed in 10 s fails.
-// Lines are tagged [KEYPAD-DRILL]; run on both peers (keypad_drill=1); the client's DONE ends it.
+// own copy's state: PRESS the door while unlocked; ACCEPT the code on the numpad; CANCEL two numpad
+// digits with "-"; DENY a wrong code on the keys, pressed through the click that needs the light's
+// power; TAIL, two digits more held through the deny's 0.2 s tail. Straight after each start its own
+// copy reads as before. HOST -- logs every change of every keypad that gates a door. LATE: before the
+// joiner is ready the host negates the verdict of a keypad whose code the keys cannot type, which only
+// the snapshot carries. keypad_drill_blackout: a blackout before the walk and the power restored before
+// the typing, or then the client's light power written off (stale, the RED). Both census the keypads,
+// door beside keypad. A leg not landed in 10 s fails. Lines are tagged [KEYPAD-DRILL]; run on both
+// peers (keypad_drill=1); the client's DONE ends it.
 
 #pragma once
 

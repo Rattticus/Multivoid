@@ -288,6 +288,14 @@ bool ReadUnitPower(UnitPower& out) {
     return true;
 }
 
+bool WriteLightPower(bool on) {
+    void* gm = world_singleton::Gamemode();
+    if (!gm || !g_resolved.load(std::memory_order_acquire) || g_usesp[4].off < 0) return false;
+    uint8_t& b = *(static_cast<uint8_t*>(gm) + g_usesp[4].off);
+    b = on ? static_cast<uint8_t>(b | g_usesp[4].mask) : static_cast<uint8_t>(b & ~g_usesp[4].mask);
+    return true;
+}
+
 bool ReadServers(void* p, ServerState& out) {
     std::vector<void*> servers;
     if (!g_servers.Read(p, servers)) return false;

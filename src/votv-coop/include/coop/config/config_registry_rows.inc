@@ -566,6 +566,12 @@ CFG_FLAG(keypad_drill, "keypad_drill", "dev", false, "VOTVCOOP_KEYPAD_DRILL",
     "password through the numpad, a numpad cancel after two digits and a wrong code on the keys, each "
     "ended by its own copy landing on the host's verdict with the gated door's power; the host logs "
     "every keypad's changes. Lines tagged [KEYPAD-DRILL]; the client's DONE line ends it.")
+CFG_STRING(keypad_drill_blackout, "keypad_drill_blackout", "dev", "", "VOTVCOOP_KEYPAD_DRILL_BLACKOUT", false,
+    "With keypad_drill: restore -- the host breaks a generator as the client's world is ready, the client walks "
+    "only once its copy reads the blackout, the host restores the power (the repair, the light's breaker on) "
+    "once the client stands at a keypad, and the client types only once its copy reads the power back, its keys "
+    "pressed through the click that needs the light's power; stale -- the same, then the client's own light "
+    "power written off, as the old power lane left a client, which its key legs must FAIL.")
 CFG_FLAG(physmods_drill, "physmods_drill", "dev", false, "VOTVCOOP_PHYSMODS_DRILL",
     "Drill (BOTH peers), on an empty desk: the host plugs a module through the desk's plugInModule, the "
     "client plugs a second of that type into another slot, the host unplugs its own through the desk's E "

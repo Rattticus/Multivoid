@@ -86,4 +86,8 @@ bool ReadServers(void* p, ServerState& out);
 // [dev] the grid drill's lockout: the panel's virus_pb(), as the desk's virus runs it. Game thread.
 bool CallVirusLockout(void* p);
 
+// [dev] the keypad drill's stale arm: the game mode's usesp_light written raw, as a client was left before its
+// panel ran setPower from the host's canonical. Game thread.
+bool WriteLightPower(bool on);
+
 }  // namespace ue_wrap::power_control

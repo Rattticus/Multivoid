@@ -7,6 +7,7 @@
 #include "coop/interactables/keypad_sync.h"  // the keypad lane's key
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
+#include "coop/player/remote_player.h"  // the blackout option: where the client's body stands
 #include "coop/player/roster.h"
 #include "coop/save/save_transfer.h"  // WorldTakenFor: the late leg's window opens
 #include "coop/session/join_progress.h"
@@ -16,7 +17,9 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/devices/door.h"
+#include "ue_wrap/devices/generator.h"      // the blackout option's break and repair
 #include "ue_wrap/devices/passwordlock.h"
+#include "ue_wrap/devices/power_control.h"  // the light's power and its breaker
 #include "ue_wrap/engine/engine.h"
 
 #include <windows.h>
@@ -37,15 +40,33 @@ namespace R  = ue_wrap::reflection;
 namespace E  = ue_wrap::engine;
 namespace GT = ue_wrap::game_thread;
 namespace PL = ue_wrap::passwordlock;
+namespace GEN = ue_wrap::generator;
+namespace PC = ue_wrap::power_control;
 namespace DR = coop::director;
 using Clock = std::chrono::steady_clock;
 
 constexpr auto  kLegBound   = std::chrono::seconds(10);
 constexpr float kStandCm    = 150.f;   // this near the keypad, a player stands where it can use it
 constexpr int   kCandidates = 14;      // the nearest keypads by straight distance; each costs a route
+// The blackout option: the host restores the power once the client's body stands this near a keypad it watches, and
+// each wait on the power fails at this bound.
+constexpr float kAtKeypadCm = 400.f;
+constexpr auto  kPowerBound = std::chrono::seconds(60);
+constexpr int   kLightBit   = 4;  // the panel's light breaker
 
 enum class Leg { Press, Accept, Cancel, Deny, Tail };
-enum class Phase { Unpicked, Walking, Typing, Landing, Done };
+enum class Phase { Unpicked, Walking, Relit, Typing, Landing, Done };
+
+// keypad_drill_blackout: a blackout before the legs and the power back before the typing (restore), or the power
+// back and then this client's own light power written off, as the old power lane left a client (stale, the RED).
+enum class Blackout : uint8_t { Off, Restore, Stale };
+Blackout BlackoutMode() {
+    static const Blackout b = [] {
+        const std::string v = coop::config::ResolveString(::coop::config_registry::rows::keypad_drill_blackout);
+        return v == "restore" ? Blackout::Restore : v == "stale" ? Blackout::Stale : Blackout::Off;
+    }();
+    return b;
+}
 
 // One walk: the walker thread's own record of the keypad it stood at, or that it could not. The game thread
 // holds the current one and lets go of it at a session's end, so a walker still out writes only into its
@@ -73,6 +94,9 @@ std::wstring g_tailDigits;        // the tail leg: the two digits typed after it
 Clock::time_point g_since{};
 int          g_failures = 0;
 bool         g_lateDone = false;  // the host's late leg ran, or was found impossible
+bool         g_sawDark = false;   // the blackout option: this client's copy read the light's power off
+int          g_hostPower = 0;     // the host's blackout: 0 to break, 1 to restore, 2 done
+void*        g_darkGen = nullptr;
 
 // The host watches every keypad that gates a door, since the client picks by its own walk.
 struct Watched { void* lock; int32_t idx; std::wstring key; PL::State last; };
@@ -494,9 +518,52 @@ void HostLate(coop::net::Session& s) {
     Census("after the late flip");
 }
 
+// The host's half of the blackout option: a generator broken as the client's world is ready, which blacks the base
+// out on both peers, and once the client stands at a keypad the host watches, the power back through the host's
+// own hands, the repair at the generator's Activate button and the light's breaker on.
+void HostPower(coop::net::Session& s) {
+    if (BlackoutMode() == Blackout::Off || g_hostPower == 2 || !s.IsSlotWorldReady(1)) return;
+    if (!GEN::EnsureResolved() || !PC::EnsureResolved()) return;
+    void* me = coop::players::Registry::Get().Local();
+    if (g_hostPower == 0) {
+        std::vector<void*> gens;
+        GEN::ReadGenerators(gens);
+        for (void* g : gens)
+            if (g && !g_darkGen) g_darkGen = g;
+        if (!g_darkGen || !GEN::CallBreak(g_darkGen)) {
+            UE_LOGW("[KEYPAD-DRILL] host: no generator to break -- INCONCLUSIVE");
+            g_hostPower = 2;
+            return;
+        }
+        UE_LOGI("[KEYPAD-DRILL] host broke generator %d: the base is dark", GEN::IndexOf(g_darkGen));
+        g_hostPower = 1;
+        return;
+    }
+    coop::RemotePlayer* rp = coop::players::Registry::Get().Puppet(1);
+    void* body = rp ? rp->GetActor() : nullptr;
+    ue_wrap::FVector at{};
+    if (!body || !E::TryGetActorLocation(body, at)) return;
+    bool atKeypad = false;
+    for (const Watched& w : g_watched) {
+        ue_wrap::FVector p{};
+        if (R::IsLiveByIndex(w.lock, w.idx) && E::TryGetActorLocation(w.lock, p) && HorizDist(p, at) <= kAtKeypadCm)
+            atKeypad = true;
+    }
+    if (!atKeypad) return;
+    void* panel = PC::Panel();
+    uint8_t mask = 0;
+    const bool repaired = me && GEN::WritePuzzleSolved(g_darkGen) && GEN::PressActivate(g_darkGen, me);
+    const bool lit = panel && PC::ReadPress(panel, mask) &&
+                     ((mask & (1u << kLightBit)) != 0 || PC::PressLever(panel, me, kLightBit));
+    UE_LOGI("[KEYPAD-DRILL] host restored the power with the client at a keypad: repaired=%d, the light's breaker "
+            "on=%d", repaired ? 1 : 0, lit ? 1 : 0);
+    g_hostPower = 2;
+}
+
 // The host logs every change of every keypad that gates a door.
 void HostTick(coop::net::Session& s) {
     HostLate(s);
+    HostPower(s);
     if (g_watched.empty()) {
         const int32_t n = R::NumObjects();
         for (int32_t i = 0; i < n; ++i) {
@@ -538,6 +605,22 @@ void Tick(coop::net::Session* session) {
     if (coop::roster::LocalIsHost()) {
         HostTick(*session);
         return;
+    }
+    if (g_phase == Phase::Unpicked && BlackoutMode() != Blackout::Off && !g_sawDark) {
+        // The walk waits for the blackout on this copy, so the host's restore, which the client's arrival at a
+        // keypad starts, comes after it.
+        PC::UnitPower u{};
+        if (!PC::EnsureResolved() || !PC::ReadUnitPower(u) || u.light) {
+            if (g_since == Clock::time_point{}) g_since = Clock::now();
+            if (Clock::now() - g_since > kPowerBound) {
+                UE_LOGW("[KEYPAD-DRILL] client: the host's blackout never reached this copy -- FAIL");
+                ++g_failures;
+                Done("no blackout -- FAIL");
+            }
+            return;
+        }
+        g_sawDark = true;
+        UE_LOGI("[KEYPAD-DRILL] client: this copy reads the blackout (the light's power off); walking in the dark");
     }
     if (g_phase == Phase::Unpicked) {
         Census("at the start");
@@ -583,6 +666,28 @@ void Tick(coop::net::Session* session) {
         g_legs = g_last.active ? std::vector<Leg>{Leg::Press, Leg::Deny, Leg::Accept, Leg::Cancel, Leg::Tail}
                                : std::vector<Leg>{Leg::Accept, Leg::Press, Leg::Cancel, Leg::Deny, Leg::Tail};
         g_leg = 0;
+        g_phase = BlackoutMode() == Blackout::Off ? Phase::Typing : Phase::Relit;
+        g_since = Clock::now();
+        return;
+    }
+    if (g_phase == Phase::Relit) {
+        // The host restores the power as this client stands here: the keys, whose clicks need the light's power on
+        // the presser's own copy, are typed only once this copy reads it back.
+        PC::UnitPower u{};
+        if (!PC::ReadUnitPower(u) || !u.light) {
+            if (Clock::now() - g_since > kPowerBound) {
+                UE_LOGW("[KEYPAD-DRILL] client: the host's restored power never reached this copy -- FAIL");
+                ++g_failures;
+                Done("the power never came back -- FAIL");
+            }
+            return;
+        }
+        UE_LOGI("[KEYPAD-DRILL] client: this copy reads the power back (the light's power on)");
+        if (BlackoutMode() == Blackout::Stale) {
+            PC::WriteLightPower(false);
+            UE_LOGI("[KEYPAD-DRILL] client: the light's power written off on this copy, as the old power lane left "
+                    "it (the RED)");
+        }
         g_phase = Phase::Typing;
         return;
     }
@@ -619,6 +724,10 @@ void OnDisconnect() {
     g_tailDigits.clear();
     g_failures = 0;
     g_lateDone = false;
+    g_sawDark = false;
+    g_hostPower = 0;
+    g_darkGen = nullptr;
+    g_since = Clock::time_point{};
     g_watched.clear();
     // A walker still out writes into its own record, and its walk ends with the session (EndWalks).
     g_walk.reset();
