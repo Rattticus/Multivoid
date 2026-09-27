@@ -39,6 +39,7 @@ int32_t  g_offComplete[3] = {-1, -1, -1};
 uint8_t  g_maskComplete[3] = {};
 int32_t  g_offPanelObj = -1;       // generator_C.panelObj
 int32_t  g_offSwitchButtons = -1;  // TArray<UPrimitiveComponent*>, the drill's clicks only
+int32_t  g_offButtonUnderCursor = -1;  // the drill's wheel only
 
 constexpr const wchar_t* kTargetSine[3] = { L"targetSine_offset", L"targetSine_frequency", L"targetSine_amplitude" };
 constexpr const wchar_t* kSine[3] = { L"sine_offset", L"sine_frequency", L"sine_amplitude" };
@@ -148,6 +149,7 @@ bool EnsureResolved() {
     for (const wchar_t* verb : kVerbs)
         if (!R::FindDispatchFunctionCached(cls, verb)) return refuse(verb);
     g_offSwitchButtons = R::FindPropertyOffset(cls, L"buttons_switches");  // the drill's only: a miss is no refusal
+    g_offButtonUnderCursor = R::FindPropertyOffset(cls, L"buttonUnderCursor");
 
     for (int k = 0; k < 3; ++k) {
         g_offTargetSine[k] = offTargetSine[k];
@@ -305,11 +307,10 @@ bool Enter(void* panel, void* player) {
 
 bool Scroll(void* panel, int32_t button, float delta) {
     if (!panel || !EnsureResolved()) return false;
-    const int32_t off = R::FindPropertyOffset(R::ClassOf(panel), L"buttonUnderCursor");
     void* fn = R::FindDispatchFunctionCached(R::ClassOf(panel), L"mouseDelta");
     ParamFrame f(fn);
-    if (off < 0 || !fn || !f.valid()) return false;
-    *reinterpret_cast<int32_t*>(At(panel, off)) = button;  // what the tick's findButtonUnderCursor writes
+    if (g_offButtonUnderCursor < 0 || !fn || !f.valid()) return false;
+    *reinterpret_cast<int32_t*>(At(panel, g_offButtonUnderCursor)) = button;  // what findButtonUnderCursor writes
     return f.Set<float>(L"delta", delta) && Call(panel, f);
 }
 
