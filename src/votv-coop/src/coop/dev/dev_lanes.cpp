@@ -25,6 +25,7 @@
 #include "coop/dev/desk_verb_drill.h"  // [dev] a client presses the desk's save family through its own input
 #include "coop/dev/drive_drill.h"  // [dev] a drive's row is the host's; a client's eraser press and births reach it
 #include "coop/dev/download_drill.h"  // [dev] the download machine's arm and reset are the host's
+#include "coop/dev/laptop_drill.h"  // [dev] the laptop's slot is the host's; a file edit lands on its own disc
 #include "coop/dev/grid_drill.h"  // [dev] the power grid: a client's presses and repair, the host's break and lockout
 #include "coop/dev/tower_drill.h"  // [dev] the coordinate towers: the host's break, a client's repair, a joiner's copy
 #include "coop/dev/drone_probe.h"
@@ -129,6 +130,7 @@ void EndSession() {
     coop::dev::calib_drill::OnDisconnect();  // [dev] a rejoin's peers run their legs again
     coop::dev::drive_drill::OnDisconnect();  // [dev] the same for the drive drill
     coop::dev::download_drill::OnDisconnect();  // [dev] the same for the download drill
+    coop::dev::laptop_drill::OnDisconnect();  // [dev] a rejoin's peers run their legs again
     coop::dev::grid_drill::OnDisconnect();  // [dev] the panel and the legs belong to one world
     coop::dev::tower_drill::OnDisconnect();  // [dev] the tower and the legs belong to one world
     coop::dev::desk_verb_drill::OnDisconnect();  // [dev] the legs start over
@@ -193,6 +195,7 @@ void TickDrills(coop::net::Session& session) {
     coop::dev::calib_drill::Tick(&session);  // [dev] the precision drill (two short string compares when off)
     coop::dev::drive_drill::Tick(&session);  // [dev] the drive drill (two short string compares when off)
     coop::dev::download_drill::Tick(&session);  // [dev] the download drill (two short string compares when off)
+    coop::dev::laptop_drill::Tick(&session);  // [dev] the laptop drill (a latched read when off)
     coop::dev::grid_drill::Tick(&session);  // [dev] the power grid drill (a latched read when off)
     coop::dev::tower_drill::Tick(&session);  // [dev] the coordinate towers drill (a latched read when off)
     coop::dev::desk_verb_drill::Tick(&session);  // [dev] the desk's save family drill (a latched read when off)

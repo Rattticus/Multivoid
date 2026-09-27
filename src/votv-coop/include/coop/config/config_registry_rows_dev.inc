@@ -445,6 +445,13 @@ CFG_STRING(download_drill, "download_drill", "dev", "", "VOTVCOOP_DOWNLOAD_DRILL
     "'[DOWNLOAD-DRILL] client LIFE 1 DONE') -- an arm while the client's first life is in, then in the rejoiner's "
     "window a reset, a second catch and its arm, which it must end armed on. Lines tagged [DOWNLOAD-DRILL]; the "
     "client's DONE line ends it.")
+CFG_STRING(laptop_drill, "laptop_drill", "dev", "", "VOTVCOOP_LAPTOP_DRILL", false,
+    "Drill (BOTH peers): the laptop's disc slot is the host's and its file edits land on the disc they were made on. "
+    "run: the client inserts a disc and edits its files before the host answered the claim, ejects it, inserts a "
+    "second; the host ejects that one ahead of the client's next edit, then a batch and a canonical of the ejected "
+    "disc, each on its old generation, must land nowhere. join: the host inserts a disc and adds a buffer row while "
+    "a joiner loads, and the joiner's laptop must hold both. Lines tagged [LAPTOP-DRILL]; the client's DONE line "
+    "ends it.")
 CFG_STRING(grid_drill, "grid_drill", "dev", "", "VOTVCOOP_GRID_DRILL", false,
     "Drill (BOTH peers): the power grid, arm by arm. run: the client presses the panel's light lever, the host "
     "breaks the drill's generator (the one nearest the panel), the client's Activate press from where it stands is "
