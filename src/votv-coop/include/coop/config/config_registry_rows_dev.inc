@@ -71,7 +71,7 @@ CFG_FLAG(meadow_selftest, "meadow_selftest", "dev", false, "VOTVCOOP_MEADOW_SELF
     "Autonomous selftest: the laptop signal database lane, every writer on the host and a client's row.")
 CFG_FLAG(lid_drill, "lid_drill", "dev", false, "VOTVCOOP_LID_DRILL",
     "Autonomous drill: the portable PC's lid, opened on the host and closed on the client.")
-CFG_ENUM(subject_drill, "subject_drill", "dev", "off", "off|insert|own", "VOTVCOOP_SUBJECT_DRILL",
+CFG_ENUM(subject_drill, "subject_drill", "dev", "off", "off|insert|own|carry|carryred", "VOTVCOOP_SUBJECT_DRILL",
     "Drill (BOTH peers), a remote action never takes the local player as its subject. insert: before any "
     "client's world is ready the host spawns two drives; the joined client walks to the nearer, grabs it "
     "with the use key's chain and holds it, and once the host has seated the other in the desk's play "
