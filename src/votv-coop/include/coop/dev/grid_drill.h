@@ -1,17 +1,18 @@
-// coop/dev/grid_drill.h -- [dev] the power grid across both peers: the panel's presses and the generators' rows.
-//   run  -- the client walks to the base panel by the director and presses its light lever as the E dispatch
-//           does, each press waiting for the host's answer to leave the lever flipped; the host breaks the drill's
-//           generator (the one nearest the panel) after the first. After the second the client repairs it at its
-//           Activate button from where it stands, the puzzle solved as the drill's shortcut: within the button's
-//           reach the host must take it, beyond it (the generators stand 470-620 m out) roll it back; after a third,
-//           the host repairs it at its own button, which the client must run with its turn-on.
-//   join -- the host breaks the drill's generator as it hosts; the joiner must find the blackout at its world-ready.
-//   lockout, lockjoin -- the host runs the desk virus's lockout once the client's world is ready, or as it joins:
-//           the client's panel locks with the canonical and unlocks 60 s later, its servers on as calc says.
-//   red  -- a client applies the host's canonical and rows raw, as the old mirror did: the negative control.
-// Each peer says its grid at every step on a "[GRID-DRILL]" line and FAILs when its unit flags lag its breakers;
-// the client's last check reads this copy against the host's last canonical and rows. "[GRID-DRILL] ABANDONED" is
-// the drill unable to do its part (--dead-marker); the client's DONE line ends the run.
+// coop/dev/grid_drill.h -- [dev] the power grid across both peers: the panel's presses, the generators' rows and
+// their puzzles. Each client press waits for the host's answer to leave the lever flipped.
+//   run  -- the client walks to the base panel by the director and presses its light lever; the host breaks the
+//           drill's generator (the one nearest the panel) after the first press. After the second the client presses
+//           its Activate button from where it stands, which the host rolls back beyond its reach (the generators stand
+//           470-620 m out); after a third the host repairs it, with a turn-on the client runs too.
+//   puzzle -- as run up to the break; the client's panel must hold the host's puzzle, the host's own inputs after the
+//           second press must reach it, and the client's own input from out of reach must roll back.
+//   puzzlesolve -- the client stands beside the drill's generator (its stored pose); the host breaks it, and the
+//           client enters its panel, solves it input by input and presses Activate, which the host judges and takes.
+//   join -- the host breaks the drill's generator as it hosts; the joiner must find the blackout and its puzzle.
+//   lockout, lockjoin -- the desk virus's lockout, from the client's world-ready or during its join, 60 s long.
+//   red, puzzlered -- a client applies the host's canonical and rows raw, or never writes a puzzle: the controls.
+// Each peer says its grid on "[GRID-DRILL]" lines; the client's DONE line, after this copy reads equal to the
+// host's last canonical, rows and puzzles, ends the run (grid_drill_checks.h).
 
 #pragma once
 

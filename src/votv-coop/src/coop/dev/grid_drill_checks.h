@@ -1,6 +1,6 @@
 // coop/dev/grid_drill_checks.h -- [dev] the grid drill's readings, shared by its legs: what a peer says of its
 // grid on a "[GRID-DRILL]" line and whether its unit flags hold the grid's invariant, the client's end check against
-// the host's last canonical, rows, and the drill's generator (the one whose Activate button
+// the host's last canonical, rows and puzzles, and the drill's generator (the one whose Activate button
 // stands nearest the panel's light lever, so both peers find the same one). Src-local, beside grid_drill.cpp.
 
 #pragma once
@@ -26,5 +26,8 @@ void SayDone();
 void* DrillGen();
 bool DrillGenBroken(bool& broken);
 void ForgetDrillGen();
+
+// The drill's generator's puzzle on this copy against the host's last word for it, `canon`. False with `why`.
+bool PuzzleMatches(std::string& why, coop::net::PowerGridPuzzle& canon);
 
 }  // namespace coop::dev::grid_drill

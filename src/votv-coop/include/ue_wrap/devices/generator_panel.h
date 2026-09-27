@@ -51,4 +51,14 @@ bool IsMoving(void* panel);
 // not readable. Game thread.
 bool Write(void* panel, const Puzzle& in);
 
+// [dev] the grid drill's player inputs, through the panel's own handlers, so they run in its event graph as a
+// player's do: a rotator's click (clicked_rotataors with rotator `i`'s button), a switch's (clicked_switchers),
+// and the mouse wheel over the button at `button` in the panel's hover order (mouseDelta, whose addVal turns knob
+// `button` -- 0 offset, 1 frequency, 2 amplitude -- by `delta`); and the use that enters the panel's interface
+// (actionOptionIndex, action 4). A click waits for the move before it (IsMoving). Game thread.
+bool ClickRotator(void* panel, int i);
+bool ClickSwitch(void* panel, int i);
+bool Scroll(void* panel, int32_t button, float delta);
+bool Enter(void* panel, void* player);
+
 }  // namespace ue_wrap::generator_panel

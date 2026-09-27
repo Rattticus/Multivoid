@@ -4,6 +4,7 @@
 
 #include "coop/world/power_grid.h"
 #include "coop/world/power_panel.h"
+#include "coop/world/power_puzzle.h"
 
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/log.h"
@@ -123,8 +124,9 @@ bool MatchesHost(std::string& why) {
     void* panel = PC::Panel();
     uint8_t mask = 0, canon = 0;
     bool disabled = false, canonDisabled = false;
-    if (coop::power_panel::PendingPresses() != 0 || coop::power_grid::PendingOps() != 0) {
-        why = "a press or an op of mine is still untaken";
+    if (coop::power_panel::PendingPresses() != 0 || coop::power_grid::PendingOps() != 0 ||
+        coop::power_puzzle::UntakenInputs() != 0) {
+        why = "a press, an op or a puzzle input of mine is still untaken";
         return false;
     }
     if (!panel || !PC::ReadPress(panel, mask) || !PC::ReadDisabled(panel, disabled) ||
@@ -154,9 +156,19 @@ bool MatchesHost(std::string& why) {
             why = buf;
             return false;
         }
+        coop::net::PowerGridPuzzle mine{};
+        coop::power_puzzle::Fill(gens[i], mine);
+        if (w.puzzle.valid && !coop::power_puzzle::SamePuzzle(mine, w.puzzle)) {
+            std::snprintf(buf, sizeof(buf), "generator %zu's puzzle is not the host's (sines %u/%u/%u, the host's "
+                          "%u/%u/%u)", i, mine.sine[0], mine.sine[1], mine.sine[2], w.puzzle.sine[0],
+                          w.puzzle.sine[1], w.puzzle.sine[2]);
+            why = buf;
+            return false;
+        }
     }
     return true;
 }
+
 
 }  // namespace
 
@@ -210,6 +222,28 @@ bool DrillGenBroken(bool& broken) {
     void* gen = DrillGen();
     if (!gen || !GEN::ReadRow(gen, r)) return false;
     broken = r.broken;
+    return true;
+}
+
+// The drill's generator's puzzle on this copy against the host's last word for it. False with `why` otherwise.
+bool PuzzleMatches(std::string& why, coop::net::PowerGridPuzzle& canon) {
+    void* gen = DrillGen();
+    const int32_t idx = gen ? GEN::IndexOf(gen) : -1;
+    coop::net::PowerGridPuzzle mine{};
+    if (idx < 0 || !coop::power_puzzle::Canonical(idx, canon)) {
+        why = "the host's puzzle for the drill's generator is unread";
+        return false;
+    }
+    coop::power_puzzle::Fill(gen, mine);
+    if (!mine.valid || !coop::power_puzzle::SamePuzzle(mine, canon)) {
+        char buf[160];
+        std::snprintf(buf, sizeof(buf), "this copy's sines %u/%u/%u targets %u/%u/%u, the host's %u/%u/%u and "
+                      "%u/%u/%u", mine.sine[0], mine.sine[1], mine.sine[2], mine.targetSine[0], mine.targetSine[1],
+                      mine.targetSine[2], canon.sine[0], canon.sine[1], canon.sine[2], canon.targetSine[0],
+                      canon.targetSine[1], canon.targetSine[2]);
+        why = buf;
+        return false;
+    }
     return true;
 }
 

@@ -38,6 +38,7 @@ uint8_t  g_maskMoving = 0;
 int32_t  g_offComplete[3] = {-1, -1, -1};
 uint8_t  g_maskComplete[3] = {};
 int32_t  g_offPanelObj = -1;       // generator_C.panelObj
+int32_t  g_offSwitchButtons = -1;  // TArray<UPrimitiveComponent*>, the drill's clicks only
 
 constexpr const wchar_t* kTargetSine[3] = { L"targetSine_offset", L"targetSine_frequency", L"targetSine_amplitude" };
 constexpr const wchar_t* kSine[3] = { L"sine_offset", L"sine_frequency", L"sine_amplitude" };
@@ -146,6 +147,7 @@ bool EnsureResolved() {
         if (!R::FindBoolProperty(cls, kComplete[k], offComplete[k], maskComplete[k])) return refuse(kComplete[k]);
     for (const wchar_t* verb : kVerbs)
         if (!R::FindDispatchFunctionCached(cls, verb)) return refuse(verb);
+    g_offSwitchButtons = R::FindPropertyOffset(cls, L"buttons_switches");  // the drill's only: a miss is no refusal
 
     for (int k = 0; k < 3; ++k) {
         g_offTargetSine[k] = offTargetSine[k];
@@ -270,6 +272,45 @@ bool Write(void* panel, const Puzzle& in) {
             CallVerb(panel, L"setRotators");
     }
     return true;
+}
+
+namespace {
+// A click on button `i` of the panel's `offButtons` array through `handler`; the key pressed stays zeroed, since
+// the handlers never read it.
+bool ClickButton(void* panel, int32_t offButtons, int count, int i, const wchar_t* handler) {
+    if (!panel || !EnsureResolved() || offButtons < 0 || i < 0 || i >= count) return false;
+    void* const* buttons = reinterpret_cast<void* const*>(Elements(panel, offButtons, count));
+    void* fn = R::FindDispatchFunctionCached(R::ClassOf(panel), handler);
+    ParamFrame f(fn);
+    return buttons && buttons[i] && fn && f.valid() && f.Set<void*>(L"TouchedComponent", buttons[i]) &&
+           Call(panel, f);
+}
+}  // namespace
+
+bool ClickRotator(void* panel, int i) {
+    return ClickButton(panel, g_offRotatorButtons, kRotators, i, L"clicked_rotataors");
+}
+
+bool ClickSwitch(void* panel, int i) {
+    return ClickButton(panel, g_offSwitchButtons, kSwitches, i, L"clicked_switchers");
+}
+
+bool Enter(void* panel, void* player) {
+    void* fn = panel && EnsureResolved() ? R::FindDispatchFunctionCached(R::ClassOf(panel), L"actionOptionIndex")
+                                         : nullptr;
+    ParamFrame f(fn);
+    return fn && player && f.valid() && f.Set<void*>(L"player", player) && f.Set<uint8_t>(L"action", 4) &&
+           Call(panel, f);
+}
+
+bool Scroll(void* panel, int32_t button, float delta) {
+    if (!panel || !EnsureResolved()) return false;
+    const int32_t off = R::FindPropertyOffset(R::ClassOf(panel), L"buttonUnderCursor");
+    void* fn = R::FindDispatchFunctionCached(R::ClassOf(panel), L"mouseDelta");
+    ParamFrame f(fn);
+    if (off < 0 || !fn || !f.valid()) return false;
+    *reinterpret_cast<int32_t*>(At(panel, off)) = button;  // what the tick's findButtonUnderCursor writes
+    return f.Set<float>(L"delta", delta) && Call(panel, f);
 }
 
 }  // namespace ue_wrap::generator_panel
