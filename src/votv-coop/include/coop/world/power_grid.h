@@ -1,6 +1,6 @@
 // coop/world/power_grid.h -- the base's power grid, whose simulation runs on the host (PowerGridState). The
-// generators wear on the dice of generatorFuckuper's 30 s decay tick, which a client in its announced world
-// refuses at the body; a client refuses its own generator break, wear and fullFix too, so a generator breaks,
+// generators wear on dice only the host rolls (coop/world/power_decay.h); a client refuses its own generator
+// break, wear and fullFix too, so a generator breaks,
 // wears and mends only on the host, whose rows every client applies by running the same edges itself, a repair as
 // the Activate route runs one, after the panel canonical the verbs produced; each row carries its generator's
 // repair puzzle (coop/world/power_puzzle.h). A client's player acts on a generator as ops to the host, taken in
@@ -27,7 +27,7 @@ namespace coop::power_grid {
 // keypad lanes' reach, which coop/element/intent_authority pads with the generator's bounds and the puppet's lag.
 inline constexpr float kGeneratorReachUU = 400.0f;
 
-// Register the decay tick's and the generators' gates. Idempotent. Session install.
+// Register the generators' gates, and the decay tick's and the puzzle's. Idempotent. Session install.
 void Install(coop::net::Session* session);
 
 // Settle the gates' registration and say once whether they are live; take the ops that waited for the generators,

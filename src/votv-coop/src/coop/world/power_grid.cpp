@@ -11,6 +11,7 @@
 #include "coop/player/players_registry.h"
 #include "coop/player/roster_ledger.h"
 #include "coop/session/net_pump.h"  // IsInAnnouncedWorld: a client's own world load runs natively
+#include "coop/world/power_decay.h"  // the wear dice, which only the host rolls
 #include "coop/world/power_panel.h"  // the canonical a client's own generator verbs rewrote
 #include "coop/world/power_puzzle.h"  // the rows' second half: each generator's repair puzzle
 #include "coop/world/power_upgrade.h"  // the spends an install rests on, and a refused one's refund
@@ -43,7 +44,6 @@ using coop::net::kPowerGridGenerators;
 static_assert(coop::net::kMaxPeers <= 4, "PowerGridPayload::ack holds four slots");
 static_assert(coop::net::kMaxPeers <= 8, "the owed rows are one bit a slot");
 
-constexpr wchar_t kDecayClass[] = L"generatorFuckuper_C";
 constexpr wchar_t kGenClass[]   = L"generator_C";
 constexpr int32_t kMaxUpgrade   = 6;    // the insert's own gate, `upgradeLevel < 6`
 constexpr int32_t kFullWear     = 100;  // what the Activate button's repair and service write the wear back to
@@ -76,41 +76,6 @@ bool IsClient(coop::net::Session* s) { return s && s->role() == coop::net::Role:
 uint64_t NowMs() {
     return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now().time_since_epoch()).count());
-}
-
-// ---- the decay tick ------------------------------------------------------------------------------------------
-
-uint64_t g_decayRefused = 0, g_decayRan = 0;
-
-// [dev] power_decay_drill: `watch` says every tick's verdict and ends on the client's second tick; `red` lets a
-// client's tick run, the negative control.
-enum class Drill : uint8_t { Off, Watch, Red };
-Drill DrillMode() {
-    static const Drill d = [] {
-        const std::string v = coop::config::ResolveString(::coop::config_registry::rows::power_decay_drill);
-        return v == "watch" ? Drill::Watch : v == "red" ? Drill::Red : Drill::Off;
-    }();
-    return d;
-}
-
-sg::Verdict OnDecayTickPre(const sg::Call& call) {
-    if (call.fromOurCode) return sg::Verdict::Run;
-    auto* s = Connected();
-    if (!s) return sg::Verdict::Run;
-    const bool client = IsClient(s);
-    const Drill drill = DrillMode();
-    const bool refuse = client && drill != Drill::Red && coop::net_pump::IsInAnnouncedWorld(call.object);
-    const uint64_t n = refuse ? ++g_decayRefused : ++g_decayRan;
-    if (refuse && n == 1)
-        UE_LOGI("power_grid: this client refuses its own decay tick -- only the host's dice wear the generators");
-    if (drill != Drill::Off) {
-        UE_LOGI("[POWER-DECAY] %s tick %s (%llu)", client ? "client" : "host", refuse ? "refused" : "ran",
-                static_cast<unsigned long long>(n));
-        if (client && g_decayRefused + g_decayRan == 2)
-            UE_LOGI("[POWER-DECAY] DONE client refused=%llu ran=%llu",
-                    static_cast<unsigned long long>(g_decayRefused), static_cast<unsigned long long>(g_decayRan));
-    }
-    return refuse ? sg::Verdict::Cancel : sg::Verdict::Run;
 }
 
 // ---- the rows and the ops ------------------------------------------------------------------------------------
@@ -654,7 +619,6 @@ struct WatchDef {
     sg::PostFn post;
 };
 constexpr WatchDef kWatches[] = {
-    { kDecayClass, L"timer_transformers", 0x50474454 /*'PGDT'*/, &OnDecayTickPre,   nullptr },
     { kGenClass,   L"break",              0x50474252 /*'PGBR'*/, &OnOwnEditPre,     &OnGenHostPost },
     { kGenClass,   L"damage",             0x5047444D /*'PGDM'*/, &OnOwnEditPre,     &OnGenHostPost },
     { kGenClass,   L"fullFix",            0x50474658 /*'PGFX'*/, &OnOwnEditPre,     &OnGenHostPost },
@@ -671,6 +635,7 @@ bool g_settled = false;
 
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
+    coop::power_decay::Install(session);
     coop::power_puzzle::Install(session);
     coop::power_upgrade::Install(session);
     if (g_registered) return;
@@ -689,6 +654,7 @@ void Tick() {
     } else if (g_rowsWaiting && GEN::EnsureResolved()) {
         ClientReconcile();
     }
+    coop::power_decay::Tick();
     coop::power_puzzle::Tick();
     if (g_settled || !g_registered) return;
     sg::ResolvePendingNames();
@@ -699,8 +665,8 @@ void Tick() {
     }
     if (live == kWatchCount) {
         g_settled = true;
-        UE_LOGI("power_grid: the grid's gates are live (the decay tick, break, wear, fullFix, upgrades, upd, the "
-                "Activate press, a hit)");
+        UE_LOGI("power_grid: the grid's gates are live (break, wear, fullFix, upgrades, upd, the Activate press, a "
+                "hit)");
     } else if (settled == kWatchCount) {
         g_settled = true;
         UE_LOGE("power_grid: %d of %d grid gates are dead -- those edges stay each peer's own", kWatchCount - live,
@@ -760,19 +726,16 @@ bool LastRows(coop::net::PowerGridPayload& out) {
 }
 
 void OnDisconnect() {
+    coop::power_decay::OnDisconnect();
     coop::power_puzzle::OnDisconnect();
     coop::power_upgrade::OnDisconnect();
     g_devRefuseInstalls = false;
-    if (g_decayRefused || g_decayRan)
-        UE_LOGI("power_grid: session end -- decay ticks refused %llu, run %llu",
-                static_cast<unsigned long long>(g_decayRefused), static_cast<unsigned long long>(g_decayRan));
     if (g_editsRefused || g_opsSent || g_rowsApplied || g_opsTaken || g_inputsTaken || g_opsRefused)
         UE_LOGI("power_grid: session end -- own edits refused %llu, ops sent %llu, rows applied %llu; as host: ops "
                 "taken %llu, puzzle inputs taken %llu, refused %llu",
                 static_cast<unsigned long long>(g_editsRefused), static_cast<unsigned long long>(g_opsSent),
                 static_cast<unsigned long long>(g_rowsApplied), static_cast<unsigned long long>(g_opsTaken),
                 static_cast<unsigned long long>(g_inputsTaken), static_cast<unsigned long long>(g_opsRefused));
-    g_decayRefused = g_decayRan = 0;
     g_editsRefused = g_opsSent = g_hitsSent = g_rowsApplied = 0;
     g_opsTaken = g_opsRefused = g_noisyAnswered = g_inputsTaken = 0;
     g_haveSent = g_ackDirty = g_puzzleDirty = false;

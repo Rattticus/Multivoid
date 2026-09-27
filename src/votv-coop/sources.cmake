@@ -211,6 +211,7 @@ set(VOTVCOOP_SOURCES
     src/coop/world/time_sync.cpp
     src/coop/world/day_edge.cpp
     src/coop/world/sky_sync.cpp
+    src/coop/world/power_decay.cpp
     src/coop/world/power_grid.cpp
     src/coop/world/power_panel.cpp
     src/coop/world/power_puzzle.cpp
