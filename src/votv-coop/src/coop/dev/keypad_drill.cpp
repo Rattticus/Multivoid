@@ -299,23 +299,24 @@ void Done(const char* verdict) {
     UE_LOGI("[KEYPAD-DRILL] %s DONE keypad='%ls' %s", Side(), g_key.c_str(), verdict);
 }
 
-// Digits, typed through the numpad (the focused keypad's playerAnykey) or pressed on the keys (the
-// keypad's own inputNumber, as the E-press reaches it).
+// Digits, typed through the numpad (the focused keypad's playerAnykey) or pressed on the keys as the E-press
+// reaches them, through the keypad's click route and its gate on the light's power.
 void TypeDigits(const std::wstring& digits, bool numpad) {
+    void* player = coop::players::Registry::Get().Local();
     static const wchar_t* const kNumPad[10] = {L"NumPadZero", L"NumPadOne", L"NumPadTwo", L"NumPadThree",
                                                L"NumPadFour", L"NumPadFive", L"NumPadSix", L"NumPadSeven",
                                                L"NumPadEight", L"NumPadNine"};
     for (wchar_t c : digits) {
         if (c < L'0' || c > L'9') continue;
         if (numpad) PL::CallPlayerAnykey(g_lock, kNumPad[c - L'0'], true);
-        else PL::CallInputNumber(g_lock, static_cast<int32_t>(c - L'0'));
+        else PL::CallPressKey(g_lock, player, static_cast<int32_t>(c - L'0'));
     }
 }
 
 // A press off the digit keys, on the accept key or the cancel key as an aim would have it.
 void PressKey(bool cancel) {
     PL::WriteHover(g_lock, !cancel, cancel);
-    PL::CallPressOffDigits(g_lock);
+    PL::CallPressKey(g_lock, coop::players::Registry::Get().Local(), -1);
     PL::WriteHover(g_lock, false, false);
 }
 

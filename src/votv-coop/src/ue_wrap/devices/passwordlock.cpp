@@ -8,6 +8,8 @@
 #include "ue_wrap/core/fname_utils.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/engine/engine_component.h"  // GetComponentLocation: the drill's key press
+#include "ue_wrap/engine/hit_result.h"
 
 #include <atomic>
 #include <cstdint>
@@ -40,6 +42,11 @@ void*   g_resetFn    = nullptr;
 void*   g_falseFn    = nullptr;
 void*   g_setActiveFn = nullptr;
 void*   g_anyKeyFn   = nullptr;  // playerAnykey, the drill's keyboard; resolved on first use
+// The drill's key press, resolved on first use: num (the look-at's key), keys_1 (the digit keys), and the E-press.
+bool    g_pressResolved = false;
+int32_t g_numOff  = -1;
+int32_t g_keysOff = -1;
+void*   g_actionFn = nullptr;
 
 bool ReadBool(const void* obj, int32_t off) {
     return off >= 0 && *reinterpret_cast<const bool*>(reinterpret_cast<const char*>(obj) + off);
@@ -250,10 +257,27 @@ void* GatedDoor(void* lock) {
     return (door && R::IsLive(door)) ? door : nullptr;
 }
 
-bool CallPressOffDigits(void* lock) {
-    if (!lock || !g_inputNumFn) return false;
-    ParamFrame f(g_inputNumFn);
-    if (!f.valid() || !f.Set<int32_t>(L"num", -1)) return false;
+bool CallPressKey(void* lock, void* player, int32_t num) {
+    if (!lock || !player || num < -1 || num > 9 || !g_resolved.load(std::memory_order_acquire)) return false;
+    if (!g_pressResolved) {
+        g_pressResolved = true;
+        g_numOff = R::FindPropertyOffset(g_lockCls, L"num");
+        g_keysOff = R::FindPropertyOffset(g_lockCls, L"keys_1");
+        g_actionFn = R::FindFunction(g_lockCls, L"actionOptionIndex");
+    }
+    if (g_numOff < 0 || !g_actionFn) return false;
+    void* key = nullptr;  // the aimed digit key; off the digits the hover flags name the key
+    if (num >= 0 && g_keysOff >= 0) {
+        const auto* keys = reinterpret_cast<const field_io::TArrayView*>(reinterpret_cast<const char*>(lock) + g_keysOff);
+        if (keys->data && num < keys->num) key = reinterpret_cast<void* const*>(keys->data)[num];
+    }
+    *reinterpret_cast<int32_t*>(reinterpret_cast<char*>(lock) + g_numOff) = num;  // what lookAt writes
+    ParamFrame f(g_actionFn);
+    if (!f.valid() || !f.Set<void*>(L"player", player) || !f.Set<uint8_t>(L"action", 4)) return false;
+    if (key && R::IsLive(key) &&
+        (!hit_result::Write(f, L"hit", lock, key, engine::GetComponentLocation(key)) ||
+         !f.Set<void*>(L"lookAtComponent", key)))
+        return false;
     return Call(lock, f);
 }
 

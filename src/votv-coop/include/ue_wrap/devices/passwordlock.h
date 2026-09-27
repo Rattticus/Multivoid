@@ -83,11 +83,12 @@ bool WritePassword(void* lock, const std::wstring& password);
 // The door this keypad gates, or null (none, dead, or unresolved). Game thread.
 void* GatedDoor(void* lock);
 
-// A drill's stand-ins for a player at the keypad: a press off the digit keys (inputNumber(-1), whose
-// meaning the hover flags decide), the hover flags an aim would write, and a key of the keyboard as
-// the focused keypad's playerAnykey receives it, by the engine's key name ("NumPadOne", "Add").
-// Game thread.
-bool CallPressOffDigits(void* lock);
+// A drill's stand-ins for a player at the keypad: a key pressed as the E-press reaches it -- the look-at's
+// num written (a digit key's place, -1 off the digits, where the hover flags decide), then
+// actionOptionIndex(player, a hit on the key, 4, the key), whose route drops a click while the light's
+// power is off --, the hover flags an aim would write, and a key of the keyboard as the focused keypad's
+// playerAnykey receives it, by the engine's key name ("NumPadOne", "Add"). Game thread.
+bool CallPressKey(void* lock, void* player, int32_t num);
 bool WriteHover(void* lock, bool onAccept, bool onCancel);
 bool CallPlayerAnykey(void* lock, const wchar_t* keyName, bool pressed);
 
