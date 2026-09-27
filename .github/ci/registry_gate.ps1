@@ -44,11 +44,14 @@ $ErrorActionPreference = 'Stop'
 if (-not $Root) { $Root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot) }
 
 $incPath  = Join-Path $Root 'src\votv-coop\include\coop\config\config_registry_rows.inc'
+# The [dev] section's own file, which the row list includes at its end.
+$devIncPath = Join-Path $Root 'src\votv-coop\include\coop\config\config_registry_rows_dev.inc'
 $cfgHdr   = Join-Path $Root 'src\votv-coop\include\coop\config\config.h'
 $srcDirs  = @((Join-Path $Root 'src\votv-coop\src'), (Join-Path $Root 'src\votv-coop\include'))
-# The registry's own three files self-reference every ident (decl/def/table)
-# and must not satisfy the census.
-$selfFiles = @('config_registry.h', 'config_registry.cpp', 'config_registry_rows.inc')
+# The registry's own files self-reference every ident (decl/def/table, the
+# rows and their [dev] file) and must not satisfy the census.
+$selfFiles = @('config_registry.h', 'config_registry.cpp', 'config_registry_rows.inc',
+               'config_registry_rows_dev.inc')
 
 $violations = New-Object System.Collections.Generic.List[string]
 $controlFailures = New-Object System.Collections.Generic.List[string]
@@ -69,7 +72,9 @@ $writeOnlyAllow = @{
 if (-not (Test-Path $incPath)) { Write-Host "registry_gate: FAIL -- missing $incPath"; exit 1 }
 $rowIdents = New-Object System.Collections.Generic.List[string]
 $fontRoleIdents = New-Object System.Collections.Generic.List[string]
-foreach ($line in Get-Content $incPath) {
+$rowFiles = @($incPath)
+if (Test-Path $devIncPath) { $rowFiles += $devIncPath }
+foreach ($line in ($rowFiles | ForEach-Object { Get-Content $_ })) {
     if ($line -cmatch '^\s*CFG_(?<kind>[A-Z_]+)\(\s*(?<ident>[A-Za-z0-9_]+)\s*,') {
         if ($Matches['kind'] -ceq 'FONTROLE') { $fontRoleIdents.Add($Matches['ident']) }
         else { $rowIdents.Add($Matches['ident']) }
