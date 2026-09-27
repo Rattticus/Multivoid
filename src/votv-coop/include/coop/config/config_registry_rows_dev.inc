@@ -410,6 +410,12 @@ CFG_STRING(desk_crossing_drill, "desk_crossing_drill", "dev", "", "VOTVCOOP_DESK
     "fullyProcessed. join: the host crosses on planeteater before the client's world is ready; the client relays no "
     "catch of its own, reads the host's needle at 1, and finds canDL and fullyProcessed. Lines tagged "
     "[DESK-CROSSING-DRILL]; 'client DONE PASS|FAIL' ends it; ABANDONED is a step that could not run.")
+CFG_STRING(drive_drill, "drive_drill", "dev", "", "VOTVCOOP_DRIVE_DRILL", false,
+    "Drill (BOTH peers): the host gives a drive a row; a client's deviation on its copy must be put back at once, "
+    "its eraser press must wipe the drive on the host and show here, a drive it spawns, takes out or throws must "
+    "reach the host with its row, and its forged row on a drive it did not bring must be refused. "
+    "run -- a drive the host spawns once a client is in its world; join -- a drive of the host's world, written "
+    "while a joiner loads it. Lines tagged [DRIVE-DRILL]; the host's DONE line ends it.")
 CFG_STRING(grid_drill, "grid_drill", "dev", "", "VOTVCOOP_GRID_DRILL", false,
     "Drill (BOTH peers): the power grid, arm by arm. run: the client presses the panel's light lever, the host "
     "breaks the drill's generator (the one nearest the panel), the client's Activate press from where it stands is "

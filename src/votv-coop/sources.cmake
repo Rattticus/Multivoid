@@ -497,6 +497,8 @@ set(VOTVCOOP_SOURCES
     src/coop/dev/server_upgrade_drill.cpp
     src/coop/dev/sat_console_drill.cpp
     src/coop/dev/calib_drill.cpp
+    src/coop/dev/drive_drill.cpp
+    src/coop/dev/drive_drill_verbs.cpp
     src/coop/dev/grid_drill.cpp
     src/coop/dev/grid_drill_checks.cpp
     src/coop/dev/grid_drill_upgrade.cpp

@@ -21,6 +21,7 @@
 #include "coop/dev/calib_drill.h"  // [dev] a dish's precision is the host's; a player's verb reaches it
 #include "coop/dev/desk_crossing_drill.h"  // [dev] the desk's detection needle crosses on the host alone
 #include "coop/dev/desk_verb_drill.h"  // [dev] a client presses the desk's save family through its own input
+#include "coop/dev/drive_drill.h"  // [dev] a drive's row is the host's; a client's eraser press and births reach it
 #include "coop/dev/grid_drill.h"  // [dev] the power grid: a client's presses and repair, the host's break and lockout
 #include "coop/dev/drone_probe.h"
 #include "coop/dev/end_play_probe.h"  // [dev] every end of play against the K2_DestroyActor seam
@@ -120,6 +121,7 @@ void EndSession() {
     coop::dev::server_upgrade_drill::OnDisconnect();  // [dev] the box and the legs belong to one world
     coop::dev::sat_console_drill::OnDisconnect();  // [dev] the steps and the host's counts belong to one session
     coop::dev::calib_drill::OnDisconnect();  // [dev] a rejoin's peers run their legs again
+    coop::dev::drive_drill::OnDisconnect();  // [dev] the same for the drive drill
     coop::dev::grid_drill::OnDisconnect();  // [dev] the panel and the legs belong to one world
     coop::dev::desk_verb_drill::OnDisconnect();  // [dev] the legs start over
     coop::dev::desk_crossing_drill::OnDisconnect();  // [dev] the legs start over, a held host step let go
@@ -178,6 +180,7 @@ void TickDrills(coop::net::Session& session) {
     coop::dev::server_upgrade_drill::Tick(&session);  // [dev] the server upgrade drill (a single bool read when off)
     coop::dev::sat_console_drill::Tick(&session);  // [dev] the SAT console drill (two short string compares when off)
     coop::dev::calib_drill::Tick(&session);  // [dev] the precision drill (two short string compares when off)
+    coop::dev::drive_drill::Tick(&session);  // [dev] the drive drill (two short string compares when off)
     coop::dev::grid_drill::Tick(&session);  // [dev] the power grid drill (a latched read when off)
     coop::dev::desk_verb_drill::Tick(&session);  // [dev] the desk's save family drill (a latched read when off)
     coop::dev::desk_crossing_drill::Tick(&session);  // [dev] the needle's crossing drill (a latched read when off)
