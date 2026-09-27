@@ -384,6 +384,12 @@ CFG_STRING(calib_drill, "calib_drill", "dev", "", "VOTVCOOP_CALIB_DRILL", false,
     "the tool's NaN on the fourth, which the host must refuse and answer. "
     "run -- the host holds them once a client is in its world; join -- before any client connects. Lines tagged "
     "[CALIB-DRILL]; the client's DONE line ends it.")
+CFG_STRING(server_drill, "server_drill", "dev", "", "VOTVCOOP_SERVER_DRILL", false,
+    "Drill (BOTH peers): a server box's break is the host's and a client's repair of it runs there. The host breaks "
+    "a box with no upgrades and stamps its repair type 123. run -- once a client is in its world: the client finds "
+    "it broken with that type, its own breakServer on a healthy box is refused, it walks to the box and runs the "
+    "repair widget's end(true), and the host's box ends fixed; join -- the break in the joiner's window, found after "
+    "its world is ready. Lines tagged [SERVER-DRILL]; the client's DONE line ends it.")
 CFG_STRING(server_upgrade_drill, "server_upgrade_drill", "dev", "", "VOTVCOOP_SERVER_UPGRADE_DRILL", false,
     "Drill (BOTH peers): a client installs an upgrade into a server box and takes one out. apply: the host "
     "applies both; refuse: the host refuses both, as if each had lost its race, and the client sees its install "

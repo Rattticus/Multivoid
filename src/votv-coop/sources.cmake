@@ -502,6 +502,7 @@ set(VOTVCOOP_SOURCES
     src/coop/dev/physmods_drill.cpp
     src/coop/dev/drone_call_drill.cpp
     src/coop/dev/server_upgrade_drill.cpp
+    src/coop/dev/server_drill.cpp
     src/coop/dev/sat_console_drill.cpp
     src/coop/dev/calib_drill.cpp
     src/coop/dev/drive_drill.cpp
