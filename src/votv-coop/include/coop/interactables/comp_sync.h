@@ -54,4 +54,7 @@ void OnPeerDisconnect(uint8_t slot);
 // Aggregate teardown.
 void OnDisconnect();
 
+// CLIENT: the host's decode runs as this mirror last heard it (the wire's active state). For the drills.
+bool MirrorActive();
+
 }  // namespace coop::comp_sync

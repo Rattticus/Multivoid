@@ -12,7 +12,6 @@
 #include "coop/element/registry.h"
 #include "coop/interactables/desk_verb_effects.h"  // CountsNow: the glosses and sounds sent and made
 #include "coop/interactables/signal_catch_sync.h"  // LocalCatchesRelayed: the caught signal is on the wire
-#include "coop/interactables/signal_sync.h"        // JoinSnapshotCaptured: a row authored now rides the seed
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
 #include "coop/session/join_progress.h"
@@ -90,6 +89,7 @@ int32_t  g_hostLaptop = 0;     // the laptop's rows before the leg
 bool     g_hostPass = true;
 uint64_t g_hostCatches = 0;    // the catches relayed when the leg's caught signal was written
 uint64_t g_hostRow = 0;        // the band row the drive legs move, by identity
+bool     g_hostDecoding = false;  // join: the host's own decode runs as the client joins
 coop::desk_verb_effects::Counts g_hostEffects;  // the glosses and sounds sent when the leg armed
 
 void HostGo(HStep s) {
@@ -98,11 +98,13 @@ void HostGo(HStep s) {
 }
 
 void HostDone(bool pass, const char* why) {
+    RestoreProcessLevel();
     UE_LOGI("[DESK-VERB-DRILL] host DONE %s%s%s", pass ? "PASS" : "FAIL", why ? " -- " : "", why ? why : "");
     g_host = HStep::Done;
 }
 
 void HostAbandon(const char* why) {
+    RestoreProcessLevel();
     UE_LOGW("[DESK-VERB-DRILL] ABANDONED on the host: %s", why);
     g_host = HStep::Done;
 }
@@ -123,10 +125,11 @@ void HostJudge(int leg) {
         ok = d.game[kDeleteSignal] == 1;
     else if (leg == kImport)
         ok = d.game[kSaveSignal] == 1;
-    else
+    else if (leg == kUpload)
         ok = d.game[kCompUpload] == 1;
-    g_hostPass = g_hostPass && ok;
     std::string row;
+    if (IsRefinerLeg(leg)) ok = RefinerHostJudge(leg, d, e.glossesSent - g_hostEffects.glossesSent, row);
+    g_hostPass = g_hostPass && ok;
     if (leg == kSave) {
         const std::vector<int32_t> rows = BandRows();
         RowSeen seen;
@@ -149,17 +152,23 @@ bool HostLegDone(int leg) {
     case kSend:   return ue_wrap::meadow_store::Count() > g_hostLaptop;
     case kExport: return BandRows().empty() && DriveRow(SlotDrive(DC::kRoleDeskPlay)) == g_hostRow;
     case kImport: return BandRows().size() == 1 && DriveRow(SlotDrive(DC::kRoleDeskPlay)) == 0;
-    default:      return CompRow() != 0 && CompRow() == g_hostRow;
+    case kUpload: return CompRow() != 0 && CompRow() == g_hostRow;
+    default:      return RefinerHostDone(leg);
     }
+}
+
+// join: the host's own decode, running as the client joins, so the joiner's save holds a decode its restore resumes.
+void HostJoinDecode() {
+    const char* why = nullptr;
+    const int r = detail::HostJoinDecode(why);
+    if (r < 0) HostAbandon(why);
+    else if (r > 0) g_hostDecoding = true;
 }
 
 // join: the caught signal armed once the joiner's save snapshot is taken, so the row it saves reaches the joiner by
 // the seed; no client is in the world yet to order the arm against.
 void HostJoinArm() {
-    bool captured = false;
-    for (int slot = 1; slot < coop::net::kMaxPeers; ++slot)
-        captured = captured || coop::signal_sync::JoinSnapshotCaptured(slot);
-    if (!captured) return;
+    if (!JoinSnapshotTaken()) return;
     const int purged = PurgeBand();
     if (!FindSource()) { HostAbandon("no sky signal to form a caught signal from"); return; }
     if (!WriteCaught(kSave) || !FormDownload()) { HostAbandon("the caught signal did not arm"); return; }
@@ -189,6 +198,10 @@ void HostTick(coop::net::Session* s, void* player) {
     switch (g_host) {
     case HStep::WaitClient:
         if (ModeOf() == Mode::Join) {
+            if (!g_hostDecoding) {
+                HostJoinDecode();
+                return;
+            }
             if (!s->AnyWorldReadyPeer()) HostJoinArm();
             else HostAbandon("the client's world was ready before the host could save as it joined");
             return;
@@ -234,6 +247,9 @@ void HostTick(coop::net::Session* s, void* player) {
             g_hostCatches = coop::signal_catch_sync::LocalCatchesRelayed();
             if (!WriteCaught(g_hostLeg)) { HostAbandon("the caught signal did not write"); return; }
         }
+        if (IsRefinerLeg(g_hostLeg)) {
+            if (const char* why = RefinerArm(g_hostLeg, player)) { HostAbandon(why); return; }
+        }
         HostGo(HStep::ArmDownload);
         return;
     case HStep::ArmDownload:
@@ -265,7 +281,10 @@ void HostTick(coop::net::Session* s, void* player) {
         return;
     case HStep::WaitDone:
         // A leg that does not come is ended by the client's own bounds: its walk, its wait for the fixture, its
-        // aim and its wait for the result.
+        // aim and its wait for the result. A completing leg's start, once it latched this refiner, completes.
+        if (IsRefinerLeg(g_hostLeg)) {
+            if (const char* why = RefinerStep(g_hostLeg)) { HostAbandon(why); return; }
+        }
         if (!HostLegDone(g_hostLeg)) return;
         HostJudge(g_hostLeg);
         if (++g_hostLeg < kLegs) {
@@ -298,6 +317,7 @@ coop::desk_verb_effects::Counts g_effectsBefore;
 size_t   g_bandBefore = 0;
 int32_t  g_laptopBefore = 0;
 uint64_t g_bandRow = 0;       // the band row the drive legs move, by identity, as this client saw it
+bool     g_loadArmed = false; // join: this session's census is live ahead of the load, or will never be
 std::shared_ptr<coop::director::BackgroundWalk> g_walk;
 
 void Go(CStep s) {
@@ -332,6 +352,7 @@ bool Armed(int leg) {
     if (leg == kSave) return CaughtX() == kBandX && CD::DownloadMeshValid() && Needle() >= 1.f;
     if (leg == kDelete) return CaughtX() == kBandX + static_cast<float>(kDelete);
     if (leg == kImport) return g_bandRow != 0 && DriveRow(SlotDrive(DC::kRoleDeskPlay)) == g_bandRow;
+    if (IsRefinerLeg(leg)) return RefinerArmed(leg);
     if (leg == kUpload) {
         g_bandRow = BandHash();
         return g_bandRow != 0 && DriveRow(SlotDrive(DC::kRoleDeskComp)) == g_bandRow;
@@ -357,7 +378,8 @@ bool ClientLegDone(int leg) {
     case kSend:   return ue_wrap::meadow_store::Count() > g_laptopBefore;
     case kExport: return BandRows().empty() && DriveRow(SlotDrive(DC::kRoleDeskPlay)) == g_bandRow;
     case kImport: return BandRows().size() == 1 && DriveRow(SlotDrive(DC::kRoleDeskPlay)) == 0;
-    default:      return CompRow() == g_bandRow;
+    case kUpload: return CompRow() == g_bandRow;
+    default:      return RefinerClientDone(leg);
     }
 }
 
@@ -367,6 +389,10 @@ void ClientJudge(int leg) {
     for (int i = 0; i < kFns; ++i) ok = ok && d.game[i] == 0;
     std::string extra;
     if (leg == kSend) ok = ok && LaptopNewest() == BandHash();  // the saved row, not the deck's own selection
+    if (IsRefinerLeg(leg)) {
+        const coop::desk_verb_effects::Counts e = coop::desk_verb_effects::CountsNow();
+        ok = RefinerClientJudge(leg, d, e.glossesMade - g_effectsBefore.glossesMade, extra) && ok;
+    }
     if (leg == kSave) {
         // The host's gloss made here once, its clicks played here: counted by the effects, since the profile may
         // hold the name from an earlier run already.
@@ -389,15 +415,18 @@ void ClientJudge(int leg) {
             ok ? "PASS" : "FAIL", CensusLine(d).c_str(), extra.c_str());
 }
 
-// join: the row the host saved as this client joined, with its photo, once the seed brought it.
+// join: the row the host saved as this client joined, with its photo, once the seed brought it; and the host's
+// decode, running as this client loaded its save: the restore refused, this refiner never latched, mirroring it.
 void ClientJoinCheck() {
     const std::vector<int32_t> rows = BandRows();
     RowSeen seen;
     const bool read = rows.size() == 1 && ReadRowSeen(rows.back(), seen);
+    std::string refiner;
+    const bool refinerOk = RefinerJoinCheck(refiner);
     UE_LOGI("[DESK-VERB-DRILL] client joined: %zu band rows; the saved row %016llx with a %zu-byte photo (digest "
-            "%016llx)", rows.size(), static_cast<unsigned long long>(seen.hash), seen.photo,
-            static_cast<unsigned long long>(seen.photoDigest));
-    UE_LOGI("[DESK-VERB-DRILL] client DONE %s", read && seen.photo > 0 ? "PASS" : "FAIL");
+            "%016llx)%s", rows.size(), static_cast<unsigned long long>(seen.hash), seen.photo,
+            static_cast<unsigned long long>(seen.photoDigest), refiner.c_str());
+    UE_LOGI("[DESK-VERB-DRILL] client DONE %s", read && seen.photo > 0 && refinerOk ? "PASS" : "FAIL");
     g_client = CStep::Done;
 }
 
@@ -453,7 +482,7 @@ void ClientTick(void* player) {
     case CStep::JoinWait:
         // The seed follows the world's readiness: its row arrives a moment after (signal_sync's seed at the ready
         // edge).
-        if (BandRows().empty() && now - g_stepMs <= kDoneBoundMs) return;
+        if ((BandRows().empty() || !RefinerJoinSeeded()) && now - g_stepMs <= kDoneBoundMs) return;
         ClientJoinCheck();
         return;
     case CStep::Walk: {
@@ -539,6 +568,7 @@ void ClientTick(void* player) {
         g_effectsBefore = coop::desk_verb_effects::CountsNow();
         g_bandBefore = BandRows().size();
         g_laptopBefore = ue_wrap::meadow_store::Count();
+        RefinerBeforePress();
         if (!E::CallMainPlayerUseSelectedAction(player)) { Abandon("useSelectedAction did not dispatch"); return; }
         UE_LOGI("[DESK-VERB-DRILL] client pressed %s", kLegName[g_leg]);
         Go(CStep::WaitDone);
@@ -585,8 +615,10 @@ void Unresolved(coop::net::Session* s, bool host) {
 }  // namespace
 
 void Tick(coop::net::Session* session) {
-    if (ModeOf() == Mode::Off || !session || !session->connected()) return;
+    if (ModeOf() == Mode::Off || !session || !session->running()) return;
     const bool host = session->role() == coop::net::Role::Host;
+    // The host runs from its hosting on: the join's host decode is armed before any client connects.
+    if (!host && !session->connected()) return;
     if (host ? g_host == HStep::Done : g_client == CStep::Done) return;
     void* player = coop::players::Registry::Get().Local();
     if (!SS::EnsureResolved() || !CD::Instance() || !player) {
@@ -598,9 +630,29 @@ void Tick(coop::net::Session* session) {
     else ClientTick(player);
 }
 
+void TickLoad(coop::net::Session* session) {
+    if (g_loadArmed || ModeOf() != Mode::Join || !session || !session->running() ||
+        session->role() == coop::net::Role::Host)
+        return;
+    if (const wchar_t* dead = CensusDead()) {
+        g_loadArmed = true;
+        UE_LOGW("[DESK-VERB-DRILL] ABANDONED on the client: the census watch on '%ls' is dead, so the join's restore "
+                "cannot be counted", dead);
+        g_client = CStep::Done;
+        return;
+    }
+    if (CensusNotLive()) return;
+    g_loadArmed = true;
+    MarkJoinCensus();
+    UE_LOGI("[DESK-VERB-DRILL] client: the census is live ahead of the world load");
+}
+
 void OnDisconnect() {
     ResetFixtures();
+    RefinerReset();
     g_hostRow = 0;
+    g_hostDecoding = false;
+    g_loadArmed = false;
     g_bandRow = 0;
     g_host = HStep::WaitClient;
     g_hostLeg = kSave;

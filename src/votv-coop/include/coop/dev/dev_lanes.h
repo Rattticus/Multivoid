@@ -23,6 +23,10 @@ void RearmSelftests();
 // In the gameplay tick, after the host publishes its driven props: the drills' and censuses' legs.
 void TickDrills(coop::net::Session& session);
 
+// Every pump tick of a session, outside the world-up gate: the probes and the census whose readings lie inside a
+// world load, which a reader that starts once the world is up never sees.
+void TickLoadWindow(coop::net::Session& session);
+
 // In the gameplay tick, after the hotbar icons: the live store readout and the pickup drill, each in its
 // own perf bucket.
 void TickInventory(coop::net::Session& session);

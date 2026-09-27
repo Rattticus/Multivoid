@@ -19,6 +19,8 @@
 #include "ue_wrap/desk/saved_signals.h"
 #include "ue_wrap/desk/space_renderer.h"
 #include "ue_wrap/engine/engine.h"  // SpawnActor, TryGetActorLocation
+#include "ue_wrap/world/profile.h"
+#include "ue_wrap/world/upgrades.h"
 #include "ue_wrap/world/world_singleton.h"
 
 #include <cstdio>
@@ -37,14 +39,17 @@ namespace SS = ue_wrap::saved_signals;
 namespace sg = ue_wrap::script_gate;
 
 // The census's functions, by the class declaring each.
-const wchar_t* const kFnClass[kFns] = {L"mainGamemode_C", L"saveSlot_C",  L"lib_C",          L"lib_C",
-                                       L"mainGamemode_C", L"ui_laptop_C", L"mainGamemode_C", L"analogDScreenTest_C"};
-const wchar_t* const kFnName[kFns] = {L"saveSignal",         L"getSigObj", L"setSignalID",  L"addGloss",
-                                      L"deleteActiveSignal", L"addSignal", L"deleteSignal", L"comp_uploadData"};
+const wchar_t* const kFnClass[kFns] = {
+    L"mainGamemode_C", L"saveSlot_C",          L"lib_C",               L"lib_C",              L"mainGamemode_C",
+    L"ui_laptop_C",    L"mainGamemode_C",      L"analogDScreenTest_C", L"analogDScreenTest_C", L"analogDScreenTest_C"};
+const wchar_t* const kFnName[kFns] = {
+    L"saveSignal", L"getSigObj",    L"setSignalID",     L"addGloss",   L"deleteActiveSignal",
+    L"addSignal",  L"deleteSignal", L"comp_uploadData", L"comp_start", L"comp_stop"};
 constexpr int kTagBase = 0x44564430;  // 'DVD0'
 
 Census g_census;
 bool g_watched[kFns] = {};
+bool g_refused[kFns] = {};  // the gate refused the watch: a full table or no gate, which no retry mends
 
 sg::Verdict OnCensusPre(const sg::Call& c) {
     const int i = c.tag - kTagBase;
@@ -73,6 +78,11 @@ bool CompDecoding() {
     return DeskBool(sOff);
 }
 
+// The process upgrade (upg_processLvl, the laptop's row 7) as the drill found it, while it holds it raised.
+constexpr int kProcessLvlRow = 7;
+bool    g_processHeld = false;
+int32_t g_processWas = 0;
+
 // The host's fixture state: the sky signal its caught signals are formed from (its object names the objects-table
 // row the download is formed from, as a ping's catch names it), and a drive leg's spawned drive until it is in.
 ue_wrap::space_renderer::SignalRow g_source;
@@ -87,11 +97,21 @@ const Census& CensusNow() { return g_census; }
 
 const wchar_t* CensusNotLive() {
     for (int i = 0; i < kFns; ++i)
-        if (!g_watched[i])
+        if (!g_watched[i] && !g_refused[i]) {
             g_watched[i] = sg::WatchClassName(kFnClass[i], kFnName[i], kTagBase + i, &OnCensusPre, &OnCensusPost);
+            g_refused[i] = !g_watched[i];
+        }
     sg::ResolvePendingNames();
     for (int i = 0; i < kFns; ++i)
         if (!g_watched[i] || !sg::ClassNameWatchLive(kFnClass[i], kFnName[i], kTagBase + i)) return kFnName[i];
+    return nullptr;
+}
+
+const wchar_t* CensusDead() {
+    for (int i = 0; i < kFns; ++i)
+        if (g_refused[i] || (g_watched[i] && sg::ClassNameWatchSettled(kFnClass[i], kFnName[i], kTagBase + i) &&
+                             !sg::ClassNameWatchLive(kFnClass[i], kFnName[i], kTagBase + i)))
+            return kFnName[i];
     return nullptr;
 }
 
@@ -174,6 +194,27 @@ uint64_t CompRow() {
     SD::Row r;
     void* base = ue_wrap::comp_pane::CompDataPtr();
     return base && SD::ReadStruct(base, r) && r.size > 0 ? HashOf(r) : 0;
+}
+
+bool CompLatched() { return CompDecoding(); }
+
+std::wstring CompSignal() {
+    SD::Row r;
+    void* base = ue_wrap::comp_pane::CompDataPtr();
+    return base && SD::ReadStruct(base, r) ? r.signal : std::wstring{};
+}
+
+int32_t CompLevel() {
+    const uint8_t* base = static_cast<const uint8_t*>(ue_wrap::comp_pane::CompDataPtr());
+    if (!base) return -1;
+    int32_t level = 0;
+    std::memcpy(&level, base + SD::kOff_level, sizeof(level));
+    return level;
+}
+
+int32_t Processed() {
+    int32_t v = 0;
+    return ue_wrap::profile::ReadSignalsProcessed(v) ? v : -1;
 }
 
 void* Button(int leg) {
@@ -307,7 +348,64 @@ int ArmDrive(int role, bool withRow) {
     return g_fixIn ? 0 : -1;
 }
 
+// The decode's step adds its increment to comp_progress and completes at 100 or more (analogDScreenTest.cpp
+// :6219-6226), so a progress of 100 completes at the next step whatever the increment.
+bool SetCompProgress(float progress) {
+    ue_wrap::comp_pane::CompScalars cs;
+    return ue_wrap::comp_pane::ReadCompScalars(cs) && ue_wrap::comp_pane::WriteCompScalars(progress, cs.downloading);
+}
+
+bool SetCompLevel(int32_t level) {
+    uint8_t* base = static_cast<uint8_t*>(ue_wrap::comp_pane::CompDataPtr());
+    if (!base) return false;
+    std::memcpy(base + SD::kOff_level, &level, sizeof(level));
+    return true;
+}
+
+// comp_start refuses a row at the process upgrade's level or above (analogDScreenTest.cpp :9777).
+bool HoldProcessLevel(int32_t atLeast) {
+    int32_t now = 0;
+    if (!ue_wrap::upgrades::ReadLevel(kProcessLvlRow, &now)) return false;
+    if (now >= atLeast) return true;
+    if (!g_processHeld) {
+        g_processHeld = true;
+        g_processWas = now;
+    }
+    UE_LOGI("[DESK-VERB-DRILL] host holds the process upgrade at %d (it was %d)", atLeast, g_processWas);
+    return ue_wrap::upgrades::WriteLevel(kProcessLvlRow, atLeast);
+}
+
+void RestoreProcessLevel() {
+    if (!g_processHeld) return;
+    g_processHeld = false;
+    if (ue_wrap::upgrades::WriteLevel(kProcessLvlRow, g_processWas))
+        UE_LOGI("[DESK-VERB-DRILL] host put the process upgrade back at %d", g_processWas);
+}
+
+// A row of the host's own list, else one made here (a New Game's list is empty), its size raised so the decode
+// barely moves across a join, at level 0.
+bool ArmCompRow() {
+    void* base = ue_wrap::comp_pane::CompDataPtr();
+    if (!base) return false;
+    SD::Row row;
+    if (SS::Count() <= 0 || !SS::ReadRow(0, row) || row.size <= 0.f) {
+        row = SD::Row{};  // its object and signal empty: None, which a name write takes only as empty
+        row.name = L"refiner drill";
+        row.date = 1;     // non-epoch, as a row on the wire must be
+    }
+    row.size = 1.0e6f;
+    row.decoded = row.size;
+    row.level = 0;
+    row.hasData = true;
+    if (!SD::WriteStructLive(base, row)) return false;
+    ue_wrap::comp_pane::UpdComp(true);
+    UE_LOGI("[DESK-VERB-DRILL] host loaded the refiner with its row '%ls' (signal '%ls')", row.name.c_str(),
+            row.signal.c_str());
+    return true;
+}
+
 void ResetFixtures() {
+    RestoreProcessLevel();
     g_fixDrive = nullptr;
     g_fixIn = false;
     g_source = ue_wrap::space_renderer::SignalRow{};

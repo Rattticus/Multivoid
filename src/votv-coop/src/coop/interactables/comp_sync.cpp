@@ -300,4 +300,6 @@ void OnDisconnect() {
     // LOCAL world, which outlives the session.
 }
 
+bool MirrorActive() { return g_wireActive; }
+
 }  // namespace coop::comp_sync

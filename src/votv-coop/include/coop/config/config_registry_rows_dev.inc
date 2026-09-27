@@ -403,11 +403,13 @@ CFG_STRING(desk_verb_drill, "desk_verb_drill", "dev", "", "VOTVCOOP_DESK_VERB_DR
     "Drill (BOTH peers): the main desk's save family pressed by the client through its own input. run: the host "
     "arms a caught signal formed from a sky signal's object, downloaded and detected, and the client, walked to the "
     "desk, presses SAVE; then DELETE on a second one, the deck's send on the saved row, the deck's drive button "
-    "both ways and the refiner's upload. Both peers count the "
-    "game's own entries into the functions those branches call; the host says it entered them, the client that it "
-    "entered none, that SAVE's gloss reached its profile and the row its photo. join: the host saves a row as the "
-    "client joins, and the client finds it with its photo. Lines tagged [DESK-VERB-DRILL]; 'client DONE PASS|FAIL' "
-    "ends it; ABANDONED is a step that could not run.")
+    "both ways and the refiner's upload, then the refiner's start, its stop, a start the host completes and one at "
+    "level 2 whose completion is the last level's. Both peers count the game's own entries into the functions those "
+    "branches call; the host says it entered them, the client that it entered none, that its refiner never latched, "
+    "that SAVE's and each completion's gloss and the last level's processed point reached its profile and the row "
+    "its photo. join: the host decodes on its refiner and saves a row as the client joins; the client finds the row "
+    "with its photo, and its restore of the decode refused, mirroring the host's. Lines tagged [DESK-VERB-DRILL]; "
+    "'client DONE PASS|FAIL' ends it; ABANDONED is a step that could not run.")
 CFG_STRING(desk_crossing_drill, "desk_crossing_drill", "dev", "", "VOTVCOOP_DESK_CROSSING_DRILL", false,
     "Drill (BOTH peers): the main desk's detection needle crosses on the host alone. run: two legs, planeteater's "
     "caught signal (its object renderer spawns the signal object fullyProcessed lives on) and looker_behind's; the "
