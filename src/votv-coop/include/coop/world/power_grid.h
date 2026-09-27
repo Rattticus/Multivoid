@@ -22,6 +22,11 @@ namespace coop::net { class Session; struct PowerGridPayload; }
 
 namespace coop::power_grid {
 
+// A client's act on a generator is judged within this reach of it: the Activate button and the upgrade slot are
+// pressed within the look-at trace, and a hit lands within a swing. Twice the default armLength, the door and
+// keypad lanes' reach, which coop/element/intent_authority pads with the generator's bounds and the puppet's lag.
+inline constexpr float kGeneratorReachUU = 400.0f;
+
 // Register the decay tick's and the generators' gates. Idempotent. Session install.
 void Install(coop::net::Session* session);
 
@@ -48,12 +53,18 @@ uint16_t NextSeq();
 void HostPuzzleChanged();
 
 // [dev] the grid drill's readings. CLIENT: my ops the host has not yet taken, those sent this session, and the
-// host's last rows (false before they came). HOST: the ops it took this session, puzzle inputs not counted. Game
-// thread.
+// host's last rows (false before they came). HOST: the ops it took this session, puzzle inputs not counted, and
+// those it refused. Game thread.
 size_t PendingOps();
 uint64_t ClientOpsSent();
 bool LastRows(coop::net::PowerGridPayload& out);
 uint64_t HostOpsTaken();
+uint64_t HostOpsRefused();
+
+// [dev] the grid drill's upgrade legs. HOST: refuse installs as if another had filled the generator first. CLIENT:
+// an install op with no insert behind it, what a forged client sends. Game thread.
+void DevRefuseInstalls(bool on);
+void DevSendInstall(int32_t index);
 
 // Say the session's counts and start them again. Session end.
 void OnDisconnect();

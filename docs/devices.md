@@ -169,11 +169,13 @@ generator's row after the outermost of its generator verbs and its Activate pres
 rows follow the blackout canonical it produced; a client runs the same edges from the rows and then
 puts its breakers back to the canonical, since a break's own blackout rewrote them
 (`coop/world/power_grid`). A client's player acts on a generator as ops: its Activate press and its
-upgrade install, with an upgrade in hand, run on the client first and are reconciled like the
-panel's presses, and its hit is the host's to run, with a held item that swings. The host takes an
-op from a player within reach, in the player's order, and judges an Activate press on its own copy
-of the repair puzzle, branching as the button does: a broken generator is mended, a whole one
-serviced. A repair, the host's of a client's press and a client's of the host's rows alike, runs as
+upgrade install run on the client first and are reconciled like the panel's presses, and its hit is
+the host's to run, with a held item that swings. The host takes an op from a player within reach, in
+the player's order, and judges an Activate press on its own copy of the repair puzzle, branching as
+the button does: a broken generator is mended, a whole one serviced. An install rests on the upgrade
+its insert spent, which the host saw that player destroy beside the generator
+(`coop/world/power_upgrade`): an install without one is refused, and one refused after it, the second
+of two players at a generator's last free place, gets its upgrade back where the player stands. A repair, the host's of a client's press and a client's of the host's rows alike, runs as
 the game's repair with the puzzle solved followed by the Activate route's turn-on at the generator
 and its completion trigger. The puzzle crosses in the rows (`coop/world/power_puzzle`): its targets
 are the host's rolls, which a client never makes, and its values belong to the one player inside the
@@ -444,8 +446,7 @@ an error line.
 
 | Limit | Evidence |
 |---|---|
-| A refused coin-gun sale has already destroyed the prop on the client, and no heal re-asserts it: one of two places a client authors a shared-world destruction before the arbiter answers. The host rebuilds its key index periodically, so a refusal is rare | `[V]` `coop/items/coingun_sync` |
-| The other: a client's generator upgrade install spends the held upgrade before the host answers, so two players installing at a generator's last free place leave the second's item spent. The refund waits on a pairing proof that a refused install did spend an upgrade | `coop/world/power_grid` |
+| A refused coin-gun sale has already destroyed the prop on the client, and no heal re-asserts it: a client authors that destruction before the arbiter answers, as its generator install does, whose refusal refunds the upgrade. The host rebuilds its key index periodically, so a refusal is rare | `[V]` `coop/items/coingun_sync` |
 | The coin collect has two entries; the interceptor sits on the overlap entry, and the E-press entry dispatches inside the Blueprint where it cannot fire, so a coin a client collects by pressing is credited on the client only and the host's next balance broadcast erases it | `[V]` `coop/items/coingun_sync` |
 | A client's earnings from anything but the drone and the coin gun (a point sack, a chest, an achievement) reach only its own machine and are erased by the host's next broadcast | `[V]` `coop/world/balance_sync` is one-way |
 | A client's light-group index has been reported dropping to zero after a join; not reproduced | `[?]` [issue 11](https://github.com/VOTV-MP/Multivoid/issues/11) |

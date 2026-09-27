@@ -214,6 +214,7 @@ set(VOTVCOOP_SOURCES
     src/coop/world/power_grid.cpp
     src/coop/world/power_panel.cpp
     src/coop/world/power_puzzle.cpp
+    src/coop/world/power_upgrade.cpp
     src/coop/interactables/atv_sync.cpp
     src/coop/interactables/atv_condition_sync.cpp
     src/coop/interactables/atv_corrector.cpp

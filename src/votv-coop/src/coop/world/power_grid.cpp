@@ -7,12 +7,13 @@
 #include "coop/element/intent_authority.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
-#include "coop/player/hand_item.h"         // what the sender's hand holds, and held last
+#include "coop/player/hand_item.h"         // what the sender's hand holds
 #include "coop/player/players_registry.h"
 #include "coop/player/roster_ledger.h"
 #include "coop/session/net_pump.h"  // IsInAnnouncedWorld: a client's own world load runs natively
 #include "coop/world/power_panel.h"  // the canonical a client's own generator verbs rewrote
 #include "coop/world/power_puzzle.h"  // the rows' second half: each generator's repair puzzle
+#include "coop/world/power_upgrade.h"  // the spends an install rests on, and a refused one's refund
 
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/log.h"
@@ -44,17 +45,14 @@ static_assert(coop::net::kMaxPeers <= 8, "the owed rows are one bit a slot");
 
 constexpr wchar_t kDecayClass[] = L"generatorFuckuper_C";
 constexpr wchar_t kGenClass[]   = L"generator_C";
-constexpr wchar_t kUpgradeClass[] = L"prop_transformerUpgrade_C";  // what the insert takes from the hand
 constexpr int32_t kMaxUpgrade   = 6;    // the insert's own gate, `upgradeLevel < 6`
 constexpr int32_t kFullWear     = 100;  // what the Activate button's repair and service write the wear back to
-// The Activate button and the upgrade slot are pressed within the look-at trace, and a hit lands within a swing:
-// twice the default armLength, the door and keypad lanes' reach, which coop/element/intent_authority pads with
-// the generator's bounds and the puppet's lag.
-constexpr float  kGeneratorReachUU = 400.0f;
 // A slot's ops wait, in arrival order, while the generators have not resolved or their sender has no body here
-// yet (a joiner's first pose follows its world-ready by seconds, 3 s measured on the LAN rig). Each is taken as
-// refused once it has waited this long, and answered while the host has generators to read: unlike a door verb,
-// which waits for its body without a bound, a repair or an install is a prediction its sender already shows.
+// yet (a joiner's first pose follows its world-ready by seconds, 3 s measured on the LAN rig), and an install
+// while the destroy of the upgrade its insert spent has not arrived: it was sent first, on the bulk lane, whose
+// queue holds about 2 s (coop/net/send_admission.h). Each is taken as refused once it has waited this long, and
+// answered while the host has generators to read: unlike a door verb, which waits for its body without a bound, a
+// repair or an install is a prediction its sender already shows.
 constexpr uint64_t kWaitMs = 10000;
 constexpr size_t   kMaxQueued = 32;
 // A puzzle input waits this long at the head for its sender's claim on the panel, which rides another kind.
@@ -167,6 +165,15 @@ bool RedApply() {
     static const bool red = coop::config::ResolveString(::coop::config_registry::rows::grid_drill) == "red";
     return red;
 }
+
+// [dev] grid_drill=upgradered: the host judges an install as if its spend were recorded, the unpaired shape.
+bool UnpairedInstalls() {
+    static const bool red = coop::config::ResolveString(::coop::config_registry::rows::grid_drill) == "upgradered";
+    return red;
+}
+
+// [dev] the grid drill's stand-in for a generator another install filled first: the host refuses installs.
+bool g_devRefuseInstalls = false;
 
 // `a` is later than `b` in a 16-bit sequence that wraps.
 bool SeqAfter(uint16_t a, uint16_t b) { return static_cast<int16_t>(static_cast<uint16_t>(a - b)) > 0; }
@@ -289,6 +296,13 @@ Take HostTakeOp(coop::net::Session* s, const Waiting& wt, uint8_t sender) {
     EL::IntentSubject reach{};
     if (read) reach = EL::IntentTarget::ForClientIntent(*s, sender, kGeneratorReachUU).Authorize(gen);
     if (reach.outcome == EL::IntentOutcome::NoBody && !waited) return Take::Wait;
+    // An install rests on the upgrade its insert spent, which the host saw destroyed beside this generator: taken
+    // here, whatever the outcome, so one spend answers one install. None yet waits for the destroy behind it.
+    bool spent = false;
+    if (read && p.op == coop::net::kPowerGridOpUpgrade) {
+        spent = coop::power_upgrade::TakeSpend(sender, p.index) || UnpairedInstalls();
+        if (!spent && !waited) return Take::Wait;
+    }
     std::wstring item;
     const char* refusal = !read ? "that generator is not there" : !reach ? EL::OutcomeName(reach.outcome) : nullptr;
     if (!refusal && p.op == coop::net::kPowerGridOpPuzzle) {
@@ -314,10 +328,11 @@ Take HostTakeOp(coop::net::Session* s, const Waiting& wt, uint8_t sender) {
             if (!coop::power_puzzle::Solved(gen)) refusal = "its puzzle is not solved on the host";
             break;
         case coop::net::kPowerGridOpUpgrade:
-            // The insert takes a held upgrade and spends it before the op comes; two players installing at the last
-            // free place leave the second's item spent (the refund, with its pairing proof, is still to build).
-            if (!coop::hand_item::LastHeldClassIs(sender, kUpgradeClass)) refusal = "the installer held no upgrade";
+            // The insert spends the held upgrade before the op comes: two players installing at the last free place
+            // leave the second one's spent, and its refusal refunds it.
+            if (!spent) refusal = "no upgrade of the installer's was spent at it";
             else if (r.upgradeLevel >= kMaxUpgrade) refusal = "its upgrades are full";
+            else if (g_devRefuseInstalls) refusal = "the drill refuses installs as if its upgrades were full";
             break;
         case coop::net::kPowerGridOpHit:
             if (!HitSwings(sender, item)) refusal = "the hitter's held item does not swing";
@@ -334,6 +349,7 @@ Take HostTakeOp(coop::net::Session* s, const Waiting& wt, uint8_t sender) {
             UE_LOGW("power_grid: host refused slot %u's %s of generator %u (seq %u) -- %s (%.0f uu, allowed %.0f)",
                     sender, OpName(p.op), p.index, p.seq, refusal, reach.distUU, reach.reachUU);
         if (predicted) HostSendRows(s, sender);  // its acknowledgement reverts the sender's prediction
+        if (spent) coop::power_upgrade::Refund(sender, gen);
         return Take::Done;
     }
     switch (p.op) {
@@ -656,6 +672,7 @@ bool g_settled = false;
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
     coop::power_puzzle::Install(session);
+    coop::power_upgrade::Install(session);
     if (g_registered) return;
     g_registered = true;
     for (const WatchDef& w : kWatches)
@@ -725,6 +742,16 @@ void OnPeerLeft(uint8_t slot) {
 size_t PendingOps() { return g_pending.size(); }
 uint64_t ClientOpsSent() { return g_opsSent; }
 uint64_t HostOpsTaken() { return g_opsTaken; }
+uint64_t HostOpsRefused() { return g_opsRefused; }
+
+void DevRefuseInstalls(bool on) {
+    if (on != g_devRefuseInstalls) UE_LOGI("power_grid: [dev] the host %s installs", on ? "refuses" : "judges");
+    g_devRefuseInstalls = on;
+}
+
+void DevSendInstall(int32_t index) {
+    if (auto* s = Connected(); IsClient(s)) ClientSendOp(s, coop::net::kPowerGridOpUpgrade, index);
+}
 
 bool LastRows(coop::net::PowerGridPayload& out) {
     if (!g_haveRows) return false;
@@ -734,6 +761,8 @@ bool LastRows(coop::net::PowerGridPayload& out) {
 
 void OnDisconnect() {
     coop::power_puzzle::OnDisconnect();
+    coop::power_upgrade::OnDisconnect();
+    g_devRefuseInstalls = false;
     if (g_decayRefused || g_decayRan)
         UE_LOGI("power_grid: session end -- decay ticks refused %llu, run %llu",
                 static_cast<unsigned long long>(g_decayRefused), static_cast<unsigned long long>(g_decayRan));
