@@ -16,24 +16,36 @@
 
 #pragma once
 
+#include <cstdint>
+
+// The needle's crossing is the host's too. A client's own step would cross first and run the whole crossing block,
+// the looker_behind autoSave included, so its step is parked (its multiplier held at 0) and its autoSave refused. The
+// host counts its crossings and carries the count, its canDL and the download's identity in the same snapshot as
+// the needle, which orders each edge with the state; the client runs its desk's own path after the step on a moved
+// count, and canSaveSignal on a changed canDL. MTA orders a server's edges with its sync the same way, by a counter
+// the sync carries (reference/mtasa-blue/Server/mods/deathmatch/logic/CElement.cpp:1281-1305).
+
 namespace coop::net { class Session; }
 
 namespace coop::desk_sim_sync {
 
 void Install(coop::net::Session* session);
 
-// Game thread, per pump tick. HOST: read the live sim outputs and publish through
-// Session::SetHostDeskSim, whose net thread fans out DeskSimPose. CLIENT: drain the host's
-// vector, interpolate PER CHANNEL -- each channel keeps its own deadline, and an unchanged
-// target that ARRIVES snaps cur to target exactly, where a window shared across channels and
-// reopened by every packet kept the detector's bitwise 1.0 from ever landing, so the client's
-// own below-1.0 gated block beeped every frame -- then WriteSimOutputs, a raw write every tick,
-// which is the WHOLE apply: the desk's refresh verbs paint none of these channels, so this lane
-// dispatches none of them. It used to pulse the full chain at about 3 Hz, and that pulse nulled the
-// local player's lookAtComponent three times a second (console_desk.cpp's chain comment); it is
-// deleted. The vector is 7 channels; coord_cooldown belongs to desk_input_sync.
+// Game thread, per pump tick. HOST: read the live sim outputs, its crossing count and canDL, and publish them
+// through Session::SetHostDeskSim, whose net thread fans out DeskSimPose. CLIENT: park the desk's step, drain the
+// host's vector, interpolate PER CHANNEL -- each channel keeps its own deadline, and an unchanged target that
+// ARRIVES snaps cur to target exactly, where a window shared across channels and reopened by every packet kept the
+// detector's bitwise 1.0 from ever landing -- then WriteSimOutputs, a raw write every tick. A snapshot that carries
+// an edge snaps the needle and decoded instead of easing them, and its painters run after the write: the first
+// snapshot's lasting ones (canSaveSignal, setFullyProcessedSignalObject), a moved count's path after the step, a
+// changed canDL's canSaveSignal, and the lasting ones again for a download this client forms for the signal the host
+// last crossed on (a joiner's). The vector is 7 channels; coord_cooldown belongs to desk_input_sync.
 void Tick();
 
 void OnDisconnect();
+
+// For the drill: the host's crossings this session and the client's runs of the path after the step. Game thread.
+uint32_t HostCrossings();
+uint32_t ClientPostSteps();
 
 }  // namespace coop::desk_sim_sync

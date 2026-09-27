@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 199;
+inline constexpr uint16_t kProtocolVersion = 200;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -100,7 +100,8 @@ enum class MsgType : uint8_t {
     // least twice a second. ClockPosePacket.
     ClockPose = 37,
 
-    // Host to all: the desk download simulation's outputs, about 10 Hz. DeskSimPosePacket.
+    // Host to all: the desk download simulation's outputs, about 10 Hz, with the needle's crossing count, canDL and
+    // the download's identity, which order the host's edges with the outputs. DeskSimPosePacket.
     DeskSimPose = 38,
 
     // Host to all: moving dish rows at 4 Hz, then a settle tail. DishPosePacket.
@@ -2749,7 +2750,8 @@ struct ClockPosePacket {
 static_assert(sizeof(ClockPosePacket) == 32, "ClockPosePacket must be 32 bytes");
 
 // The desk simulation's outputs (MsgType::DeskSimPose), host-owned and streamed newest-wins; the
-// client overwrites its own.
+// client overwrites its own. The crossing count and canDL carry the host's edges in order with the
+// outputs (coop/interactables/desk_sim_sync).
 struct DeskSimSnapshot {
     float decoded;    // 4 -- DL_SignalDownloadDLData.decoded (progress)
     float resDetec;   // 4 -- DL_resDetecPercent (needle)
@@ -2758,14 +2760,18 @@ struct DeskSimSnapshot {
     float poData;     // 4 -- DL_poData (polarity-match)
     float frOffset;   // 4 -- DL_FrFilterOffset (knob position)
     float poOffset;   // 4 -- DL_poFilterOffset
+    uint32_t crossings;    // 4 -- the host's needle crossings since its session began
+    uint8_t  canDL;        // 1 -- canSaveSignal's latch on the host
+    uint8_t  _pad[3];      // 3 -- zeroed
+    uint64_t downloadKey;  // 8 -- the caught signal's identity at the latest crossing (desk_sim_sync), 0 for none
 };
-static_assert(sizeof(DeskSimSnapshot) == 28, "DeskSimSnapshot must be 28 bytes");
+static_assert(sizeof(DeskSimSnapshot) == 44, "DeskSimSnapshot must be 44 bytes");
 
 struct DeskSimPosePacket {
     PacketHeader   header;  // 20
-    DeskSimSnapshot sim;    // 28
+    DeskSimSnapshot sim;    // 44
 };
-static_assert(sizeof(DeskSimPosePacket) == 48, "DeskSimPosePacket must be 48 bytes");
+static_assert(sizeof(DeskSimPosePacket) == 64, "DeskSimPosePacket must be 64 bytes");
 
 // One desk input delta (DeskInput): exactly one field per message; the receiver applies it through
 // the field's native side-effect path and primes its own poll baseline.

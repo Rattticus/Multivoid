@@ -620,9 +620,10 @@ bool WriteSimOutputs(const SimOutputs& in) {
     *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(d) + g_offDLPoData) = in.poData;
     auto* dld = reinterpret_cast<uint8_t*>(d) + g_offDLData;
     *reinterpret_cast<float*>(dld + ue_wrap::signal_dynamic::kOff_decoded) = in.decoded;
-    // The raw write is the whole apply: the widget's own tick paints every field above, and the
-    // refresh chain paints none of them. The pulse that used to run that chain here is deleted,
-    // not conditioned -- see the chain's comment for what it was doing to the player instead.
+    // The widget's own tick paints every field above, and the refresh chain paints none of them.
+    // The pulse that used to run that chain here is deleted, not conditioned -- see the chain's
+    // comment for what it was doing to the player instead. The write is not a crossing's apply:
+    // the needle's crossing and canDL run their painters from the host's edges (desk_sim_sync).
     return true;
 }
 

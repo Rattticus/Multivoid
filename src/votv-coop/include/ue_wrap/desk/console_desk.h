@@ -4,10 +4,10 @@
 // logic; console_state_sync drives the mirror through here. The desk is a singleton (the
 // gamemode's analogPanels, one placed actor). Its persisted state rides the save transfer at
 // join; the live divergence is the scalar set below (download, refine, playback and coords
-// activity). The desk blueprint ticks on every peer, re-deriving the continuous fields (the
-// detection needle) from the local sky signals and dish aim, both wire-synced, so mirror
-// writes are convergence nudges on the discrete states, not a fight with the local sim. Every
-// field offset resolves through reflection.
+// activity). The desk blueprint ticks on every peer. On a client its detection needle takes no
+// step of its own (desk_sim_sync parks the step's input), so the needle is the host's, and the
+// other mirror writes are convergence nudges on the discrete states, not a fight with the local
+// sim. Every field offset resolves through reflection.
 
 #pragma once
 
@@ -18,9 +18,10 @@ namespace ue_wrap::console_desk {
 
 // The live-visible scalar set, the DeskState payload's typed twin. The decode scalars are not
 // here; they ride the CompState stream from the simulating peer. compMaxLevel stays, a
-// claim-owner button edit rather than simulator state. canDL is derived natively from the
-// detection and decode values, so mirroring the inputs converges it and a wire write would
-// just fight the local recompute.
+// claim-owner button edit rather than simulator state. canDL is not here: it is canSaveSignal's
+// latch, which the desk's tick runs only on the tick whose own increment carries `decoded` to
+// its size, so a mirrored input never converges it; desk_sim_sync carries the host's canDL and
+// runs canSaveSignal on a change.
 struct Scalars {
   float  dlPoFilterOffset = 0;  // DL_poFilterOffset
   float  dlFrFilterOffset = 0;  // DL_FrFilterOffset
@@ -199,11 +200,12 @@ struct SimOutputs {
     // charge. It rides the DeskInput charge events and the native per-peer decay.
 };
 bool ReadSimOutputs(SimOutputs& out);
-// Raw-write the sim outputs. A raw write is the WHOLE apply: every field above is painted by the
-// desk widget's own tick, and not one of them is read by any verb in the WriteScalars refresh
-// chain -- measured over all nine (see the chain's comment in console_desk.cpp). This function
-// used to pulse that chain at about 3 Hz "for the refresh-only display fields"; there were none,
-// and the pulse cost a visible defect, so it is gone rather than conditioned.
+// Raw-write the sim outputs. Every field above is painted by the desk widget's own tick, and not
+// one of them is read by any verb in the WriteScalars refresh chain -- measured over all nine (see
+// the chain's comment in console_desk.cpp). This function used to pulse that chain at about 3 Hz
+// "for the refresh-only display fields"; there were none, and the pulse cost a visible defect, so
+// it is gone rather than conditioned. The write is not a crossing's apply: the needle's crossing
+// and canDL run their painters from the host's edges (desk_sim_sync).
 bool WriteSimOutputs(const SimOutputs& in);
 
 // True while the download data's mesh is a live object, the machine armed; the joiner's
