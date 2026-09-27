@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 205;
+inline constexpr uint16_t kProtocolVersion = 206;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -923,6 +923,11 @@ enum class ReliableKind : uint8_t {
     // lets a player cheat. Host to that client alone: a refusal with its reason, and after a catch the find for the
     // pinger's own profile. Never relayed. Late join: nothing to replay. DeskPingVerdictPayload.
     DeskPingVerdict = 163,
+
+    // Client to host: my player finished the repair minigame on this server box, by its servers[] index; the
+    // host runs the box's fix when it is broken and within the player's reach, and a refusal is answered to the
+    // presser alone with the state row (ServerState). Never relayed. ServerRepairPayload.
+    ServerRepair = 164,
 };
 
 #pragma pack(push, 1)
@@ -1747,8 +1752,9 @@ struct AlarmStatePayload {
 };
 static_assert(sizeof(AlarmStatePayload) == 4, "AlarmStatePayload must be 4 bytes");
 
-// The signal-server simulation (ServerState), host to all: the aggregates and a mask of broken
-// servers by their save-stable array index (up to 64; a larger farm logs and caps).
+// The signal-server simulation (ServerState), host to all: the aggregates and, by the servers' save-stable
+// array index (up to 64; a larger farm logs and caps), each box's broken and damaged bits and the repair
+// minigame type its break rolled, which the gamemode's repair widget enters with.
 struct ServerStatePayload {
     int32_t  brokenServers;   // 4  -- mainGamemode.brokenServers (aggregate mirror)
     float    effCalc;         // 4  -- serverEfficiency_calc
@@ -1756,8 +1762,17 @@ struct ServerStatePayload {
     uint8_t  serverCount;     // 1  -- servers[].Num at send (bounds; <=64 carried in the mask)
     uint8_t  _pad[3];         // 3  -- zeroed (isBrokenMask is 8-aligned at offset 16)
     uint64_t isBrokenMask;    // 8  -- bit i = servers[i].IsBroken (up to 64 servers)
+    uint64_t damagedMask;     // 8  -- bit i = servers[i].damaged (a break from damage pays no repair points)
+    uint8_t  minigame[64];    // 64 -- servers[i].minigame, the repair type (0..255; the game rolls a small index)
 };
-static_assert(sizeof(ServerStatePayload) == 24, "ServerStatePayload must be 24 bytes");
+static_assert(sizeof(ServerStatePayload) == 96, "ServerStatePayload must be 96 bytes");
+
+// A player's finished repair (ServerRepair), client to host: the box by its servers[] index.
+struct ServerRepairPayload {
+    uint8_t box;      // 1 -- servers[] index
+    uint8_t _pad[3];  // 3 -- zeroed
+};
+static_assert(sizeof(ServerRepairPayload) == 4, "ServerRepairPayload must be 4 bytes");
 
 // The server upgrades lane (ServerUpgradeState). Ops 0 (install) and 1 (take-out) name a box by its
 // servers[] index; op 2, the canonical, carries every box's level in servers[] order (a farm past 64

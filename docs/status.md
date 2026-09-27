@@ -69,7 +69,7 @@ host validates and commits contested writes), `local` (never shared).
 | Drives and racks, physical modules, tapes, floppy box | slot and rack lanes with compare-and-swap at the host; a drive's row the host's, a client's copy put back, a client's new drive's row sent to the host; the eraser's delete run by the host | arbiter | seed from the host's canon | built |
 | Laptop | power, floppies and discs, the shared file buffer | presser; the buffer is arbitrated | seed | built; the buffer tested |
 | Meadow database, saved signals | the signal database as a merge of both peers' saves | presser and host | seed | tested |
-| Server boxes | the signal-server simulation state and its notices | host | snapshot | built |
+| Server boxes | the signal-server simulation state and its notices; a client's repair run on the host | host | snapshot | built |
 | Disc slots | the slot a laptop or a signal server holds a disc in, and the disc that comes back out of one | host owns the slot; the peer whose game changed it reports the outcome | every device's slot at the barrier | tested |
 | Shop orders | the client names a row, the host performs and prices it; the delivery queue is the host's, mirrored | arbiter | a reset and every queued order | built |
 | ATV | the driver authors the pose; a non-driving peer runs the rig natively and is corrected; condition (tyres, fuel, health) travels | driver, host for the rest | snapshot | tested; eject and configuration intents not built |

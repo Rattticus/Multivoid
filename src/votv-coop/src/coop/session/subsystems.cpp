@@ -202,7 +202,7 @@ void Install(coop::net::Session& session) {
     coop::event_fire_sync::Install(&session);  // scheduled events: the host's runEvent watch (settime caller) -> EventFire; client hold + policy replay
     coop::event_active_sync::Install(&session);  // the host's setEvent watch: begin/end edges; the join snapshot reads the game's registry
     coop::alarm_sync::Install(&session);  // base radar alarm shared-world toggle (a 1 Hz active poll on both roles)
-    coop::serverbox_sync::Install(&session);  // signal-server sim state: host polls+broadcasts, client drive-reals + kills its ticker_serverBreaker
+    coop::serverbox_sync::Install(&session);  // the server boxes' break state: the verbs run on the host, a client's repair sent there
     coop::server_upgrade_sync::Install(&session);  // the servers' upgrades: ops at the box's two verbs + host canonical
     coop::floppy_slot_sync::Install(&session);  // a disc-holding device's slot: host-canonical, a peer claims the outcome of its own insert or eject
     coop::floppy_slot_entry::Install(&session);  // the slot's overlap entry: no device swallows a disc still in transit out of one
@@ -513,7 +513,7 @@ DisconnectStats DisconnectAll() {
     coop::event_fire_sync::OnDisconnect();  // restore the client scheduler (allEvents.Num) + drop the queued fires
     coop::event_active_sync::OnDisconnect();  // drop the begun-events map and its world stamp
     coop::alarm_sync::OnDisconnect();  // drop the cached trigger + poll baseline
-    coop::serverbox_sync::OnDisconnect();  // drop cached gamemode/offsets + baseline + breaker-kill latch
+    coop::serverbox_sync::OnDisconnect();  // the poll baseline and the session
     coop::server_upgrade_sync::OnDisconnect();  // verb snapshots + parked canonical + deny records
     coop::floppy_slot_sync::OnDisconnect();  // drop the slot shadows, the retry set and the per-sender rate windows
     coop::floppy_slot_entry::OnDisconnect();  // counters, then the transit marks and the interceptors: the line above drops the UFunctions they name
@@ -628,7 +628,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:drone"}; coop::drone_sync::Tick(); }  // delivery drone: host streams transform / client suppresses tick + mirrors
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:turbine"}; coop::turbine_sync::Tick(); }  // wind turbines: host ~1 Hz driver-float poll / client deferred-apply retry
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:alarm"}; coop::alarm_sync::Tick(); }  // base radar alarm: 1 Hz active-bit poll BOTH roles (host broadcasts transitions; client forwards local ones)
-    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:server"}; coop::serverbox_sync::Tick(); }  // signal-server sim: HOST 1 Hz state poll -> broadcast on change; CLIENT keeps its ticker_serverBreaker neutralized
+    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:server"}; coop::serverbox_sync::Tick(); }  // the server boxes: the watches settled, then the HOST's 1 Hz poll -> broadcast on change
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:server_upgrade"}; coop::server_upgrade_sync::Tick(); }  // a parked canonical, applied once the servers resolve
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:slot"}; coop::floppy_slot_sync::Tick(); }  // device slots: 1 Hz digest-gated poll -> HOST canonical, CLIENT claim
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:roach"}; coop::roach_sync::Tick(); }  // roach infestation: HOST 1 Hz population poll -> paged broadcast; CLIENT liveness-scan -> consumption intents

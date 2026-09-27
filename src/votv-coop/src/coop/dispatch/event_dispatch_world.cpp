@@ -173,6 +173,19 @@ bool HandleWorldEvent(net::Session& session,
         coop::serverbox_sync::OnReliable(sp, msg.senderPeerSlot);
         break;
     }
+    case net::ReliableKind::ServerRepair: {
+        // A client's finished repair of a server box, client to host only; the module runs it or answers the
+        // presser with the state row, and drops it on a client.
+        if (msg.payloadLen < sizeof(net::ServerRepairPayload)) {
+            UE_LOGW("event_feed: ServerRepair payload too short (%zu < %zu)", static_cast<size_t>(msg.payloadLen),
+                    sizeof(net::ServerRepairPayload));
+            break;
+        }
+        net::ServerRepairPayload rp{};
+        std::memcpy(&rp, msg.payload, sizeof(rp));
+        coop::serverbox_sync::OnRepair(rp, msg.senderPeerSlot);
+        break;
+    }
     case net::ReliableKind::ServerUpgradeState: {
         // A box's upgrade op (client to host), every box's level (host to all) or a refusal (host to
         // the op's author). Role and trust gates live in server_upgrade_sync::OnState.

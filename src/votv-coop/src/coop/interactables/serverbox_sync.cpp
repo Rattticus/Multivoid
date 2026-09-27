@@ -1,22 +1,20 @@
 // coop/interactables/serverbox_sync.cpp -- see coop/interactables/serverbox_sync.h.
 //
-// The verbs are refusable at the script-body gate (breakServer and fix are EX_LocalVirtualFunction
-// bodies it sees with their arguments); this lane still mirrors STATE and drives the box's own
-// re-skin, since a break is host-rolled and a mirror must show it, not re-run it, through
-// ue_wrap/devices/serverbox: the engine's break state -- the box's IsBroken, the notify-free
-// check() it re-skins from, and the farm's three totals -- is the wrapper's, and this lane owns
-// only the wire half, which is the mask, its width, the poll, and who may author it.
+// The engine's break state -- the box's IsBroken, damaged and minigame, the notify-free check() it re-skins from, the
+// farm's three totals, the verbs and the repair widget -- is ue_wrap/devices/serverbox's; this lane owns the wire half:
+// the row, its width, the poll, the repair intent and who may author any of it.
 
 #include "coop/interactables/serverbox_sync.h"
 
+#include "coop/element/intent_authority.h"  // IntentTarget: a repair's presser within reach of its box
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"  // kMaxPeers
 
-#include "ue_wrap/engine/engine.h"                 // SetActorTickEnabled (breaker-kill)
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/devices/serverbox.h"
 #include "ue_wrap/engine/world_identity.h"   // Generation, the baseline's anchor
 #include "ue_wrap/world/world_singleton.h"   // Gamemode, its other anchor
@@ -25,23 +23,48 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <vector>
 
 namespace coop::serverbox_sync {
 namespace {
 
 namespace R  = ue_wrap::reflection;
-namespace E  = ue_wrap::engine;
 namespace GT = ue_wrap::game_thread;
 namespace SB = ue_wrap::serverbox;
+namespace sg = ue_wrap::script_gate;
 
 std::atomic<coop::net::Session*> g_session{nullptr};
+Counts g_counts;
 
-constexpr int      kMaxServers    = 64;    // the isBrokenMask width; a base runs ~54 boxes
+constexpr int       kMaxServers     = 64;    // the row's width; a base runs ~54 boxes
 constexpr long long kPollIntervalMs = 1000;
+constexpr float     kRepairReachUU  = 400.0f;  // the repair widget is used standing at the box
+constexpr auto      kSayEvery       = std::chrono::seconds(10);
 
-// The box list has one owner, ue_wrap/devices/serverbox: this lane keeps only its own cap, since
-// the mask it broadcasts is that many bits wide.
+const wchar_t* const kBoxClass  = L"serverBox_C";
+const wchar_t* const kBreakVerb = L"breakServer";
+const wchar_t* const kTypeVerb  = L"break_type";
+const wchar_t* const kFixVerb   = L"fix";
+constexpr int kTagBreak = 0x53424231;  // 'SBB1'
+constexpr int kTagType  = 0x53425432;  // 'SBT2'
+constexpr int kTagFix   = 0x53424633;  // 'SBF3'
+
+coop::net::Session* ClientSession() {
+    auto* s = g_session.load(std::memory_order_acquire);
+    return s && s->connected() && s->role() == coop::net::Role::Client ? s : nullptr;
+}
+coop::net::Session* HostSession() {
+    auto* s = g_session.load(std::memory_order_acquire);
+    return s && s->connected() && s->role() == coop::net::Role::Host ? s : nullptr;
+}
+
+long long NowMs() {
+    using namespace std::chrono;
+    return duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
+}
+
+// The box list has one owner, ue_wrap/devices/serverbox: this lane keeps only its own cap, the row's width.
 int32_t ReadServers(std::vector<void*>& out) {
     out.clear();
     const int32_t num = static_cast<int32_t>(SB::ReadServers(out));
@@ -49,7 +72,7 @@ int32_t ReadServers(std::vector<void*>& out) {
     return num;
 }
 
-// Build the current server-state snapshot from the live gamemode. Returns false if not readable yet.
+// The current row from the live gamemode. False if not readable yet. The repair group's fields ride when it resolved.
 bool ReadState(coop::net::ServerStatePayload& p) {
     SB::Aggregates agg;
     if (!SB::ReadAggregates(agg)) return false;
@@ -60,16 +83,22 @@ bool ReadState(coop::net::ServerStatePayload& p) {
         if (!warned) { warned = true; UE_LOGW("serverbox_sync: %d servers > cap %d -- syncing first %d only",
                                               num, kMaxServers, kMaxServers); }
     }
-    uint64_t mask = 0;
+    std::memset(&p, 0, sizeof(p));
+    const bool repair = SB::EnsureRepairResolved();
     for (size_t i = 0; i < servers.size(); ++i) {
         void* sb = servers[i];
-        if (sb && R::IsLive(sb) && SB::ReadIsBroken(sb)) mask |= (1ull << i);
+        if (!sb || !R::IsLive(sb)) continue;
+        if (SB::ReadIsBroken(sb)) p.isBrokenMask |= (1ull << i);
+        SB::RepairState r;
+        if (repair && SB::ReadRepairState(sb, r)) {
+            if (r.damaged) p.damagedMask |= (1ull << i);
+            p.minigame[i] = static_cast<uint8_t>(r.minigame);
+        }
     }
     p.brokenServers = agg.brokenServers;
     p.effCalc  = agg.efficiencyCalc;
     p.effDownl = agg.efficiencyDownload;
     p.serverCount = static_cast<uint8_t>(servers.size());
-    p.isBrokenMask = mask;
     return true;
 }
 
@@ -77,32 +106,41 @@ bool ReadState(coop::net::ServerStatePayload& p) {
 uint32_t g_polledWorldGen = 0;
 void* g_polledGm = nullptr;  // the gamemode the baseline was read from; an identity, never dereferenced
 bool  g_primed = false;
-uint64_t g_lastMask = 0;
-int32_t  g_lastBroken = 0;
-float    g_lastEffCalc = 0.f, g_lastEffDownl = 0.f;
+coop::net::ServerStatePayload g_last{};
 long long g_lastPollMs = 0;
 
-long long NowMs() {
-    using namespace std::chrono;
-    return duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
-}
-
-// Break/fix mask + brokenServers are the primary edge; efficiency is ALSO in the payload and CAN
-// vary off a break/fix edge (a download ramps serverEfficiency_downl), so include it with a small
-// epsilon and the client's SAT-console sv.*/tw.* reads stay fresh. Bounded by the 1 Hz poll.
+// The flags, the types and the broken count are the edges; the efficiencies also move off one (a download ramps
+// serverEfficiency_downl), so they count with a small epsilon and the SAT console's sv.*/tw.* reads stay fresh.
 bool StateChanged(const coop::net::ServerStatePayload& p) {
-    return p.isBrokenMask != g_lastMask || p.brokenServers != g_lastBroken ||
-           std::fabs(p.effCalc  - g_lastEffCalc)  > 0.005f ||
-           std::fabs(p.effDownl - g_lastEffDownl) > 0.005f;
-}
-void UpdateBaseline(const coop::net::ServerStatePayload& p) {
-    g_lastMask = p.isBrokenMask; g_lastBroken = p.brokenServers;
-    g_lastEffCalc = p.effCalc; g_lastEffDownl = p.effDownl;
+    return p.isBrokenMask != g_last.isBrokenMask || p.damagedMask != g_last.damagedMask ||
+           p.brokenServers != g_last.brokenServers || p.serverCount != g_last.serverCount ||
+           std::memcmp(p.minigame, g_last.minigame, sizeof(p.minigame)) != 0 ||
+           std::fabs(p.effCalc  - g_last.effCalc)  > 0.005f ||
+           std::fabs(p.effDownl - g_last.effDownl) > 0.005f;
 }
 
-// ---- client apply (drive-real) --------------------------------------------------------------------
+// HOST: the row to every client, on a change of the baseline.
+void BroadcastIfChanged(coop::net::Session* s, const char* why) {
+    coop::net::ServerStatePayload p{};
+    if (!ReadState(p) || !StateChanged(p)) return;
+    g_last = p;
+    if (s->SendReliable(coop::net::ReliableKind::ServerState, &p, sizeof(p)))
+        UE_LOGI("serverbox_sync: host broadcast, %s (broken=%d mask=0x%llX damaged=0x%llX count=%d)", why,
+                p.brokenServers, static_cast<unsigned long long>(p.isBrokenMask),
+                static_cast<unsigned long long>(p.damagedMask), p.serverCount);
+    else
+        UE_LOGW("serverbox_sync: host broadcast send FAILED (broken=%d mask=0x%llX)", p.brokenServers,
+                static_cast<unsigned long long>(p.isBrokenMask));
+}
+
+bool SendStateTo(coop::net::Session* s, int slot) {
+    coop::net::ServerStatePayload p{};
+    return ReadState(p) && s->SendReliableToSlot(slot, coop::net::ReliableKind::ServerState, &p, sizeof(p));
+}
+
+// ---- client apply ---------------------------------------------------------------------------------
 void ApplyState(const coop::net::ServerStatePayload& p) {
-    // Aggregate mirror (so the SAT-console sv.*/tw.* queries read TRUE host state).
+    // The totals, so the SAT console's sv.*/tw.* queries read the host's.
     SB::Aggregates agg;
     agg.brokenServers      = p.brokenServers;
     agg.efficiencyCalc     = p.effCalc;
@@ -110,100 +148,159 @@ void ApplyState(const coop::net::ServerStatePayload& p) {
     if (!SB::WriteAggregates(agg)) return;
     std::vector<void*> servers;
     ReadServers(servers);
-    int applied = 0;
+    const bool repair = SB::EnsureRepairResolved();
+    int reskinned = 0;
     const int32_t n = static_cast<int32_t>(servers.size());
     const int32_t take = n < p.serverCount ? n : p.serverCount;
     for (int32_t i = 0; i < take && i < kMaxServers; ++i) {
         void* sb = servers[i];
         if (!sb || !R::IsLive(sb)) continue;
+        if (repair) {
+            // What the repair widget reads: the type it enters with, and whether the repair pays.
+            SB::RepairState r;
+            r.damaged = (p.damagedMask >> i) & 1ull;
+            r.minigame = p.minigame[i];
+            SB::WriteRepairState(sb, r);
+        }
         const bool desired = (p.isBrokenMask >> i) & 1ull;
         if (SB::ReadIsBroken(sb) == desired) continue;   // already matches -> no re-skin
-        if (SB::ApplyBreak(sb, desired)) ++applied;
+        if (SB::ApplyBreak(sb, desired)) ++reskinned;
     }
-    if (applied)
+    if (reskinned)
         UE_LOGI("serverbox_sync: client applied host state (broken=%d mask=0x%llX, %d server(s) re-skinned)",
-                p.brokenServers, p.isBrokenMask, applied);
+                p.brokenServers, static_cast<unsigned long long>(p.isBrokenMask), reskinned);
 }
 
-// client breaker-kill: neutralize the local ticker_serverBreaker (disable its actor tick, the
-// autonomous false-break source). One-shot latch on the first successful kill (idempotent). There
-// is NO re-arm -- a breaker respawned after the latch ticks autonomously until the next host mirror
-// overwrites its break; a world with NO breaker instance re-walks at 1 Hz until one exists
-// (alarm_sync-parity; in practice a breaker exists whenever servers do, so it latches within a tick
-// or two).
-bool g_breakerKilled = false;
+// ---- the verbs at the gate ------------------------------------------------------------------------
+std::chrono::steady_clock::time_point g_nextBreakSay{}, g_nextFixSay{};
+std::chrono::steady_clock::time_point g_nextRefusedSay[coop::players::kMaxPeers]{};
 
-void KillLocalBreaker() {
-    if (g_breakerKilled) return;
-    int killed = 0;
-    for (void* obj : R::FindObjectsByClass(L"ticker_serverBreaker_C")) {
-        if (!obj || !R::IsLive(obj) || R::NameStartsWith(R::NameOf(obj), L"Default__")) continue;
-        if (E::SetActorTickEnabled(obj, false)) ++killed;
+bool SayNow(std::chrono::steady_clock::time_point& next) {
+    const auto now = std::chrono::steady_clock::now();
+    if (now < next) return false;
+    next = now + kSayEvery;
+    return true;
+}
+
+std::wstring CallerName(const sg::Call& call) {
+    return call.callerFunction ? R::ToString(R::NameOf(call.callerFunction)) : std::wstring(L"ProcessEvent");
+}
+
+// CLIENT: a break is the host's world event or its save's; the host's row brings it.
+sg::Verdict OnBreakPre(const sg::Call& call) {
+    if (!ClientSession()) return sg::Verdict::Run;
+    ++g_counts.refusedBreaks;
+    if (SayNow(g_nextBreakSay))
+        UE_LOGI("serverbox_sync: this client's own %ls refused (called from %ls; %llu refused) -- the break is the "
+                "host's", call.tag == kTagType ? kTypeVerb : kBreakVerb, CallerName(call).c_str(),
+                static_cast<unsigned long long>(g_counts.refusedBreaks));
+    return sg::Verdict::Cancel;
+}
+
+// CLIENT: its player's repair, the gamemode's repair widget calling fix, goes to the host; any other fix is refused.
+sg::Verdict OnFixPre(const sg::Call& call) {
+    auto* s = ClientSession();
+    if (!s) return sg::Verdict::Run;
+    if (!SB::IsRepairWidget(call.callerObject)) {
+        ++g_counts.refusedFixes;
+        if (SayNow(g_nextFixSay))
+            UE_LOGI("serverbox_sync: this client's own fix refused (called from %ls; %llu refused) -- a repair is the "
+                    "host's", CallerName(call).c_str(), static_cast<unsigned long long>(g_counts.refusedFixes));
+        return sg::Verdict::Cancel;
     }
-    if (killed > 0) {
-        g_breakerKilled = true;
-        UE_LOGI("serverbox_sync: CLIENT neutralized %d ticker_serverBreaker (tick disabled -- no autonomous "
-                "self-break; host state is authoritative)", killed);
+    const int32_t box = SB::IndexOf(call.object);
+    if (box < 0 || box >= kMaxServers) {
+        UE_LOGW("serverbox_sync: this player's repair names a box outside the server list (index %d) -- not sent", box);
+        return sg::Verdict::Cancel;
     }
+    coop::net::ServerRepairPayload p{};
+    p.box = static_cast<uint8_t>(box);
+    if (s->SendReliableToSlot(0, coop::net::ReliableKind::ServerRepair, &p, sizeof(p))) ++g_counts.repairsSent;
+    UE_LOGI("serverbox_sync: this player's repair of box %d sent to the host (%llu sent)", box,
+            static_cast<unsigned long long>(g_counts.repairsSent));
+    return sg::Verdict::Cancel;
+}
+
+struct Watch {
+    const wchar_t* fn;
+    int            tag;
+    sg::PreFn      pre;
+    bool           registered = false;
+    bool           settled = false;
+};
+Watch g_watches[] = {
+    {kBreakVerb, kTagBreak, &OnBreakPre},
+    {kTypeVerb, kTagType, &OnBreakPre},
+    {kFixVerb, kTagFix, &OnFixPre},
+};
+bool g_watchesSettled = false;
+
+void DriveWatches() {
+    if (g_watchesSettled) return;
+    sg::ResolvePendingNames();
+    bool all = true;
+    for (Watch& w : g_watches) {
+        if (w.settled) continue;
+        if (!w.registered) {
+            w.registered = sg::WatchClassName(kBoxClass, w.fn, w.tag, w.pre, nullptr);
+            if (!w.registered) {
+                w.settled = true;
+                UE_LOGE("serverbox_sync: the gate took no watch on %ls::%ls -- a client authors that verb", kBoxClass,
+                        w.fn);
+                continue;
+            }
+        }
+        if (sg::ClassNameWatchSettled(kBoxClass, w.fn, w.tag)) {
+            w.settled = true;
+            if (sg::ClassNameWatchLive(kBoxClass, w.fn, w.tag)) UE_LOGI("serverbox_sync: the watch on %ls::%ls is live",
+                                                                        kBoxClass, w.fn);
+            else UE_LOGE("serverbox_sync: the watch on %ls::%ls settled dead -- a client authors that verb", kBoxClass,
+                         w.fn);
+            continue;
+        }
+        all = false;
+    }
+    g_watchesSettled = all;
 }
 
 }  // namespace
 
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
+    DriveWatches();
 }
 
 void Tick() {
     if (!GT::IsGameThread()) return;
-    auto* s = g_session.load(std::memory_order_acquire);
-    if (!s || !s->connected()) return;
+    DriveWatches();
+    auto* s = HostSession();
+    if (!s) return;
     const long long now = NowMs();
     if (now - g_lastPollMs < kPollIntervalMs) return;
     g_lastPollMs = now;
     if (!SB::EnsureBreakResolved()) return;
-
-    if (s->role() != coop::net::Role::Host) {
-        // CLIENT: state is push-only (OnReliable). Keep the local autonomous breaker neutralized.
-        KillLocalBreaker();
-        return;
-    }
-
-    // HOST: poll -> broadcast on change.
-    coop::net::ServerStatePayload p{};
-    if (!ReadState(p)) return;
-    // A world or save reload minted a new gamemode with its world -> baseline meaningless; re-prime
-    // silently (a prime must never masquerade as an edge; the join-edge + the next real transition
-    // deliver state). The gamemode is the anchor as much as the generation: in a travel the world
-    // reads unknown for a while, and a gamemode swapped inside it keeps the generation.
+    // A world or save reload minted a new gamemode with its world -> the baseline is meaningless; re-prime silently
+    // (a prime must never masquerade as an edge; the join edge and the next real transition deliver state). The
+    // gamemode is the anchor as much as the generation: in a travel the world reads unknown for a while, and a
+    // gamemode swapped inside it keeps the generation.
     const uint32_t gen = ue_wrap::world_identity::Generation();
     void* const gm = ue_wrap::world_singleton::Gamemode();
     if (gen != g_polledWorldGen || gm != g_polledGm || !g_primed) {
-        g_polledWorldGen = gen; g_polledGm = gm; g_primed = true; UpdateBaseline(p);
+        coop::net::ServerStatePayload p{};
+        if (!ReadState(p)) return;
+        g_polledWorldGen = gen; g_polledGm = gm; g_primed = true; g_last = p;
         return;
     }
-    if (!StateChanged(p)) return;
-    UpdateBaseline(p);
-    if (s->SendReliable(coop::net::ReliableKind::ServerState, &p, sizeof(p)))
-        UE_LOGI("serverbox_sync: host broadcast (broken=%d mask=0x%llX count=%d)",
-                p.brokenServers, p.isBrokenMask, p.serverCount);
-    else
-        UE_LOGW("serverbox_sync: host broadcast send FAILED (broken=%d mask=0x%llX)", p.brokenServers,
-                p.isBrokenMask);
+    BroadcastIfChanged(s, "a change");
 }
 
 void QueueConnectBroadcastForSlot(int slot) {
-    auto* s = g_session.load(std::memory_order_acquire);
-    if (!s || !s->connected() || s->role() != coop::net::Role::Host) return;
-    if (slot < 0 || slot >= static_cast<int>(coop::players::kMaxPeers)) return;
+    auto* s = HostSession();
+    if (!s || slot < 0 || slot >= static_cast<int>(coop::players::kMaxPeers)) return;
     if (!SB::EnsureBreakResolved()) return;  // no world yet -> the first transition delivers state
-    coop::net::ServerStatePayload p{};
-    if (!ReadState(p)) return;
-    // Unconditional (even all-healthy): the joiner's own sim may have diverged before the mirror lands.
-    if (s->SendReliableToSlot(slot, coop::net::ReliableKind::ServerState, &p, sizeof(p)))
-        UE_LOGI("serverbox_sync: connect-snapshot -- sent (broken=%d mask=0x%llX) to slot %d",
-                p.brokenServers, p.isBrokenMask, slot);
-    else
-        UE_LOGW("serverbox_sync: connect-snapshot to slot %d send FAILED", slot);
+    // Unconditional (even all-healthy): the joiner's load ran none of the verbs; this row is its state.
+    if (SendStateTo(s, slot)) UE_LOGI("serverbox_sync: connect-snapshot sent to slot %d", slot);
+    else UE_LOGW("serverbox_sync: connect-snapshot to slot %d send FAILED", slot);
 }
 
 void OnReliable(const coop::net::ServerStatePayload& payload, int senderPeerSlot) {
@@ -211,13 +308,7 @@ void OnReliable(const coop::net::ServerStatePayload& payload, int senderPeerSlot
         UE_LOGW("serverbox_sync: OnReliable off-game-thread -- dropping");
         return;
     }
-    auto* s = g_session.load(std::memory_order_acquire);
-    if (!s) return;
-    if (s->role() == coop::net::Role::Host) {
-        UE_LOGW("serverbox_sync: ServerState received on the HOST (host-authoritative one-directional) -- "
-                "dropping from slot=%d", senderPeerSlot);
-        return;
-    }
+    if (!ClientSession()) return;
     if (senderPeerSlot != 0) {
         UE_LOGW("serverbox_sync: ServerState from non-host senderPeerSlot=%d -- dropping", senderPeerSlot);
         return;
@@ -228,30 +319,54 @@ void OnReliable(const coop::net::ServerStatePayload& payload, int senderPeerSlot
         return;
     }
     ApplyState(payload);
-    KillLocalBreaker();  // ensure the local breaker stays off (join-window timing)
+}
+
+void OnRepair(const coop::net::ServerRepairPayload& payload, int senderPeerSlot) {
+    auto* s = HostSession();
+    if (!s || senderPeerSlot < 1 || senderPeerSlot >= static_cast<int>(coop::players::kMaxPeers)) return;
+    if (!SB::EnsureBreakResolved() || !SB::EnsureRepairResolved()) return;
+    const uint8_t slot = static_cast<uint8_t>(senderPeerSlot);
+    std::vector<void*> servers;
+    ReadServers(servers);
+    void* box = payload.box < servers.size() ? servers[payload.box] : nullptr;
+    const char* why = nullptr;
+    if (!box || !R::IsLive(box)) why = "no such box";
+    else if (!SB::ReadIsBroken(box)) why = "the box is not broken here";
+    else {
+        const auto token = coop::element::IntentTarget::ForClientIntent(*s, slot, kRepairReachUU);
+        if (!token.HasBody()) why = "the host has no body for that player";
+        else if (token.Authorize(box).outcome != coop::element::IntentOutcome::Ok) why = "the box is out of its reach";
+        else if (!SB::CallFix(box)) why = "the box's fix did not run";
+    }
+    if (why) {
+        ++g_counts.repairsRefused;
+        SendStateTo(s, slot);
+        if (SayNow(g_nextRefusedSay[slot]))
+            UE_LOGI("serverbox_sync: slot %u's repair of box %u refused (%s) -- answered with the host's row", slot,
+                    payload.box, why);
+        return;
+    }
+    ++g_counts.repairsRun;
+    UE_LOGI("serverbox_sync: HOST ran slot %u's repair of box %u", slot, payload.box);
+    BroadcastIfChanged(s, "a client's repair");
 }
 
 void OnDisconnect() {
+    if (g_counts.refusedBreaks || g_counts.refusedFixes || g_counts.repairsSent || g_counts.repairsRun ||
+        g_counts.repairsRefused)
+        UE_LOGI("serverbox_sync: session end -- refused breaks=%llu fixes=%llu, repairs sent=%llu run=%llu "
+                "refused=%llu", static_cast<unsigned long long>(g_counts.refusedBreaks),
+                static_cast<unsigned long long>(g_counts.refusedFixes),
+                static_cast<unsigned long long>(g_counts.repairsSent),
+                static_cast<unsigned long long>(g_counts.repairsRun),
+                static_cast<unsigned long long>(g_counts.repairsRefused));
+    g_counts = Counts{};
     g_polledWorldGen = 0; g_polledGm = nullptr; g_primed = false;
-    g_lastMask = 0; g_lastBroken = 0; g_lastPollMs = 0;
-    // Restore the neutralized breaker: KillLocalBreaker disabled the actor tick, and resetting only
-    // the latch left servers permanently unbreakable in the SAME process after the session (solo
-    // play, or re-hosting) -- the event_fire_sync restore precedent applies here identically. The
-    // fanout runs on the game thread (net_pump teardown; wisp_grab_hold dispatches UFunctions from
-    // the same fanout). Re-walk rather than a stored pointer: restoring EVERY live breaker instance
-    // is idempotent and also covers a breaker respawned after the kill.
-    if (g_breakerKilled && GT::IsGameThread()) {
-        int restored = 0;
-        for (void* obj : R::FindObjectsByClass(L"ticker_serverBreaker_C")) {
-            if (!obj || !R::IsLive(obj) || R::NameStartsWith(R::NameOf(obj), L"Default__")) continue;
-            if (E::SetActorTickEnabled(obj, true)) ++restored;
-        }
-        if (restored > 0)
-            UE_LOGI("serverbox_sync: restored %d ticker_serverBreaker on session end (local sim resumes)",
-                    restored);
-    }
-    g_breakerKilled = false;
+    g_last = coop::net::ServerStatePayload{};
+    g_lastPollMs = 0;
     g_session.store(nullptr, std::memory_order_release);
 }
+
+Counts LaneCounts() { return g_counts; }
 
 }  // namespace coop::serverbox_sync

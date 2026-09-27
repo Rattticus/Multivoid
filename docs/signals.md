@@ -153,9 +153,8 @@ store has a move verb; each of its writers -- the laptop's add, remove and move,
 window's commit -- is watched at the script-body gate, and its exit sends what it changed, a
 rename as a delete and an append with the order line that keeps the row in its place
 (`coop/interactables/meadow_db_sync`). The signal servers' break-and-fix
-simulation is host-owned and driven into each client's server boxes as state, so a client's own
-break is overwritten within a second (`coop/interactables/serverbox_sync`). A break the client
-authors locally can still raise one transient notice before that.
+simulation is host-owned: a client refuses its boxes' break and fix verbs, its player's repair runs
+on the host, and the state comes back as rows (`coop/interactables/serverbox_sync`).
 
 ### The SAT console
 

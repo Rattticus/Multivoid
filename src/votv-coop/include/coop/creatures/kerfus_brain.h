@@ -10,7 +10,7 @@
 // variant, which inherits them or calls them as its parent's: the tick, the two timer events, the movement and
 // server-job functions, the haunting, the laptop's jump and the cord events that set `charging`. The pose comes
 // from the host's drive stream, the state from kerfus_state, a client's presses become kerfus_intent's requests,
-// and a last guard refuses a server box's fix() from a Kerfus's body that began before its watch went live. The
+// and a server job begun before the watches went live fixes nothing here: serverbox_sync refuses a client's fix. The
 // nav pawn welded on the body is stilled on a client where the host's brain keeps it, its movement held
 // (coop/props/rider_hold.h). Engine access through ue_wrap; game thread.
 

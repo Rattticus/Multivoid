@@ -1,48 +1,55 @@
-// coop/interactables/serverbox_sync.h -- the signal-SERVER sim, host-authoritative.
+// coop/interactables/serverbox_sync.h -- the signal servers' break state, the host's: its verbs run there alone.
 //
-// The sim -- mainGamemode.{servers, brokenServers, serverEfficiency_calc/downl} and
-// per-serverBox_C IsBroken, driven by ticker_serverBreaker -- is not replicated, and each peer
-// runs its own gamemode and ticker, so a client diverges and authors a false "SERVER X is down".
-// The break and fix verbs dispatch as EX_LocalVirtualFunction, invisible to our function seams,
-// so we mirror the state rather than intercept the verb, the alarm_sync shape.
-//
-// On a change the host broadcasts ServerStatePayload, polled at about 1 Hz. The client
-// raw-writes each IsBroken, dispatches the notify-free check(), mirrors the aggregates its SAT
-// console reads, neutralizes its own ticker_serverBreaker, and never sends server state. That
-// does not close every local break: serverBox's own graph reaches breakServer() from a damage
-// path and bumps brokenServers before the next mirror overwrites the STATE, so a transient false
-// notice is possible. Identity is the save-stable servers[] index; a joiner gets the state at
-// world-ready.
+// A box's state is its broken flag, its `damaged` flag and the repair minigame type its break rolled, and the farm's
+// three totals on the gamemode. Three verbs write it -- breakServer (eight callers, each a world event or a load),
+// break_type (the desk's virus event) and fix (the player's repair minigame, the Kerfur, p_kerfus). The script gate
+// watches the three BY NAME: a client refuses every one through its whole connected session, and its player's own
+// repair -- fix called by the gamemode's repair widget -- goes to the host as a repair intent, which the host runs on
+// its box when broken and within reach and answers, refused, with the state row to the presser alone. The host polls
+// the state at about 1 Hz and broadcasts a change, at once after a repair, and sends a joiner the row at its
+// world-ready; a client raw-writes each box's flags and type, re-skins through the notify-free check() and mirrors the
+// totals. Identity is the save-stable servers[] index. MTA shape: the server validates a client's request and answers
+// a refusal with its own value (reference/mtasa-blue/Server/mods/deathmatch/logic/CGame.cpp:2779-2793).
 
 #pragma once
+
+#include <cstdint>
 
 namespace coop::net {
 class Session;
 struct ServerStatePayload;
+struct ServerRepairPayload;
 }  // namespace coop::net
 
 namespace coop::serverbox_sync {
 
-// Cache the session. The engine side -- classes, offsets and check() -- resolves lazily inside
-// ue_wrap/devices/serverbox, on its first use in Tick.
+// Cache the session and register the three watches (each once; a refusal by the gate is said once).
 void Install(coop::net::Session* session);
 
-// Per net-pump tick, game thread, throttled internally to about 1 Hz. HOST: poll the server
-// state and broadcast on a change. CLIENT: neutralize the local ticker_serverBreaker (cached,
-// idempotent). A no-op until resolved.
+// Per net-pump tick, game thread: the watches driven to settled, then, throttled to about 1 Hz, the HOST's poll and
+// its broadcast on a change. A no-op until resolved.
 void Tick();
 
-// HOST, game thread, at a joiner's ClientWorldReady edge: send the current server state to this
-// slot.
+// HOST, game thread, at a joiner's ClientWorldReady edge: the current state row to this slot.
 void QueueConnectBroadcastForSlot(int slot);
 
-// Game thread (event_feed drain): the host's authoritative server state. The CLIENT applies it
-// (drive-real plus the aggregate mirror); a non-host sender is dropped, since this lane is
-// host-authoritative and one-directional.
+// Game thread (event_feed drain). CLIENT: the host's state row, applied; a non-host sender is dropped.
 void OnReliable(const coop::net::ServerStatePayload& payload, int senderPeerSlot);
 
-// Teardown: drop the poll baseline, re-enable the neutralized ticker_serverBreaker, and clear the
-// session. The wrapper's resolution and its gamemode cache are untouched -- they outlive a session.
+// Game thread (event_feed drain). HOST: a client's finished repair of a box; run, or answered with the state row.
+void OnRepair(const coop::net::ServerRepairPayload& payload, int senderPeerSlot);
+
+// Teardown: the poll baseline and the session.
 void OnDisconnect();
+
+// The lane's counters, for its drill.
+struct Counts {
+    uint64_t refusedBreaks = 0;   // CLIENT: breakServer and break_type refused
+    uint64_t refusedFixes = 0;    // CLIENT: a fix from any caller but the repair widget
+    uint64_t repairsSent = 0;     // CLIENT: its player's repairs sent to the host
+    uint64_t repairsRun = 0;      // HOST: a client's repair run
+    uint64_t repairsRefused = 0;  // HOST: a client's repair answered with the state row
+};
+Counts LaneCounts();
 
 }  // namespace coop::serverbox_sync

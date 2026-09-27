@@ -33,17 +33,14 @@ constexpr const wchar_t* kBrain[] = {
 };
 constexpr size_t kBrainCount = sizeof(kBrain) / sizeof(kBrain[0]);
 constexpr int kTagBrainBase = 0x4B465300;  // 'KFS' + the row
-constexpr int kTagServerFix = 0x4B4653FF;
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 bool g_watched[kBrainCount] = {};
-bool g_fixWatched = false;
 bool g_saidLive = false;
 
 // Per session: the refusals by row, and whether a row's first refusal was said.
 unsigned long long g_refused[kBrainCount] = {};
 bool g_said[kBrainCount] = {};
-unsigned long long g_fixRefused = 0;
 
 // The navigation pawns this client stilled, by Kerfus: the Kerfus and the pawn's movement, by slot and serial, and
 // whether this lane holds that movement (rider_hold.h), false when its owner had stopped it already.
@@ -104,24 +101,11 @@ sg::Verdict OnBrainPre(const sg::Call& c) {
     return sg::Verdict::Cancel;
 }
 
-// A server box's fix() called from a Kerfus's own frame. The server job's bodies are refused above,
-// so this fires only for one that began before its watch went live; the fix is the host's to make.
-sg::Verdict OnServerFixPre(const sg::Call& c) {
-    if (!OnClient() || !c.callerObject) return sg::Verdict::Run;
-    if (!UK::IsKerfus(c.callerObject)) return sg::Verdict::Run;
-    ++g_fixRefused;
-    UE_LOGW("kerfus_brain: refused a server fix() from a Kerfus's own body on this client (#%llu) -- a server "
-            "job that began before the brain's watch went live", g_fixRefused);
-    return sg::Verdict::Cancel;
-}
-
 void Register() {
     for (size_t i = 0; i < kBrainCount; ++i)
         if (!g_watched[i])
             g_watched[i] = sg::WatchClassName(UK::kClassName, kBrain[i], kTagBrainBase + static_cast<int>(i),
                                               &OnBrainPre, nullptr);
-    if (!g_fixWatched)
-        g_fixWatched = sg::WatchClassName(L"serverBox_C", L"fix", kTagServerFix, &OnServerFixPre, nullptr);
 }
 
 }  // namespace
@@ -138,20 +122,17 @@ void Tick() {
     for (size_t i = 0; i < kBrainCount; ++i)
         if (!g_watched[i] || !sg::ClassNameWatchLive(UK::kClassName, kBrain[i], kTagBrainBase + static_cast<int>(i)))
             return;
-    if (!g_fixWatched || !sg::ClassNameWatchLive(L"serverBox_C", L"fix", kTagServerFix)) return;
     g_saidLive = true;
-    UE_LOGI("kerfus_brain: the Kerfus's %zu brain bodies and the server-fix guard are watched -- a client refuses "
-            "them", kBrainCount);
+    UE_LOGI("kerfus_brain: the Kerfus's %zu brain bodies are watched -- a client refuses them", kBrainCount);
 }
 
 void OnDisconnect() {
-    unsigned long long total = g_fixRefused;
+    unsigned long long total = 0;
     for (size_t i = 0; i < kBrainCount; ++i) total += g_refused[i];
     if (total)
-        UE_LOGI("kerfus_brain: session end -- %llu brain bodies refused on this client (tick %llu, server fixes %llu)",
-                total, g_refused[0], g_fixRefused);
+        UE_LOGI("kerfus_brain: session end -- %llu brain bodies refused on this client (tick %llu)", total,
+                g_refused[0]);
     for (size_t i = 0; i < kBrainCount; ++i) { g_refused[i] = 0; g_said[i] = false; }
-    g_fixRefused = 0;
     // The holds go back: the brain runs here once the session is over.
     for (const auto& entry : g_stilled)
         if (entry.second.held) coop::rider_hold::Give(entry.second.movement.Raw());

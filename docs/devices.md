@@ -349,17 +349,21 @@ puppet included (`coop/items/coingun_sync`). The client is told the result.
 
 ### The signal servers
 
-A base runs dozens of signal boxes, and the game breaks them on its own timer. Nothing about that
-is replicated, so each peer's breaker would fire on its own dice and author a false "server down"
-on one screen only. The break and fix verbs run inside the Blueprint, where the script-body gate can watch them but
-only on the machine running them -- a watch cannot make the other peers roll the same dice -- so
-the state is mirrored instead: the host polls the per-box broken flag and the three totals the
-gamemode keeps for the farm, broadcasts on a change, and a client writes the flag and calls the
-box's own re-skin, which is notify-free and so repaints without firing the notice a real break
-fires. A client also disables its own breaker's tick, and gets it back when the session ends.
-The box list, the two disc verbs, the label and the break state all resolve in one engine wrapper
-(`ue_wrap/devices/serverbox`); the lane beside it owns only the wire half -- the mask, its width,
-the poll and who may author it (`coop/interactables/serverbox_sync`).
+A base runs dozens of signal boxes, and the game breaks them on its own timer and on world events:
+lightning, damage, triggers, the desk's virus. Three verbs write a box's state -- its break, the
+virus's typed break and its fix -- and the script-body gate watches all three by name. A client
+refuses every one of them through its whole connected session, since each break is a world event
+the host's own game makes, and its player's own repair -- the fix the gamemode's repair widget
+calls when the minigame succeeds -- goes to the host as an intent, which the host runs on its box
+when it is broken and within the player's reach, answering a refusal with its state to that player
+alone; the widget's points and stats stay the player's. The host polls each box's broken and
+damaged flags, the repair type its break rolled, and the three totals the gamemode keeps for the
+farm, broadcasts a change at once after a repair and within a second otherwise, and a client writes
+the flags and the type and calls the box's own re-skin, which is notify-free and so repaints
+without firing the notice a real break fires. The box list, the verbs, the label, the break state
+and the repair widget resolve in one engine wrapper (`ue_wrap/devices/serverbox`); the lane beside
+it owns the wire half -- the row, its width, the poll, the repair intent and who may author any of
+it (`coop/interactables/serverbox_sync`).
 
 A box also takes up to three physical upgrades, a count of its own that its break dice weigh. A player
 installs one by using a held upgrade on the box, which destroys the upgrade, and takes one out with E at
