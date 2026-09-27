@@ -218,6 +218,101 @@ bool WriteAggregates(const Aggregates& in) {
     return true;
 }
 
+// ---- repair ------------------------------------------------------------------------------------------
+
+namespace {
+int32_t  g_offDamaged = -1;        // serverBox_C.damaged, byte offset
+uint8_t  g_maskDamaged = 0;        // ...and its real bit
+int32_t  g_offMinigame = -1;       // serverBox_C.minigame (int)
+void*    g_fnFix = nullptr;        // serverBox_C::fix()
+void*    g_fnBreakServer = nullptr;  // serverBox_C::breakServer()
+int32_t  g_offGmWidget = -1;       // mainGamemode_C.serverMinigame
+bool     g_repairResolved = false;
+bool     g_repairLatchedOff = false;
+int      g_repairAttempts = 0;
+uint64_t g_nextRepairTryMs = 0;
+
+void* RepairWidget() {
+    void* gm = world_singleton::Gamemode();
+    if (!gm || g_offGmWidget < 0) return nullptr;
+    void* w = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(gm) + g_offGmWidget);
+    return (w && R::IsLive(w)) ? w : nullptr;
+}
+}  // namespace
+
+bool EnsureRepairResolved() {
+    if (g_repairResolved) return true;
+    if (g_repairLatchedOff) return false;
+    const uint64_t now = NowMs();
+    if (now < g_nextRepairTryMs) return false;
+    g_nextRepairTryMs = now + 2000;
+    void* gmCls = R::FindClass(P::name::GamemodeClass);
+    void* sbCls = R::FindClass(L"serverBox_C");
+    if (!gmCls || !sbCls) return false;  // world not loaded yet
+    if (g_offDamaged < 0) R::FindBoolProperty(sbCls, L"damaged", g_offDamaged, g_maskDamaged);
+    if (g_offMinigame < 0) g_offMinigame = R::FindPropertyOffset(sbCls, L"minigame");
+    if (!g_fnFix) g_fnFix = R::FindFunction(sbCls, L"fix");
+    if (!g_fnBreakServer) g_fnBreakServer = R::FindFunction(sbCls, L"breakServer");
+    if (g_offGmWidget < 0) g_offGmWidget = R::FindPropertyOffset(gmCls, L"serverMinigame");
+    if (g_offDamaged >= 0 && g_maskDamaged != 0 && g_offMinigame >= 0 && g_fnFix && g_fnBreakServer &&
+        g_offGmWidget >= 0) {
+        g_repairResolved = true;
+        UE_LOGI("serverbox: repair group resolved (damaged=0x%X mask=0x%02X minigame=0x%X widget=0x%X)", g_offDamaged,
+                g_maskDamaged, g_offMinigame, g_offGmWidget);
+        return true;
+    }
+    if (++g_repairAttempts >= kMaxPostClassAttempts) {
+        g_repairLatchedOff = true;
+        UE_LOGW("serverbox: repair group INCOMPLETE after %d passes (damaged=0x%X minigame=0x%X fix=%s break=%s "
+                "widget=0x%X) -- latched off", g_repairAttempts, g_offDamaged, g_offMinigame, g_fnFix ? "yes" : "no",
+                g_fnBreakServer ? "yes" : "no", g_offGmWidget);
+    }
+    return false;
+}
+
+bool ReadRepairState(void* box, RepairState& out) {
+    if (!box || !g_repairResolved) return false;
+    const auto* base = reinterpret_cast<const uint8_t*>(box);
+    out.damaged = (base[g_offDamaged] & g_maskDamaged) != 0;
+    out.minigame = *reinterpret_cast<const int32_t*>(base + g_offMinigame);
+    return true;
+}
+
+bool WriteRepairState(void* box, const RepairState& in) {
+    if (!box || !g_repairResolved) return false;
+    auto* base = reinterpret_cast<uint8_t*>(box);
+    if (in.damaged) base[g_offDamaged] |= g_maskDamaged;
+    else            base[g_offDamaged] &= static_cast<uint8_t>(~g_maskDamaged);
+    *reinterpret_cast<int32_t*>(base + g_offMinigame) = in.minigame;
+    return true;
+}
+
+bool CallFix(void* box) {
+    if (!box || !g_repairResolved) return false;
+    ParamFrame f(g_fnFix);
+    return f.valid() && Call(box, f);
+}
+
+bool CallBreakServer(void* box) {
+    if (!box || !g_repairResolved) return false;
+    ParamFrame f(g_fnBreakServer);
+    return f.valid() && Call(box, f);
+}
+
+bool IsRepairWidget(void* obj) { return obj && obj == RepairWidget(); }
+
+bool CallRepairEnd(void* box, bool correct) {
+    void* w = box ? RepairWidget() : nullptr;
+    if (!w) return false;
+    void* wCls = R::ClassOf(w);
+    const int32_t offServer = R::FindPropertyOffset(wCls, L"server");
+    void* fn = R::FindDispatchFunctionCached(wCls, L"end");
+    if (offServer < 0 || !fn) return false;
+    *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(w) + offServer) = box;
+    ParamFrame f(fn);
+    return f.valid() && f.Set<bool>(L"correct", correct) && Call(w, f);
+}
+
 namespace {
 int32_t  g_offUpgrades = -1;        // serverBox_C.upgrades (int)
 bool     g_upgradesMissing = false; // the class loaded without the member: never retried

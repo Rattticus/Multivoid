@@ -78,6 +78,32 @@ bool ApplyBreak(void* box, bool broken);
 bool ReadAggregates(Aggregates& out);
 bool WriteAggregates(const Aggregates& in);
 
+// ---- repair ------------------------------------------------------------------------------------------
+
+// The repair group, on its own latch: the box's `damaged` flag (a break that came from damage; the
+// minigame pays no points for it), its `minigame` type (rolled inside breakServer; the gamemode's widget
+// enters with it), its fix and breakServer verbs, and the gamemode's one repair widget (serverMinigame,
+// a ui_serverMinigame_C whose end(true) calls fix). Retried on a backoff, latched off with one warning.
+bool EnsureRepairResolved();
+
+struct RepairState {
+    bool    damaged = false;
+    int32_t minigame = 0;
+};
+bool ReadRepairState(void* box, RepairState& out);
+bool WriteRepairState(void* box, const RepairState& in);
+
+// The box's own fix() and breakServer(), reflected. False for a null box or an unresolved verb.
+bool CallFix(void* box);
+bool CallBreakServer(void* box);
+
+// Whether `obj` is the gamemode's repair widget, the caller of a player's own fix.
+bool IsRepairWidget(void* obj);
+
+// [dev] A player's finished repair as the game runs it: the gamemode's widget, its `server` set to `box`,
+// then its end(correct), whose success pays the player and calls the box's fix.
+bool CallRepairEnd(void* box, bool correct);
+
 // ---- server upgrades ------------------------------------------------------------------------------
 
 // A box takes up to three physical upgrades. Its install is playerUsedOn with a held prop_serverUpg_C:
