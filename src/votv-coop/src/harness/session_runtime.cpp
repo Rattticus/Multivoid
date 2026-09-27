@@ -421,15 +421,13 @@ void RunPlayLoop(bool bootedIntoGameplay) {
                         // a timeout; a failed transfer or a world that will not load ends the join
                         // by name. Blocks the TimelineThread, the abort drained inside.
                         //
-                        // BOTH halves below are required. The direct arm exists for a process that
-                        // auto-loaded its OWN world at boot -- the LAN rigs, where both peers were
-                        // given the same save -- AND that is still standing in it. The boot fact
-                        // alone is this split's own defect one consumer later: a rig that quit to
-                        // the menu, or whose host session ended and fled there, still answers yes
-                        // and would connect with no world to connect in. A client in any other
-                        // world answers no to the boot half and downloads the host's, which is
-                        // right -- that world is not the join's -- and leaves it for the menu
-                        // first, since the menu join assumes the menu (join_leave).
+                        // BOTH halves below are required. The direct arm is for a process that
+                        // auto-loaded its OWN world at boot (the LAN rigs, both peers given the same
+                        // save) AND still stands in it: the boot fact alone would send a rig that
+                        // quit to the menu, or whose host session ended and fled there, into a
+                        // connect with no world to connect in. A client in any other world downloads
+                        // the host's -- that world is not the join's -- and leaves its own for the
+                        // menu first, since the menu join assumes the menu (join_leave).
                         if (pending.role == coop::net::Role::Client &&
                             !(bootedIntoGameplay && InGameplayWorld())) {
                             if (!harness::join_leave::Begin(pending)) StartMenuModeJoin_(pending);
