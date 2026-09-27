@@ -7,6 +7,7 @@
 #include "coop/element/registry.h"
 #include "coop/interactables/desk_verb_effects.h"
 #include "coop/interactables/signal_wire.h"
+#include "coop/net/intent_bucket.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
@@ -54,8 +55,7 @@ constexpr float kDeskReachUU = 400.0f;
 // A press is a person's click; the bucket bounds a stalled client's backlog, not a player. A press past a full
 // queue is dropped unanswered and said at most this often, so a flooding client costs the host no log or reply per
 // message (the Kerfus lane's shape, kerfus_intent.cpp).
-constexpr float    kBurst = 6.0f;
-constexpr float    kPerSecond = 3.0f;
+constexpr coop::net::IntentBudget kBudget{6.0f, 3.0f};  // presses at once, and per second after
 constexpr size_t   kMaxPending = 8;
 constexpr uint64_t kSayEveryMs = 10000;
 
@@ -67,9 +67,8 @@ bool     g_saidOffline = false;
 uint32_t g_pressSeq = 0;  // CLIENT: this machine's press count
 
 struct Bucket {
-    float             tokens = kBurst;
-    Clock::time_point last{};
-    Clock::time_point nextSay{};
+    coop::net::IntentBucket rate;
+    Clock::time_point       nextSay{};
 };
 Bucket g_rate[coop::net::kMaxPeers];
 std::deque<DeskVerbPayload> g_pending[coop::net::kMaxPeers];
@@ -78,16 +77,8 @@ bool g_waitSaid[coop::net::kMaxPeers] = {};
 unsigned long long g_sent = 0, g_ran = 0, g_refused = 0, g_dropped = 0, g_heard = 0;
 
 bool TakeToken(uint8_t slot) {
-    Bucket& b = g_rate[slot];
-    const Clock::time_point now = Clock::now();
-    if (b.last != Clock::time_point{}) {
-        b.tokens += kPerSecond * std::chrono::duration<float>(now - b.last).count();
-        if (b.tokens > kBurst) b.tokens = kBurst;
-    }
-    b.last = now;
-    if (b.tokens < 1.0f) return false;
-    b.tokens -= 1.0f;
-    return true;
+    const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now().time_since_epoch()).count();
+    return g_rate[slot].rate.Take(kBudget, static_cast<uint64_t>(now));
 }
 
 // ---- what a button acts on ----------------------------------------------------------------------------------
@@ -352,7 +343,7 @@ void Tick(coop::net::Session& session) {
             g_pending[slot].pop_front();
             g_waitSaid[slot] = false;  // a consumed press ends the wait's streak
         } else {
-            g_rate[slot].tokens += 1.0f;  // a wait runs nothing, so it spends no token
+            g_rate[slot].rate.Refund(kBudget);  // a wait runs nothing, so it spends no token
         }
     }
 }
