@@ -80,6 +80,7 @@ set(VOTVCOOP_SOURCES
     src/ue_wrap/devices/appliance.cpp
     src/ue_wrap/devices/power_control.cpp
     src/ue_wrap/devices/generator.cpp
+    src/ue_wrap/devices/generator_panel.cpp
     src/ue_wrap/devices/atv.cpp
     src/ue_wrap/devices/atv_condition.cpp
     src/ue_wrap/devices/drone.cpp
