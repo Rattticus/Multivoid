@@ -68,7 +68,14 @@ std::vector<Noted> g_noted;  // CLIENT: drives this player brought into the worl
 // until the drive enrols (a drop intent's copy has no eid yet), then by eid until the row comes.
 struct Brought { ue_wrap::CachedObjRef ref; uint8_t slot; Clock::time_point until; };
 std::vector<Brought> g_broughtPending;
-std::map<uint32_t, uint8_t> g_brought;
+struct Author { ue_wrap::CachedObjRef ref; uint8_t slot = 0xFF; };
+std::map<uint32_t, Author> g_brought;  // an entry ends with its drive, so a re-issued eid inherits no author
+
+void NoteAuthor(uint32_t eid, void* actor, uint8_t slot) {
+    Author& a = g_brought[eid];
+    a.ref.Set(actor);
+    a.slot = slot;
+}
 
 struct Enrolled { void* actor; uint32_t eid; };
 std::mutex g_enrolledMu;
@@ -144,8 +151,9 @@ void Keep(std::map<uint32_t, Kept>& m, uint32_t eid, void* actor, uint64_t hash,
     if (row) k.row = *row;
 }
 
-// Drops the rows kept for drives that are gone: a drive's rows end with it.
-void SweepKept(std::map<uint32_t, Kept>& m) {
+// Drops the rows kept for drives that are gone, and the authors of those drives: a drive's rows end with it.
+template <typename Map>
+void SweepKept(Map& m) {
     for (auto it = m.begin(); it != m.end();) it = it->second.ref.Alive() ? std::next(it) : m.erase(it);
 }
 
@@ -284,7 +292,8 @@ bool HostTakeClientRow(coop::net::Session* s, uint32_t eid, void* actor, const S
     auto author = g_brought.find(eid);
     SD::Row mine;
     if (!DC::ReadDriveRow(actor, mine)) return false;
-    if (author == g_brought.end() || author->second != senderSlot) why = "not a drive that client brought";
+    if (author == g_brought.end() || author->second.slot != senderSlot || author->second.ref.Get() != actor)
+        why = "not a drive that client brought";
     else if (!IsClassDefault(actor, Hash(mine))) why = "the host already holds a row for it";
     else if (!RowSane(row)) why = "a row with a non-finite or negative amount";
     if (why) {
@@ -381,7 +390,7 @@ void RetryParked() {
 void ResolveBrought(void* actor, uint32_t eid) {
     for (auto it = g_broughtPending.begin(); it != g_broughtPending.end(); ++it) {
         if (it->ref.Get() != actor || !it->ref.Alive()) continue;
-        g_brought[eid] = it->slot;
+        NoteAuthor(eid, actor, it->slot);
         g_broughtPending.erase(it);
         return;
     }
@@ -458,6 +467,7 @@ void Tick() {
         SweepNotes();
         SweepKept(g_held);
         SweepKept(g_lastSent);
+        SweepKept(g_brought);
         g_asm.Sweep(now, std::chrono::seconds(20));
     }
     if (now >= g_nextStats) {
@@ -533,7 +543,8 @@ void OnBound(uint32_t eid, void* actor, int senderSlot) {
         // A client's drive mirrored here: every peer starts it at the class default, and its author's row follows.
         uint64_t d = 0;
         if (ClassDefaultHash(actor, d)) Keep(g_lastSent, eid, actor, d, nullptr);
-        if (senderSlot > 0 && senderSlot < coop::net::kMaxPeers) g_brought[eid] = static_cast<uint8_t>(senderSlot);
+        if (senderSlot > 0 && senderSlot < coop::net::kMaxPeers)
+            NoteAuthor(eid, actor, static_cast<uint8_t>(senderSlot));
         return;
     }
     if (TakeNote(actor)) SendOwn(s, eid, actor);
@@ -543,7 +554,8 @@ void OnPeerLeft(uint8_t slot) {
     if (slot >= coop::net::kMaxPeers) return;
     g_asm.ClearSlot(slot);
     for (auto it = g_parked.begin(); it != g_parked.end();) it = it->second.senderSlot == slot ? g_parked.erase(it) : std::next(it);
-    for (auto it = g_brought.begin(); it != g_brought.end();) it = it->second == slot ? g_brought.erase(it) : std::next(it);
+    for (auto it = g_brought.begin(); it != g_brought.end();)
+        it = it->second.slot == slot ? g_brought.erase(it) : std::next(it);
     for (auto it = g_broughtPending.begin(); it != g_broughtPending.end();)
         it = it->slot == slot ? g_broughtPending.erase(it) : std::next(it);
     g_nextRefusalSay[slot] = {};

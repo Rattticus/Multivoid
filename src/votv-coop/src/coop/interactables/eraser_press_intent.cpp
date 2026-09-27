@@ -56,7 +56,6 @@ uint64_t g_nextUnboundSayMs = 0;
 
 // HOST: whether the eraser was busy as the running delete press entered, for its POST to tell a start from a click.
 bool g_pressWasBusy = false;
-bool g_pressEntered = false;
 
 struct Bucket {
     float    tokens = kPressBurst;
@@ -166,7 +165,6 @@ bool IsDeletePress(const sg::Call& call) {
 sg::Verdict OnActionPre(const sg::Call& call) {
     if (!call.object || !IsDeletePress(call)) return sg::Verdict::Run;
     if (HostSession()) {
-        g_pressEntered = true;
         g_pressWasBusy = false;
         DE::ReadProcessing(call.object, g_pressWasBusy);
         return sg::Verdict::Run;
@@ -196,11 +194,11 @@ sg::Verdict OnActionPre(const sg::Call& call) {
     return sg::Verdict::Cancel;
 }
 
-// HOST: the press ran; every client shows it, the presser too (its own was refused), as a start or a lone click.
+// HOST: the press ran; every client shows it, the presser too (its own was refused), as a start or a lone click. The
+// call's own frame says it was a delete press, so a POST the gate skipped leaves nothing for the next one.
 void OnActionPost(const sg::Call& call) {
     auto* s = HostSession();
-    if (!s || !g_pressEntered || !call.object) return;
-    g_pressEntered = false;
+    if (!s || !call.object || !IsDeletePress(call)) return;
     bool busy = false;
     const bool started = !g_pressWasBusy && DE::ReadProcessing(call.object, busy) && busy;
     const bool sent = Send(s, -1, 0, static_cast<uint8_t>(started ? DE::Show::Start : DE::Show::Click));
@@ -317,7 +315,7 @@ void OnDisconnect() {
                 static_cast<unsigned long long>(g_denied), static_cast<unsigned long long>(g_shown));
     for (uint8_t slot = 0; slot < coop::net::kMaxPeers; ++slot) OnPeerLeft(slot);
     g_sent = g_pressed = g_denied = g_shown = 0;
-    g_pressEntered = g_pressWasBusy = false;
+    g_pressWasBusy = false;
 }
 
 uint64_t SentCount() { return g_sent; }
