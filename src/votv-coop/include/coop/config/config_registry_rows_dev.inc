@@ -460,6 +460,10 @@ CFG_FLAG(lookat_aim_drill, "lookat_aim_drill", "dev", false, "VOTVCOOP_LOOKAT_AI
     "Drill (BOTH peers): walk to the nearest prop with the bot director, turn the camera onto it, "
     "and hold there without pressing anything, so the churn probe above has an aim to read. Says "
     "one readiness line once the game's own trace resolves the prop.")
+CFG_FLAG(client_world_first, "client_world_first", "dev", false, "VOTVCOOP_CLIENT_WORLD_FIRST",
+    "Rig (CLIENT): before it joins, the client boots a world of its own (a New Game: the rig starts every "
+    "client fresh) and stands in it, then joins from inside it: the host's save downloaded and its world "
+    "loaded once this one is left. A join that starts inside a world, which no menu-joining run exercises.")
 CFG_FLAG(join_at_host, "join_at_host", "dev", false, "VOTVCOOP_JOIN_AT_HOST",
     "Drill (CLIENT): the join's first appearance keeps the transferred save's player transform, which "
     "is where the host stood, instead of this player's profile pose or the start point; a respawn "

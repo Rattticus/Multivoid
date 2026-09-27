@@ -26,6 +26,7 @@
 #include "coop/save/save_transfer.h"
 #include "coop/dev/spawn_menu_unlock.h"
 #include "coop/dev/spawn_npc.h"
+#include "coop/dev/world_first_check.h"
 #include "coop/session/teleport_client.h"
 #include "coop/player/players_registry.h"
 #include "coop/config/config.h"
@@ -263,7 +264,18 @@ DWORD WINAPI TimelineThread(LPVOID param) {
         const coop::net::Config netCfg = cfg::ReadNetConfig(netEnabled);
         const bool saveTransferClient =
             netEnabled && netCfg.role == coop::net::Role::Client;
-        if (!saveTransferClient) world_boot::BootStorySaveBlocking();
+        // [dev] client_world_first: such a client first stands in a world of its own, then joins
+        // from inside it; the boot fact below stays false, so its join is the menu join. A world
+        // that never came up ends the run by name: its join would start at the menu and pass
+        // without ever starting inside a world.
+        const bool worldFirst = saveTransferClient &&
+                                coop::config::ResolveFlag(::coop::config_registry::rows::client_world_first);
+        if (!saveTransferClient || worldFirst) {
+            const bool booted = world_boot::BootStorySaveBlocking();
+            if (worldFirst && !booted)
+                UE_LOGE("harness: client_world_first found no world of its own to stand in -- FAIL");
+            if (worldFirst && booted) Post([] { coop::dev::world_first_check::Arm(); });
+        }
         // The SDK profile is checked against the running build (after the world boot on a host; on
         // a save-transfer client the classes load with the menu world, and every consumer
         // self-retries).

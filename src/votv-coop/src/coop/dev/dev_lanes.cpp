@@ -68,6 +68,7 @@
 #include "coop/dev/spawn_match_probe.h"  // the fuzzy-match candidate set and adoption watch
 #include "coop/dev/store_table_probe.h"  // which mechanism can read a list_store row
 #include "coop/dev/toggle_drill.h"  // [dev] whether a toggle device's state crosses both ways
+#include "coop/dev/world_first_check.h"  // [dev] client_world_first's verdict
 #include "coop/dev/vitals_keepalive.h"  // [dev] autonomous long-exposure keepalive (ini vitals_keepalive_sec)
 #include "coop/dev/world_roll_drill.h"  // [dev] the day's world rolls: the host's crosses, a client's own is refused
 #include "coop/dev/perf_probe.h"
@@ -167,6 +168,7 @@ void TickDrills(coop::net::Session& session) {
     coop::dev::door_drill::Tick(&session);  // [dev] the door drill's sensor readings and walk (a single bool read when off)
     coop::dev::event_drill::Tick(&session);  // [dev] the event drill's fires and count (a single bool read when off)
     coop::dev::toggle_drill::Tick(&session);  // [dev] the toggle drill's toggles (a single check when off)
+    coop::dev::world_first_check::Tick();  // [dev] client_world_first's verdict (a single bool read when off)
     coop::dev::blackout_drill::Tick(&session);  // [dev] the blackout drill's fire and reads (a single bool read when off)
     coop::dev::lid_drill::Tick(&session);  // [dev] the lid drill's legs (a single bool read when off)
     coop::dev::subject_drill::Tick(&session);  // [dev] the subject drill's legs (a single enum read when off)
