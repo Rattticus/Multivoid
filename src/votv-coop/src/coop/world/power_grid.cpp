@@ -152,6 +152,10 @@ bool g_haveRows = false;
 bool g_rowsWaiting = false;
 void* g_pressGen = nullptr;
 GEN::Row g_pressRow{};
+// Set while this client runs the host's rows on its generators: an updUpgrades then is the rows', not a player's
+// install. A player's install made through our own call (the drill's) is still one, so the test is this scope, not
+// fromOurCode (power_puzzle's own writes, the precedent).
+bool g_applying = false;
 uint64_t g_editsRefused = 0, g_opsSent = 0, g_hitsSent = 0, g_rowsApplied = 0;
 
 // The hit's parameters, per function (one generator class, so one resolve).
@@ -462,6 +466,7 @@ void ClientReconcile() {
         return;
     }
     g_rowsWaiting = false;
+    g_applying = true;
     bool panelVerbs = false;
     const size_t n = std::min({gens.size(), static_cast<size_t>(g_rows.count),
                                static_cast<size_t>(kPowerGridGenerators)});
@@ -500,6 +505,7 @@ void ClientReconcile() {
     if (panelVerbs) coop::power_panel::ReassertCanonical();
     // The puzzles last: the verbs above may have solved one (fullFix), and the host's is the one it holds.
     coop::power_puzzle::Reconcile(gens);
+    g_applying = false;
     ++g_rowsApplied;
 }
 
@@ -556,7 +562,7 @@ sg::Verdict OnUpdPre(const sg::Call& call) {
 sg::Verdict OnUpdUpgradesPre(const sg::Call& call) {
     RecordVerb(kVerbUpdUpgrades, call.function);
     auto* s = Connected();
-    if (!IsClient(s) || call.fromOurCode || !g_haveRows) return sg::Verdict::Run;
+    if (!IsClient(s) || g_applying || !g_haveRows) return sg::Verdict::Run;
     if (!call.object || !coop::net_pump::IsInAnnouncedWorld(call.object)) return sg::Verdict::Run;
     const int32_t idx = GEN::IndexOf(call.object);
     GEN::Row r{};
