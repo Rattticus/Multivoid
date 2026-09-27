@@ -434,6 +434,13 @@ CFG_STRING(desk_ping_drill, "desk_ping_drill", "dev", "", "VOTVCOOP_DESK_PING_DR
     "catch is on its profile and desk, and the busy verdict came back refused; the host that it rolled two, caught "
     "the second without counting it as its own, relayed it as the client's, and refused the third. Lines tagged "
     "[DESK-PING-DRILL]; 'client DONE PASS|FAIL' ends it; ABANDONED is a step that could not run.")
+CFG_STRING(download_drill, "download_drill", "dev", "", "VOTVCOOP_DOWNLOAD_DRILL", false,
+    "Drill (BOTH peers): the host arms and resets its download five times; the client must replay each once with the "
+    "host's values (formDownload's body once an arm, one reset line a reset, the reset clean) and have its own "
+    "arm and reset refused. run -- once a client is in its world; join (with --rejoin and --rejoin-marker "
+    "'[DOWNLOAD-DRILL] client LIFE 1 DONE') -- an arm while the client's first life is in, then in the rejoiner's "
+    "window a reset, a second catch and its arm, which it must end armed on. Lines tagged [DOWNLOAD-DRILL]; the "
+    "client's DONE line ends it.")
 CFG_STRING(grid_drill, "grid_drill", "dev", "", "VOTVCOOP_GRID_DRILL", false,
     "Drill (BOTH peers): the power grid, arm by arm. run: the client presses the panel's light lever, the host "
     "breaks the drill's generator (the one nearest the panel), the client's Activate press from where it stands is "
