@@ -243,12 +243,14 @@ static std::atomic<bool> g_worldReadyAnnounced{false};
 // host eid). Reset on send and on disconnect.
 static std::atomic<bool> g_reAnnounceWorldReady{false};
 
-// The UWorld last announced against (game thread). A re-seed re-announces only when the UWorld
-// actually swapped: the join's menu-to-game shadow drain is a reap inside the announced world, and
-// treating it as a change would replay the full snapshot and re-adopt NPCs into live mirrors
-// (duplicate kerfurs). A real level travel re-opens untitled_1 as a new UWorld, so it still
-// re-announces. Reset on disconnect.
-static void* g_announcedWorld = nullptr;
+// The UWorld last announced against (game thread), by the reaper's own reader, held as a weak identity.
+// A re-seed re-announces only when the UWorld actually swapped: the join's menu-to-game shadow drain is a
+// reap inside the announced world, and treating it as a change would replay the full snapshot and
+// re-adopt NPCs into live mirrors (duplicate kerfurs). A real level travel re-opens untitled_1 as a new
+// UWorld, so it still re-announces, and it does where the allocator hands the new world the old one's
+// address: the identity (slot and serial) tells them apart, as IsInAnnouncedWorld's does. Reset on
+// disconnect.
+static ue_wrap::CachedObjRef g_announcedWorld;
 
 // The same world, held as a weak identity (its slot and serial), for IsInAnnouncedWorld: a later world
 // is a new object even where the allocator hands it the old one's address. Game thread; stamped from
@@ -261,7 +263,10 @@ static ue_wrap::CachedObjRef g_announcedWorldRef;
 // The announce axis' one owner; registry_reaper only requests through here.
 void MaybeRequestReAnnounce(coop::net::Session& session, void* reapWorld) {
     if (session.role() == coop::net::Role::Host) return;
-    if (reapWorld != g_announcedWorld) {
+    // The same world only when the same address holds the same live object; two nulls, neither reader
+    // naming a world, are the same too.
+    const bool same = reapWorld == g_announcedWorld.Raw() && (!reapWorld || g_announcedWorld.Is(reapWorld));
+    if (!same) {
         g_reAnnounceWorldReady.store(true, std::memory_order_relaxed);
         // The join barrier: the re-announce waits for the new world's load tail as the first
         // announce did; a fresh probe session.
@@ -433,7 +438,7 @@ void Tick(coop::net::Session& session) {
                 // reaper's world gate: the two are compared in MaybeRequestReAnnounce, and
                 // FindObjectByClass answers "a world object exists" (the incoming world, while the
                 // player chain still reads null), not "the world the player is in".
-                g_announcedWorld = ue_wrap::world_identity::CurrentWorld();
+                g_announcedWorld.Set(ue_wrap::world_identity::CurrentWorld());
                 g_announcedWorldRef.Set(ue_wrap::world_identity::WorldOf(localNow));  // fresh this tick
                 // A fresh connect replay is about to arrive: reset the deferred-adoption per-world
                 // state so the new world re-adopts its save NPCs and re-sweeps orphans.
@@ -458,7 +463,7 @@ void Tick(coop::net::Session& session) {
     if (!isConnected) {
         g_worldReadyAnnounced.store(false, std::memory_order_relaxed);   // re-announce next connection
         g_reAnnounceWorldReady.store(false, std::memory_order_relaxed);
-        g_announcedWorld = nullptr;                                      // fresh connection re-stamps
+        g_announcedWorld.Reset();                                        // fresh connection re-stamps
         g_announcedWorldRef.Reset();
     }
 
