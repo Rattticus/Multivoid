@@ -416,6 +416,15 @@ CFG_STRING(drive_drill, "drive_drill", "dev", "", "VOTVCOOP_DRIVE_DRILL", false,
     "reach the host with its row, and its forged row on a drive it did not bring must be refused. "
     "run -- a drive the host spawns once a client is in its world; join -- a drive of the host's world, written "
     "while a joiner loads it. Lines tagged [DRIVE-DRILL]; the host's DONE line ends it.")
+CFG_STRING(tower_drill, "tower_drill", "dev", "", "VOTVCOOP_TOWER_DRILL", false,
+    "Drill (BOTH peers): the coordinate towers. run: once the client stands in its world, the host breaks the "
+    "drill's tower (the one nearest the alpha base) on its own dice and opens its panel; the client presses a "
+    "puzzle button and pulls a blown fuse from where it stands, both refused out of reach and the pulled fuse "
+    "reaped; then the host's player pulls a fuse, inserts one, presses a button, pulls the lever on the unsolved "
+    "puzzle, solves it and pulls the lever again, and the client reads each change applied as the tower's own. "
+    "join: the host breaks the tower as it hosts, and the joiner's tower reads the host's without a roll of its "
+    "own. red, joinred: the controls, a client whose gates stand open and who applies no rows, as before the "
+    "lane. Lines tagged [TOWER-DRILL]; the client's DONE line ends it.")
 CFG_STRING(grid_drill, "grid_drill", "dev", "", "VOTVCOOP_GRID_DRILL", false,
     "Drill (BOTH peers): the power grid, arm by arm. run: the client presses the panel's light lever, the host "
     "breaks the drill's generator (the one nearest the panel), the client's Activate press from where it stands is "

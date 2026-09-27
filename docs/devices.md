@@ -205,6 +205,31 @@ every peer's wipes. Never `setDraw`, `endDraw` or `dirty` from outside: the sess
 window, and an outside `endDraw` deletes the world canvas the game's own next dab draws into
 (`coop/interactables/window_stroke_sync`, `ue_wrap/devices/window_canvas`).
 
+### The coordinate towers
+
+Each of the three coordinate towers can break, and a broken one blocks the ping. A tower's state is
+its broken flag, eight fuses (empty, good or blown) and a lights-out puzzle, and its panel, on a
+platform up the tower's ladder, opens on a montage and carries a lever that runs a timeline. The
+tower rolls its dice in one function, `Scramble Radar Dish`, which blows a good fuse or, with none
+left, scrambles the puzzle and breaks the tower; three callers reach it -- the decay timer the
+generators' saboteur runs, an explosion nearby, and the tower's own load when it was saved broken
+-- and the lever's end judges the puzzle. A client refuses both at the script gate on every route,
+its world's load included, so the host's world is the towers' only author
+(`coop/world/coord_tower_ops`). The host reads its towers each tick and sends every tower's row
+whenever one changes (`coop/world/coord_tower_rows`); a client applies each change as the tower's
+own graph makes it: the painters for the state, `solvePuzzle` for a repair with its success sound,
+`moveLever` for the lever, and its own retract for the panel once its own montage is idle; a press,
+a pull, an insert and a failed lever play their own sounds. The lever's end, refused on a client, is
+what would clear its moving flag, so a client takes that flag from the row. A client's press of a
+puzzle button, the lever or the panel's retract is refused and sent to the host, which runs the
+tower's own use with the look-at answered and then gives its own player's look-at back. A pull or an
+insert moves a fuse into or out of the player's own hand, so the client's own game makes it and
+claims the slot. The host takes a pull when its copy has the panel open, the lever at rest and that
+fuse blown, and an insert when the slot is empty and the host saw that player spend a good fuse at
+the tower; it refuses one otherwise, answering in the rows, and a refused pull's fuse is taken back
+out of the puller's hand, a refused insert's fuse given back where the player stands. Every act is
+judged within reach of the part it acts on, in the player's order, at a few a second.
+
 ### The drone
 
 The delivery drone is one host-simulated actor: its flight is a fragile per-tick integrator not
@@ -392,6 +417,7 @@ own re-take is touched and an ejecting peer behaves exactly as it does in single
 | a light switch, a lid, the garage, an appliance, an oven's repair, a locker | any peer | symmetric state edges, relayed |
 | the power panel, the generators | the host | a client's press, repair, service, upgrade install and hit are ops the host takes from a player within reach; the host sends the breakers after its panel's apply and every generator's row after its verbs |
 | a keypad | the host | its verbs replayed on every client and its settled state after each chain; a client's own entries are an intent the host runs |
+| the coordinate towers | the host | a row per tower whenever one changes; a client's presses are intents the host runs, its fuse pulls and inserts claims the host takes or refuses |
 | the turbine | the host | six floats a second |
 | a window, the grime | any peer, minimum wins | monotone decreases |
 | the drone | the host | a transform stream; the client's tick suppressed |
@@ -412,6 +438,7 @@ own re-take is touched and an ejecting peer behaves exactly as it does in single
 | `KeypadIntent` | a client to the host | a keypad's key and the entry: a digit, a submit, a cancel, a keycard's verdict, a reset |
 | `PowerControlState` | a client to the host; the host to all | the breakers a press flipped; the breakers, the lockout, a lever's click and each slot's last press taken |
 | `PowerGridState` | the host to all; a client to the host | every generator's row and each slot's last op taken; a repair, a service, an upgrade install or a hit |
+| `CoordTowerState` | the host to all; a client to the host | every tower's row (broken, fuses, puzzle, panel, lever), each slot's last op taken and last claim refused; a press of a puzzle button, the lever or the retract, a fuse pulled or inserted |
 | `TurbineState`, `WindowCleanState`, `GrimeState` | each peer or the host | the driver floats; a decrease |
 | `DroneState` | the host to all | the drone's transform and flags |
 | `DroneFlyIntent` | a client to the host | the face pressed, the keyboard; the host finds the console by the sender's reach |
@@ -432,6 +459,10 @@ the joiner loaded; an oven's repair is in that save, and the snapshot says it ag
 drone's pose are sent the same way, and the balance is sent at connect. The delivery queue goes to a
 joiner as a reset and then every queued order, and the joiner ignores the queue's changes until that
 reset arrives.
+
+The coordinate towers go to a joiner at the same edge, every tower's row. Its own world's load
+would have scrambled again any tower that was saved broken; that roll is refused, so the row is the
+state it shows, and the first rows a world takes play no sound.
 
 Every device's floppy slot goes to a joiner at the same edge, an empty one as much as a full one:
 the joiner's world came from the host's save file, which coop stops the game refreshing, so it knows
@@ -462,9 +493,10 @@ an error line.
 | the engine and the adapters | `coop/interactables/interactable_channel.h`, `coop/interactables/interactable_sync`, `coop/interactables/door_verb_intent`, `coop/interactables/door_state_verbs`, `coop/interactables/toggle_verbs`, `coop/interactables/verb_lanes`, `ue_wrap/devices/door`, `ue_wrap/devices/door_box`, `ue_wrap/devices/lightswitch`, `ue_wrap/devices/garage`, `ue_wrap/devices/appliance` |
 | keypads | `coop/interactables/keypad_sync`, `ue_wrap/devices/passwordlock` |
 | power, turbine, windows, grime | `coop/world/power_panel`, `coop/world/power_grid`, `ue_wrap/devices/generator`, `coop/interactables/turbine_sync`, `coop/interactables/window_sync`, `coop/interactables/grime_sync`, `ue_wrap/devices/power_control`, `ue_wrap/devices/windturbine`, `ue_wrap/devices/base_window`, `ue_wrap/devices/grime` |
+| the coordinate towers | `coop/world/coord_tower_rows`, `coop/world/coord_tower_ops`, `ue_wrap/desk/coord_tower` |
 | the drone | `coop/interactables/drone_sync`, `coop/interactables/drone_call_intent`, `ue_wrap/devices/drone`, `ue_wrap/devices/drone_console` |
 | the floppy slot | `coop/interactables/floppy_slot_sync`, `ue_wrap/devices/floppy_slot`, `ue_wrap/devices/serverbox`, `ue_wrap/devices/laptop` |
 | the inbox | `coop/world/email_sync`, `ue_wrap/world/email`, `coop/session/join_seed` |
 | the economy | `coop/world/balance_sync`, `coop/items/order_sync`, `coop/items/coingun_sync`, `coop/interactables/upgrade_sync`, `ue_wrap/world/economy`, `ue_wrap/world/order_economy`, `ue_wrap/world/store_catalog`, `ue_wrap/world/upgrades` |
 | identity | `coop/element/portable_identity` |
-| tests and probes | `coop/dev/order_selftest`, `coop/dev/container_selftest`, `coop/dev/door_drill`, `coop/dev/lightswitch_probe`, `coop/dev/drone_probe`, `coop/dev/drone_call_drill`, `coop/dev/light_group_census`, `coop/dev/floppy_selftest` |
+| tests and probes | `coop/dev/order_selftest`, `coop/dev/container_selftest`, `coop/dev/door_drill`, `coop/dev/lightswitch_probe`, `coop/dev/drone_probe`, `coop/dev/drone_call_drill`, `coop/dev/light_group_census`, `coop/dev/floppy_selftest`, `coop/dev/tower_drill` |

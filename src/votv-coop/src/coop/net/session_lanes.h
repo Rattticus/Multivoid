@@ -145,6 +145,9 @@ inline Lane LaneForKind(ReliableKind k) {
     // Not relayable: a press goes to the host alone, and the host authors the canonical and the rows.
     case ReliableKind::PowerControlState:  return Lane::Normal;
     case ReliableKind::PowerGridState:     return Lane::Normal;
+    // The towers' rows and a client's ops share a lane: one client's presses and claims reach the host in the
+    // order it made them. Not relayable: an op goes to the host alone, and the host authors the rows.
+    case ReliableKind::CoordTowerState:    return Lane::Normal;
     // The drive chain keeps its order on one lane: a slot line, the drive rows and a rack pair; a joiner's seed
     // sends them in that order.
     case ReliableKind::DriveSlotState: return Lane::Normal;
