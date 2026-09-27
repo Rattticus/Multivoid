@@ -1,6 +1,6 @@
-// coop/interactables/drive_sync.h -- the drive-chain lanes: DriveSlotState, the per-slot FSM state
-// lines, and DrivePayload, the prop_drive row contents. RackState lives in drive_rack_sync; this
-// module keeps ALL the verb watches and forwards rack marks to it.
+// coop/interactables/drive_sync.h -- the drive chain's slot lane: DriveSlotState, the per-slot FSM state
+// lines. RackState lives in drive_rack_sync and a drive's row in drive_payload_sync; this module keeps
+// the slot and rack verb watches and forwards rack marks to drive_rack_sync.
 //
 // The design's slotted latch is SATISFIED BY the existing frozen/static pose gate in
 // remote_prop.cpp: a slotted drive is frozen by putDriveIn on every peer, so straggler poses are
@@ -20,7 +20,7 @@ namespace coop::drive_sync {
 void Install(coop::net::Session* session);
 
 // Per net-pump tick: verb-name resolution, the dirty-mark barrier drain,
-// the 1 Hz sweeps, pending-apply retries, the connect broadcast queue.
+// the 1 Hz slot sweep, pending-apply retries.
 void Tick();
 
 // Router entries (event_dispatch_signal.cpp).
@@ -30,31 +30,22 @@ void Tick();
 // receiver-side overlap SELF-SIMULATES inserts and never ejects, then pre-checks and applies --
 // reflected putDriveIn or drivePulledOut, plus the deterministic eject-latch completion. The HOST
 // is canonical on conflict and on the connect seed.
-//
-// DrivePayload carries prop_drive.data_0 rows: {u32 eid} plus the signal_wire codec without the
-// image, in BlobChunkPayload chunks. Verb dirty-marks and a 1 Hz diff-gated baseline poll drive it,
-// and birth authors broadcast at adoption.
 void OnDriveSlotState(const coop::net::DriveSlotStatePayload& p, uint8_t senderSlot);
-void OnDrivePayloadChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot);
 
-// HOST: queue the connect seed -- slot lines and drive payloads, with the rack canonicals riding
+// HOST: whether a slot line for `role` naming `driveEid` waits here for its drive to bind. Game thread.
+bool HasPendingLine(int role, uint32_t driveEid);
+
+// The slot lines this peer announced this session: a caller that must follow its own insert onto the wire waits for
+// it to rise. Game thread.
+uint64_t AnnouncedCount();
+
+// HOST: queue the connect seed -- slot lines, with the drive rows and the rack canonicals riding
 // drive_rack_sync's seed right after -- for a peer that just reached world-ready.
 void QueueConnectBroadcastForSlot(int peerSlot);
 
-// A slot-only birth reap does not work for drives: one shared class, no byte discriminator, and
-// false positives on multi-take play. The reap is CONTENT-correlated instead -- a denied take's
-// ghost identifies itself by its adoption payload's row hash, and drive_sync reaps it there.
-
-// CLIENT (prop_drop_intent, the freshBirth drain): note that `actor` is a LOCALLY-AUTHORED drive
-// birth, so its payload broadcasts at adoption, on first eid sight. Without the note a client's
-// first sight stays prime-only, and a joiner's save-loaded drives -- which materialize AFTER the
-// connect prime -- would be re-authored: the joiner re-broadcasts the host's own connect-seed rows
-// plus any unmatched-eid strays.
-void NoteLocalDriveBirth(void* actor);
-
-// Full teardown (the OnDisconnect fanout) -- clears slot/payload baselines,
-// dirty marks, pending applies, noted births; the deny/taken rings are
-// drive_rack_sync's (its own OnDisconnect). Re-run implicitly at next start.
+// Full teardown (the OnDisconnect fanout) -- clears the slot baselines,
+// dirty marks, pending applies; the deny/taken rings are drive_rack_sync's
+// (its own OnDisconnect). Re-run implicitly at next start.
 void OnDisconnect();
 
 }  // namespace coop::drive_sync

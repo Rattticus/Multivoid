@@ -26,6 +26,8 @@
 #include "coop/props/trash_use_intercept.h"
 #include "coop/props/trash_morph_gate.h"  // the client-side refusal of the trash morph verbs
 #include "coop/props/prop_wire_parity.h"  // PhysFlagsOf, the one flag builder
+#include "coop/interactables/drive_payload_sync.h"
+#include "ue_wrap/desk/drive_chain.h"
 #include "ue_wrap/actors/broom.h"         // SweptChipPile, the pile a stroke's clump is born of
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/core/game_thread.h"     // RegisterPreObserver (the InpActEvt_use pile-grab observer)
@@ -310,6 +312,10 @@ bool EnsureHeldItemBroadcast(void* heldActor, coop::net::Session* s) {
     // The Prop Element shadow and the dedupe latch, so the item's eventual destroy unwinds through
     // the normal path.
     PT::MarkProcessedInit(heldActor);
+    // A data drive expressed here, keyed and untracked, has its row only in this copy: noted before its enrolment,
+    // which sends it to the host. The game's drops spawn a new actor, which the drop-intent drain carries instead.
+    if (ue_wrap::drive_chain::IsDriveClass(ue_wrap::reflection::ClassOf(heldActor)))
+        coop::drive_payload_sync::NoteOwnDrive(heldActor);
     PT::MarkPropElement(heldActor, keyStr, cls, PT::EnrollSource::kExpressSeam);
 
     coop::net::PropSpawnPayload p{};

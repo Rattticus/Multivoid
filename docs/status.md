@@ -66,7 +66,7 @@ host validates and commits contested writes), `local` (never shared).
 | Signal catch | the catch as an intent the host replays | presser and host | seed | tested |
 | Download and decode simulation | the host-run simulation's outputs | host | adopt | works, one known break |
 | Playback deck | the play and stop edges | presser | none | tested |
-| Drives and racks, physical modules, tapes, floppy box | slot and payload lanes with compare-and-swap at the host | arbiter | seed from the host's canon | built |
+| Drives and racks, physical modules, tapes, floppy box | slot and rack lanes with compare-and-swap at the host; a drive's row the host's, a client's copy put back, a client's new drive's row sent to the host; the eraser's delete run by the host | arbiter | seed from the host's canon | built |
 | Laptop | power, floppies and discs, the shared file buffer | presser; the buffer is arbitrated | seed | built; the buffer tested |
 | Meadow database, saved signals | the signal database as a merge of both peers' saves | presser and host | seed | tested |
 | Server boxes | the signal-server simulation state and its notices | host | snapshot | built |

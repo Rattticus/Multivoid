@@ -24,6 +24,7 @@
 #include "coop/props/unresolved_pose_ledger.h"  // a pose-before-spawn race vs a sustained identity gap
 #include "coop/element/identity_create.h"  // CreateOrAdoptPropMirror, the prop-mirror bind
 #include "coop/props/trash_channel.h"  // the per-eid sync-time context; stale carry and release drops
+#include "coop/interactables/drive_payload_sync.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/core/fname_utils.h"
@@ -595,8 +596,10 @@ void RegisterPropMirror(coop::element::ElementId eid,
     // A pile bound after its look arrived takes the look here (coop/props/pile_look.h) -- when the
     // bind took: the create path can refuse one (a steal across rows, a 1:1 conflict, the host
     // authority wall), and then `actor` is not this eid's and must not wear its look.
-    if (auto* row = coop::element::Registry::Get().Get(eid); row && row->GetActor() == actor)
+    if (auto* row = coop::element::Registry::Get().Get(eid); row && row->GetActor() == actor) {
         coop::pile_look::OnBound(static_cast<uint32_t>(eid), actor);
+        coop::drive_payload_sync::OnBound(static_cast<uint32_t>(eid), actor, senderSlot);  // a data drive's row, by its author
+    }
 }
 
 // The eid bound to `actor` among the Prop elements: the mirror-side fallback the chipPile grab

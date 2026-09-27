@@ -14,7 +14,8 @@
 #include "coop/interactables/deck_play_sync.h"  // deck playback lane
 #include "coop/interactables/physmods_sync.h"  // desk physical-modules lane
 #include "coop/items/order_queue_sync.h"  // the delivery order queue, the host's, mirrored
-#include "coop/interactables/drive_sync.h"  // drive chain (slots + payloads)
+#include "coop/interactables/drive_payload_sync.h"  // a drive's row, the host's
+#include "coop/interactables/drive_sync.h"  // the drive slots
 #include "coop/interactables/drive_rack_sync.h"  // rack storage
 #include "coop/interactables/meadow_db_sync.h"  // meadow signal-DB mirror (multiset shadow + join seed)
 #include "coop/interactables/desk_snd_fx.h"
@@ -225,7 +226,8 @@ void Install(coop::net::Session& session) {
     coop::desk_snd_fx::Install(&session);  // desk audio-effect mirror (Func-patch audio seam)
     coop::deck_play_sync::Install(&session);  // deck playback edge mirror (audio-seam Activate/Deactivate + gen guard)
     coop::physmods_sync::Install(&session);  // physMods slot ops at the desk's verbs + host-canonical array
-    coop::drive_sync::Install(&session);  // drive-chain lanes (verb dirty-marks + sweeps; owns ALL chain verb watches)
+    coop::drive_sync::Install(&session);  // the drive chain's slot lane (verb dirty-marks + the slot sweep; the slot and rack verb watches)
+    coop::drive_payload_sync::Install(&session);  // a drive's row: the host authors it at prop_drive_C::upd
     coop::drive_rack_sync::Install(&session);  // rack storage lane (marks forwarded from drive_sync)
     coop::desk_sim_sync::Install(&session);  // download-SIM host-authoritative output stream (decoded/needle/rate/frData/poData/offsets; client overwrites)
     coop::dish_sync::Install(&session);  // host-auth dish pose mirror + host-polarity ARM edge (client sim parked)
@@ -325,7 +327,8 @@ void ConnectReplayForSlot(int slot) {
     coop::desk_input_sync::SeedPingAttributionFromMachine();  // a SOLO host's ping edge is absorbed unwired (PollOnce gated on connected) -- re-derive from ground truth so a mid-ping joiner gets the FSM-hold
     coop::desk_snd_fx::QueueConnectBroadcastForSlot(slot);  // desk loop-sound ground truth (a mid-loop joiner gets the ON)
     coop::physmods_sync::QueueConnectBroadcastForSlot(slot);  // canonical module array (ground truth over save drift)
-    coop::drive_sync::QueueConnectBroadcastForSlot(slot);  // slot lines + drive payloads
+    coop::drive_sync::QueueConnectBroadcastForSlot(slot);  // slot lines
+    coop::drive_payload_sync::QueueConnectBroadcastForSlot(slot);  // every drive row that differs from its class default
     coop::drive_rack_sync::QueueConnectBroadcastForSlot(slot);  // rack canonicals (AFTER the payloads -- the shipped seed order on the one pinned lane)
     coop::meadow_db_sync::QueueConnectBroadcastForSlot(slot);  // the seedDelta(h) join seed (blob-instant snapshot vs live)
     coop::signal_sync::QueueConnectBroadcastForSlot(slot);  // the join-window saved-signal seed, both signs
@@ -422,6 +425,7 @@ void DisconnectSlot(coop::net::Session& session, int slot) {
     coop::verb_lanes::OnPeerLeft(static_cast<uint8_t>(slot));  // and its console presses, door verbs, keypad entries
     coop::kerfus_lanes::OnPeerLeft(static_cast<uint8_t>(slot));  // and its Kerfus verbs
     coop::dish_calib_sync::OnPeerLeft(static_cast<uint8_t>(slot));  // and its precision-intent budget
+    coop::drive_payload_sync::OnPeerLeft(static_cast<uint8_t>(slot));  // and its drive rows in assembly, parked or owed
     coop::wisp_grab_hold::OnPeerLeft(static_cast<uint8_t>(slot));  // drop the leaver's grab-window puppet hold
     coop::remote_prop::OnDisconnectForSlot(slot);
     coop::item_activate::OnDisconnectForSlot(slot);
@@ -527,7 +531,8 @@ DisconnectStats DisconnectAll() {
     coop::desk_snd_fx::OnDisconnect();
     coop::deck_play_sync::OnDisconnect();  // gen counters + ring + self-test latch
     coop::physmods_sync::OnDisconnect();  // verb snapshots + parked canonical + deny records
-    coop::drive_sync::OnDisconnect();  // slot/payload baselines + latch/dirty state + pending
+    coop::drive_sync::OnDisconnect();  // slot baselines + latch/dirty state + pending
+    coop::drive_payload_sync::OnDisconnect();  // held and sent rows, parked rows, notes
     coop::drive_rack_sync::OnDisconnect();  // rack baselines/shadow + pending + deny/taken rings
     coop::sleep_sync::OnDisconnect();
     coop::wisp_attack_sync::OnDisconnect();  // clear damage-cancel latch + handled-wisp edges + pending despawns
@@ -636,7 +641,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:desk_snd"}; coop::desk_snd_fx::Tick(); }  // audio-seam ring flush + lazy hook install + pending loop retry
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:deck_play"}; coop::deck_play_sync::Tick(); }  // deck playback ring flush + lazy Deactivate/fin seam install + gen author
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:physmods"}; coop::physmods_sync::Tick(); }  // parked-canonical apply at desk resolve
-    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:drive"}; coop::drive_sync::Tick(); }  // barrier drain + 1 Hz drive-chain sweeps
+    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:drive"}; coop::drive_sync::Tick(); coop::drive_payload_sync::Tick(); }  // the slot lane's drain and sweep; the rows' enrolments and parked retries
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:drive_rack"}; coop::drive_rack_sync::Tick(); }  // rack barrier drain + 1 Hz sweep
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:email"}; coop::email_sync::Tick(); }  // email shadow poll (1 Hz; appends -> chunked broadcast, shrinks -> content-keyed deletes)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:signal"}; coop::signal_sync::Tick(); }  // saved-signals shadow poll (same shape on gamemode.savedSignals_0)

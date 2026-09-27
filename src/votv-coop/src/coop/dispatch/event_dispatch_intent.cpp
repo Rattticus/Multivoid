@@ -20,6 +20,7 @@
 #include "coop/interactables/door_verb_intent.h"  // CLIENT->HOST press, hit or pry of a base door
 #include "coop/interactables/keypad_verbs.h"  // CLIENT->HOST digit, submit, cancel, keycard, reset
 #include "coop/interactables/drone_call_intent.h"  // CLIENT->HOST press of the drone console
+#include "coop/interactables/eraser_press_intent.h"  // CLIENT->HOST press of the drive eraser; HOST->CLIENT its show
 #include "coop/creatures/kerfus_intent.h"  // CLIENT->HOST a Kerfus verb (on/off, fix the servers, pat)
 #include "coop/interactables/desk_verb_intent.h"  // a press on the main desk's save family, and its answers
 #include "coop/items/coingun_sync.h"
@@ -373,6 +374,23 @@ bool HandleIntentEvent(net::Session& session,
                 static_cast<unsigned>(p.targetKind), static_cast<unsigned>(p.toolKind));
         coop::pack_trash_intent::OnPackTrashIntent(session, p,
                                                    static_cast<uint8_t>(msg.senderPeerSlot));
+        break;
+    }
+    case net::ReliableKind::EraserPressIntent: {
+        // CLIENT->HOST: a client pressed the drive eraser's delete button; the host tests the sender's reach, waits for
+        // its slot to hold the named drive and presses it. HOST->CLIENT: what the host's eraser did, for this peer's
+        // eraser to show (coop::eraser_press_intent::OnEraserPressIntent).
+        const bool fromClient = session.role() == net::Role::Host && msg.senderPeerSlot >= 1 &&
+                                msg.senderPeerSlot < net::kMaxPeers;
+        const bool fromHost = session.role() == net::Role::Client && msg.senderPeerSlot == 0;
+        if ((!fromClient && !fromHost) || msg.payloadLen < sizeof(net::EraserPressIntentPayload)) {
+            UE_LOGW("event_feed: EraserPressIntent dropped (role, sender slot %d or length %zu)", msg.senderPeerSlot,
+                    static_cast<size_t>(msg.payloadLen));
+            break;
+        }
+        net::EraserPressIntentPayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        coop::eraser_press_intent::OnEraserPressIntent(session, p, static_cast<uint8_t>(msg.senderPeerSlot));
         break;
     }
     case net::ReliableKind::DroneFlyIntent: {

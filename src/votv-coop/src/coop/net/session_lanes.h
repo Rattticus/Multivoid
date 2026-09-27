@@ -145,10 +145,13 @@ inline Lane LaneForKind(ReliableKind k) {
     // Not relayable: a press goes to the host alone, and the host authors the canonical and the rows.
     case ReliableKind::PowerControlState:  return Lane::Normal;
     case ReliableKind::PowerGridState:     return Lane::Normal;
-    // The drive-chain trio assumes in-lane order between a slot line, the payload row it references
-    // and a rack pair; pinned together.
+    // The drive chain keeps its order on one lane: a slot line, the drive rows and a rack pair; a joiner's seed
+    // sends them in that order.
     case ReliableKind::DriveSlotState: return Lane::Normal;
     case ReliableKind::DrivePayload:   return Lane::Normal;
+    // An eraser press follows its presser's insert on this lane; the host waits only while that insert's line
+    // waits for its drive.
+    case ReliableKind::EraserPressIntent: return Lane::Normal;
     case ReliableKind::RackState:      return Lane::Normal;
     // MeadowAppend and MeadowDelete share one lane: the join seed's no-reorder argument assumes one
     // FIFO stream per connection.
@@ -245,10 +248,10 @@ inline bool IsClientRelayableReliableKind(ReliableKind k) {
     case ReliableKind::DeskSndFx:         // presser-authored
     case ReliableKind::PlayDeckEvent:     // presser-authored; any peer may stop
     case ReliableKind::DriveSlotState:    // any-peer idempotent state; the host is canonical on conflict
-    case ReliableKind::DrivePayload:      // writer-authored rows
     case ReliableKind::DishAimState:      // claim-owner-authoritative
     // KeypadState is not relayable: the host authors it, and a client's own keypad entries reach the
-    // host as KeypadIntent.
+    // host as KeypadIntent. DrivePayload is not relayable either: the host authors a drive's row, and a
+    // client's rows are its own drives' and go to the host alone.
     case ReliableKind::WindowCleanState:  // symmetric
     case ReliableKind::WindowStroke:      // presser-authored
     case ReliableKind::GrimeState:        // symmetric

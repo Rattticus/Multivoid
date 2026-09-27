@@ -112,8 +112,15 @@ mirror that paints what nothing native repaints (`coop/interactables/comp_sync`)
 
 ### Drives, racks, modules, tapes, the laptop, the database
 
-The drive chain is idempotent per-slot state lines any peer announces and the host canonicalises,
-with the drive's payload as content rows the host stores (`coop/interactables/drive_sync`); the
+The drive chain is idempotent per-slot state lines any peer announces and the host canonicalises
+(`coop/interactables/drive_sync`); a drive's recorded row is the host's: it goes out when the drive's
+own `upd` runs on the host, a client puts back any other row its copy of a drive takes once it holds
+the host's row for it, and a drive a client brings into the world (a birth, a re-placement from its
+inventory, a container or its hand, one it holds that the host never saw) sends its row to the host,
+which takes that one row from that client and answers any other client row with its own
+(`coop/interactables/drive_payload_sync`);
+the eraser's delete, pressed on a client, runs on the host, and every press and wipe of the host's
+eraser shows on each client's own eraser (`coop/interactables/eraser_press_intent`); the
 rack is presser index-operations the host terminates, a full canonical array back, and a deny
 ring for races (`coop/interactables/drive_rack_sync`). A slot freezes the drive it takes, and only a
 grab takes one out -- the drive ejects itself, and the grab unfreezes it -- so a peer applying
@@ -177,6 +184,8 @@ not built. The ATV's physical modules are on [vehicles.md](vehicles.md).
 | playback | the presser; anyone may stop | edge events |
 | the refiner | the one machine whose decode latched | a state stream |
 | drives, racks, modules, the crate, the file buffer | the host, canonical | any peer's operations, the host's array back |
+| a drive's recorded row | the host | sent at the drive's own `upd`; a client's new drive's first row, from the client that brought it |
+| the eraser's delete | the host | a client's press as an intent; the host's press and wipe shown on every client's eraser |
 | the tape accrual | each peer, host-corrected | a one-hertz re-snap |
 | the servers | the host | state driven into each box |
 | a SAT console command that rests on the world | the host, on a terminal kept for its typist | the typed line up; the printed lines and the busy state back |
@@ -195,7 +204,9 @@ not built. The ATV's physical modules are on [vehicles.md](vehicles.md).
 | `DishCalibIntent` | a client to the host | the dishes whose precision the client's player just set with the toolgun's calibration tool or the uncalibrator |
 | `SavedSignalAppend`, `SavedSignalDelete`, `MeadowAppend`, `MeadowDelete`, `MeadowOrder` | any peer, relayed; order from the host | list rows by content hash; the database's order |
 | `PlayDeckEvent`, `CompState`, `CompData` | the presser; the simulator | playback edges; the refiner's state and its loaded signal |
-| `DriveSlotState`, `DrivePayload`, `RackState`, `PhysModsState`, `FloppyBoxState` | any peer to the host; the host canonical | slot lines; payload rows; rack operations and arrays; the module set; the crate stack |
+| `DriveSlotState`, `RackState`, `PhysModsState`, `FloppyBoxState` | any peer to the host; the host canonical | slot lines; rack operations and arrays; the module set; the crate stack |
+| `DrivePayload` | the host to all and to a joiner; a client to the host; the host to that client | a drive's row; a client's own new drive's row; the host's own row, answering a client row it refused |
+| `EraserPressIntent` | a client to the host; the host to all, or to a presser | the eraser's delete, with the drive the presser saw seated; what the host's eraser did, for each client's eraser to show; a press the host refused |
 | `ReelSlot`, `ReelPose` (stream), `ReelEjectIntent` | the presser; the host; a client | slot edges; the corrector; a reel birth |
 | `LaptopState`, `LaptopBlob`, `LaptopQuad` | the presser and the host | power and floppy edges; content streams; the file buffer |
 | `ServerState` | the host to all | the servers' broken set |
@@ -206,13 +217,15 @@ not built. The ATV's physical modules are on [vehicles.md](vehicles.md).
 The occupancy table, the sky-signal set, the desk scalars, the simulation vector and the dish
 snapshot with any armed download are sent at the joiner's ready edge, after the desk rows so a
 dependency is never applied before its base; the deck list, the database and the emails are
-seeded as deltas against the blob instant; every drive slot and payload, the rack, the module set,
+seeded as deltas against the blob instant; every drive slot, every drive row that differs from its
+class default (a row that arrives before its drive waits for it through the join), the rack, the module set,
 the reel slots, the laptop's power and content and the crate arrive as canonical rows from the
 host; the desk's two loops are re-sent from component truth. A joiner never sees a running ping's
 stage visuals, only its outcome. A SAT console typist that leaves mid-command while another client
 keeps the session leaves the command running on the host and, back, is bound to its terminal and its
 busy state as its world is ready; the last client's leave ends the session, and every such terminal
-is discarded with it, its command stopping there. The upgrade levels arrive with the save and never again.
+is discarded with it, its command stopping there. An eraser press's show lasts its 3 s and is not replayed;
+its wipe arrives as the drive's row. The upgrade levels arrive with the save and never again.
 
 ## Known limits
 
@@ -223,6 +236,7 @@ is discarded with it, its command stopping there. The upgrade levels arrive with
 | The desk cursor has degraded to a few frames per second mid-session; two mechanisms were removed, and a warning names an occupancy flap if it recurs | `[?]` `coop/interactables/desk_cursor_sync`; not reproduced since |
 | A refiner completion fires world triggers on the one simulating machine only; other peers mirror the state | `[V]` `coop/interactables/comp_sync`, by design of the single simulator |
 | The red phone's ring is per-peer randomness with no lane | `[V]` no lane exists |
+| A client's own write to a drive whose row is still its class default is neither put back nor sent; no client-side writer of such a drive exists in the game (every writer is a verb the host runs, or a drive the client brings in) | `[RD]` the writer census of `prop_drive_C.data_0`; `coop/interactables/drive_payload_sync` |
 | A SAT console command that spawns or destroys a class no lane carries (the rufus, the thiccfus, the llama's soul, the madness, the centipede, the murder kerfur) acts in the host's world only; its typist does not see it | `[V]` no lane exists for those classes |
 | Each player's SAT console screen and log are its own; another player's typing is not shown | `[V]` by design until decided |
 | A client's cheat menu (`uncalib`, `summonvirus`) and a virus its own save starts change only its copy of the dishes' precision, and the copy is put back at its next poll; the virus itself waits on a lane for the desk's `virusEvent` | `[V]` `coop/interactables/dish_calib_sync`; no lane carries `virusEvent` |
@@ -236,7 +250,7 @@ is discarded with it, its command stopping there. The upgrade levels arrive with
 | the desk | `coop/interactables/desk_input_sync`, `coop/interactables/desk_sim_sync`, `coop/interactables/desk_cursor_sync`, `coop/interactables/desk_snd_fx`, `coop/interactables/console_state_sync` |
 | signals, the catch, the dishes | `coop/interactables/signal_sync`, `coop/interactables/signal_wire`, `coop/interactables/signal_catch_sync`, `coop/interactables/dish_sync`, `coop/interactables/dish_calib_sync` |
 | the deck and the refiner | `coop/interactables/deck_play_sync`, `coop/interactables/comp_sync` |
-| drives, racks, modules, tapes | `coop/interactables/drive_sync`, `coop/interactables/drive_rack_sync`, `coop/interactables/physmods_sync`, `coop/interactables/tape_caddy_sync` |
+| drives, racks, modules, tapes | `coop/interactables/drive_sync`, `coop/interactables/drive_payload_sync`, `coop/interactables/eraser_press_intent`, `coop/interactables/drive_rack_sync`, `coop/interactables/physmods_sync`, `coop/interactables/tape_caddy_sync` |
 | the laptop, the crate, the database, the servers | `coop/interactables/laptop_sync`, `coop/interactables/laptop_buffer_sync`, `coop/interactables/floppybox_sync`, `coop/interactables/meadow_db_sync`, `coop/interactables/serverbox_sync` |
 | the SAT console | `coop/interactables/sat_console_sync`, `coop/interactables/sat_console_table` |
 | the engine wrappers | `ue_wrap/desk/` (the dish, the console, the coordinate panel, the refiner pane, the drive chain, the tape caddy, the modules, the saved signals, the database, the audio, the SAT console) |

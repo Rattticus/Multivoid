@@ -22,7 +22,8 @@
 #include "coop/interactables/meadow_db_sync.h"   // MeadowAppend/MeadowDelete
 #include "coop/interactables/physmods_sync.h"    // PhysModsState
 #include "coop/interactables/sat_console_sync.h"  // SatConsole
-#include "coop/interactables/drive_sync.h"       // DriveSlotState/DrivePayload
+#include "coop/interactables/drive_payload_sync.h"  // DrivePayload
+#include "coop/interactables/drive_sync.h"       // DriveSlotState
 #include "coop/interactables/drive_rack_sync.h"  // RackState
 #include "coop/interactables/signal_catch_sync.h"
 #include "coop/interactables/signal_sync.h"
@@ -144,7 +145,7 @@ bool HandleSignalEvent(net::Session& /*session*/,
         break;
     }
     case net::ReliableKind::DrivePayload: {
-        // Chunked drive data_0 rows (writer-authored, host-relayed).
+        // Chunked drive data_0 rows: the host's, and a client's own new drives' to the host (never relayed).
         if (msg.payloadLen < sizeof(net::BlobChunkPayload)) {
             UE_LOGW("event_feed: DrivePayload payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::BlobChunkPayload));
@@ -156,7 +157,7 @@ bool HandleSignalEvent(net::Session& /*session*/,
             (msg.senderPeerSlot >= 0 && msg.senderPeerSlot < net::kMaxPeers)
                 ? static_cast<uint8_t>(msg.senderPeerSlot)
                 : static_cast<uint8_t>(0xFF);
-        coop::drive_sync::OnDrivePayloadChunk(dp, dpslot);
+        coop::drive_payload_sync::OnDrivePayloadChunk(dp, dpslot);
         break;
     }
     case net::ReliableKind::RackState: {

@@ -1,24 +1,19 @@
 // coop/interactables/drive_sync.cpp -- see coop/interactables/drive_sync.h.
 //
-// Two lanes over this module (the rack lane lives in drive_rack_sync):
+// The slot lane (the rack lane lives in drive_rack_sync, a drive's row in drive_payload_sync):
 //   DriveSlotState -- idempotent any-peer slot FSM lines, host canonical.
-//   DrivePayload   -- drive data_0 rows (signal_wire codec, blob chunks).
 // Detection = verb dirty-marks at the script-body gate (capture-only, barrier
-// emission) + 1 Hz diff-gated sweeps. Apply+prime is GT-atomic per lane.
-// This module OWNS the verb watches for the whole drive chain (putDriveIn is
+// emission) + a 1 Hz diff-gated sweep. Apply+prime is GT-atomic.
+// This module OWNS the verb watches for the slot and rack chain (putDriveIn is
 // a shared slot/rack context) and forwards rack marks to
 // drive_rack_sync::MarkDirtyFromVerb().
 
-#include "coop/props/prop_save_data.h"
 #include "coop/interactables/drive_sync.h"
 
 #include "coop/element/registry.h"
 #include "coop/interactables/desk_snd_fx.h"   // ScopedWireApply (the shared desk wire guard)
-#include "coop/interactables/drive_rack_sync.h"  // MarkDirtyFromVerb + TryConsumeDenyReap (owner API)
-#include "coop/interactables/signal_wire.h"
-#include "coop/net/blob_chunks.h"
+#include "coop/interactables/drive_rack_sync.h"  // MarkDirtyFromVerb (owner API)
 #include "coop/net/session.h"
-#include "coop/props/prop_lifecycle.h"        // DestroyLocalProp (deny-ghost teardown)
 #include "coop/props/remote_prop.h"           // EndAnyHoldOn: an insert ends the hold on the drive
 
 #include "ue_wrap/actors/prop.h"  // IsFrozen, CallAwakeUnfreeze: a conflicting drive's eject
@@ -29,8 +24,6 @@
 
 #include <atomic>
 #include <chrono>
-#include <cstring>
-#include <map>
 #include <vector>
 
 namespace coop::drive_sync {
@@ -38,7 +31,6 @@ namespace {
 
 namespace R  = ue_wrap::reflection;
 namespace DC = ue_wrap::drive_chain;
-namespace SD = ue_wrap::signal_dynamic;
 namespace sg = ue_wrap::script_gate;
 using Clock = std::chrono::steady_clock;
 
@@ -47,14 +39,12 @@ std::atomic<coop::net::Session*> g_session{nullptr};
 // ---- the watch tags ----
 constexpr int kVerbPutDriveIn = 1;   // driveSlot OR rack context (ctx discriminates)
 constexpr int kVerbPulledOut  = 2;
-constexpr int kVerbPayload    = 3;   // saveSignal / deleteSignal / comp_uploadData (mark-all)
 constexpr int kVerbRackTake   = 4;   // getDrive
 
 bool g_verbsRegistered = false;
 
 // ---- dirty marks (set in the VM bracket -- relaxed atomics, drained at Tick) ----
 std::atomic<bool> g_slotDirty[DC::kRoleCount] = {};
-std::atomic<bool> g_payloadDirty{false};
 // Eject capture: at drivePulledOut ENTRY slot.drive is STILL SET -- stash the
 // occupant eid so the empty line can name it (the latch completion needs it).
 // EidForActor takes the registry mutex (held microseconds, GT-safe) -- a
@@ -65,22 +55,14 @@ std::atomic<uint32_t> g_lastEjectEid[DC::kRoleCount] = {};
 struct SlotBase { bool known = false; bool occupied = false; uint32_t eid = 0; };
 SlotBase g_slotBase[DC::kRoleCount];
 
-std::map<uint32_t, uint64_t> g_driveBase;   // drive eid -> row blob hash
-
 bool g_primed = false;
 bool g_wasConnected = false;
 
-// ---- wire plumbing ----
-uint32_t g_nextSeq = 1;
-coop::blob_chunks::Assembler g_payloadAsm;
-
 // ---- pending applies (drive actor not resolvable yet -- spawn in flight) ----
 struct Pending {
-    int kind;  // 0=slot line, 1=payload blob
     coop::net::DriveSlotStatePayload slotLine{};
     SlotBase slotAtQueue{};  // the role's baseline when queued -- replay only
                              // if the slot has NOT moved on since
-    std::vector<uint8_t> blob;
     uint8_t senderSlot = 0xFF;
     Clock::time_point until{};
 };
@@ -88,20 +70,13 @@ std::vector<Pending> g_pending;
 constexpr auto kPendingTtl = std::chrono::seconds(10);
 constexpr size_t kPendingCap = 256;  // drop-oldest + WARN past this
 
-// ---- locally-authored drive births (client): the payload broadcasts at
-// adoption ONLY for these; every other first sight is prime-only (a joiner's
-// save-loaded drives are NOT its births).
-struct NotedBirth { void* actor = nullptr; Clock::time_point until{}; };
-std::vector<NotedBirth> g_notedBirths;
-constexpr auto kNotedBirthTtl = std::chrono::seconds(30);
-
 // ---- cadence ----
 Clock::time_point g_nextSweep{};
 Clock::time_point g_nextStats{};
 
 // ---- counters (60 s line -- dead matchers visible) ----
-std::atomic<uint64_t> g_cMarksSlot{0}, g_cMarksPayload{0};
-uint64_t g_cSlotSent = 0, g_cSlotApplied = 0, g_cPayloadSent = 0, g_cPayloadApplied = 0;
+std::atomic<uint64_t> g_cMarksSlot{0};
+uint64_t g_cSlotSent = 0, g_cSlotApplied = 0;
 uint64_t g_cLatchCompleted = 0;
 uint64_t g_cGrabKept = 0;  // this player's grab left alone inside a replayed insert
 
@@ -119,6 +94,19 @@ struct ReplayingInsert {
     ~ReplayingInsert() { g_replayingInsert = outer_; }
     ReplayingInsert(const ReplayingInsert&) = delete;
     ReplayingInsert& operator=(const ReplayingInsert&) = delete;
+private:
+    bool outer_;
+};
+
+// The lane's own apply mirrors a slot by calling the watched verbs; a mark on it would stash a stale eject id and
+// re-announce what was just applied. Scoped to this lane's own calls: another caller of ours, a drill standing in for a
+// player, marks like the game.
+bool g_laneApplying = false;
+struct LaneApply {
+    LaneApply() : outer_(g_laneApplying) { g_laneApplying = true; }
+    ~LaneApply() { g_laneApplying = outer_; }
+    LaneApply(const LaneApply&) = delete;
+    LaneApply& operator=(const LaneApply&) = delete;
 private:
     bool outer_;
 };
@@ -143,38 +131,11 @@ bool IsHost() {
 // promoted canonical resolve idiom).
 using coop::element::LivePropActor;
 
-// All live drive-class props as (eid, actor).
-void SnapshotDrives(std::vector<std::pair<uint32_t, void*>>& out) {
-    out.clear();
-    std::vector<coop::element::Registry::ActorIdPair> pairs;
-    coop::element::Registry::Get().SnapshotActorsByType(coop::element::ElementType::Prop, pairs);
-    for (const auto& p : pairs) {
-        if (!p.actor || !R::IsLiveByIndex(p.actor, p.internalIdx)) continue;
-        if (!DC::IsDriveClass(R::ClassOf(p.actor))) continue;
-        out.emplace_back(static_cast<uint32_t>(p.id), p.actor);
-    }
-}
-
-bool RowIsDefault(const SD::Row& r) {
-    return r.size <= 0.f && r.name.empty() && r.id.empty();
-}
-
-std::vector<uint8_t> PayloadBlob(uint32_t eid, const SD::Row& row) {
-    std::vector<uint8_t> b = coop::signal_wire::Serialize(row, /*adopt*/false);
-    std::vector<uint8_t> out(4 + b.size());
-    std::memcpy(out.data(), &eid, 4);
-    std::memcpy(out.data() + 4, b.data(), b.size());
-    return out;
-}
-
 // --------------------------------------------------------------------------
 // the verb watches (capture-only: relaxed marks + one stashed eid read)
 
 sg::Verdict OnVerbEntry(const sg::Call& b) {
-    // The lane's own apply mirrors a slot by calling these verbs through reflection; the gate
-    // sees that like the game's own call, and a mark on our own apply would stash a stale eject
-    // id and re-announce what was just applied.
-    if (b.fromOurCode) return sg::Verdict::Run;
+    if (g_laneApplying) return sg::Verdict::Run;
     switch (b.tag) {
         case kVerbPutDriveIn: {
             const int role = DC::RoleOfSlotActor(b.object);
@@ -183,7 +144,6 @@ sg::Verdict OnVerbEntry(const sg::Call& b) {
                 g_cMarksSlot.fetch_add(1, std::memory_order_relaxed);
             } else if (DC::IsRackClass(R::ClassOf(b.object))) {
                 coop::drive_rack_sync::MarkDirtyFromVerb();
-                g_payloadDirty.store(true, std::memory_order_relaxed);  // harvest zeroes a drive
             }
             break;
         }
@@ -199,10 +159,6 @@ sg::Verdict OnVerbEntry(const sg::Call& b) {
             }
             break;
         }
-        case kVerbPayload:
-            g_payloadDirty.store(true, std::memory_order_relaxed);
-            g_cMarksPayload.fetch_add(1, std::memory_order_relaxed);
-            break;
         case kVerbRackTake:
             if (DC::IsRackClass(R::ClassOf(b.object)))
                 coop::drive_rack_sync::MarkDirtyFromVerb();
@@ -249,121 +205,6 @@ void OnSlotLine(const coop::net::DriveSlotStatePayload& p, uint8_t senderSlot, b
 void RetryPendingTick();
 
 // --------------------------------------------------------------------------
-// payload lane
-
-void SendPayload(uint32_t eid, const SD::Row& row, int toSlot /* -1 = all */) {
-    auto* s = g_session.load(std::memory_order_acquire);
-    if (!s || !s->connected()) return;
-    std::vector<uint8_t> blob = PayloadBlob(eid, row);
-    const uint32_t seq = g_nextSeq++;
-    if (toSlot < 0)
-        coop::blob_chunks::SendBlob(s, coop::net::ReliableKind::DrivePayload, seq, blob);
-    else
-        coop::blob_chunks::SendBlobToSlot(s, toSlot, coop::net::ReliableKind::DrivePayload, seq, blob);
-    ++g_cPayloadSent;
-}
-
-// Diff-gated sweep over every live drive (1 Hz + on dirty-mark). Emission
-// only on bytes-changed-vs-baseline (a spurious mark provably sends nothing).
-void SweepPayloads(bool announce) {
-    std::vector<std::pair<uint32_t, void*>> drives;
-    SnapshotDrives(drives);
-    for (const auto& [eid, actor] : drives) {
-        SD::Row row;
-        if (!DC::ReadDriveRow(actor, row)) continue;
-        const uint64_t h = coop::blob_chunks::Fnv64(coop::signal_wire::Serialize(row, false));
-        auto it = g_driveBase.find(eid);
-        if (it == g_driveBase.end()) {
-            g_driveBase[eid] = h;
-            // Birth invariant: a NEW eid with a non-default payload broadcasts
-            // ONLY when this peer authored the birth -- the HOST for its
-            // organic world (delivery, host rack-take), a CLIENT only for a
-            // drain-noted local birth (rack take / pocket re-place). A
-            // joiner's save-loaded drives are first-sighted but NOT authored.
-            bool authored = IsHost();
-            if (!authored) {
-                const auto now2 = Clock::now();
-                for (auto& nb : g_notedBirths) {
-                    if (nb.actor == actor && now2 < nb.until) {
-                        authored = true;
-                        nb = NotedBirth{};
-                        break;
-                    }
-                }
-            }
-            if (announce && authored && !RowIsDefault(row)) SendPayload(eid, row, -1);
-            continue;
-        }
-        if (it->second == h) continue;
-        it->second = h;
-        if (announce) SendPayload(eid, row, -1);
-    }
-    // Baseline GC: drop eids no longer live (bounded growth).
-    if (g_driveBase.size() > drives.size() + 64) {
-        std::map<uint32_t, uint64_t> keep;
-        for (const auto& [eid, actor] : drives) {
-            auto it = g_driveBase.find(eid);
-            if (it != g_driveBase.end()) keep[eid] = it->second;
-        }
-        g_driveBase.swap(keep);
-    }
-}
-
-void ApplyPayloadBlob(const std::vector<uint8_t>& blob, uint8_t senderSlot, bool fromPending) {
-    if (blob.size() < 5) return;
-    uint32_t eid = 0;
-    std::memcpy(&eid, blob.data(), 4);
-    void* actor = LivePropActor(eid);
-    if (!actor || !DC::IsDriveClass(R::ClassOf(actor))) {
-        if (!fromPending) {
-            Pending pd;
-            pd.kind = 1;
-            pd.blob = blob;
-            pd.senderSlot = senderSlot;
-            pd.until = Clock::now() + kPendingTtl;
-            if (g_pending.size() >= kPendingCap) {
-                g_pending.erase(g_pending.begin());
-                UE_LOGW("drive_sync: pending cap hit -- oldest dropped");
-            }
-            g_pending.push_back(std::move(pd));
-        }
-        return;
-    }
-    std::vector<uint8_t> rb(blob.begin() + 4, blob.end());
-    SD::Row row;
-    bool adopt = false;
-    if (!coop::signal_wire::Deserialize(rb, row, adopt)) {
-        UE_LOGW("drive_sync: payload blob for eid=%u malformed -- dropped", eid);
-        return;
-    }
-    // The CONTENT-correlated deny reap. A denied rack take's ghost identifies itself here -- its
-    // adoption payload hashes to exactly the row the winning take removed. The VERDICT
-    // (ring+TTL+consume) is drive_rack_sync's, the take-race axis owner; the ACTION stays here.
-    // The host destroys its own copy ECHO-SUPPRESSED, so no PropDestroy goes out and each peer
-    // reaps its own ghost from the same deny op. Exact; a legitimate birth never matches.
-    if (IsHost()) {
-        const uint64_t rh = coop::blob_chunks::Fnv64(coop::signal_wire::Serialize(row, false));
-        if (coop::drive_rack_sync::TryConsumeDenyReap(senderSlot, rh)) {
-            coop::prop_lifecycle::DestroyLocalProp(actor, /*deferred*/true);
-            UE_LOGW("drive_sync: reaped the denied rack-take ghost eid=%u from slot %u "
-                    "(payload hash matched)", eid, senderSlot);
-            return;
-        }
-    }
-    {
-        coop::desk_snd_fx::ScopedWireApply guard;
-        if (!DC::WriteDriveRow(actor, row)) return;
-        DC::CallDriveUpd(actor);
-        SD::Row applied;
-        if (DC::ReadDriveRow(actor, applied))
-            g_driveBase[eid] = coop::blob_chunks::Fnv64(coop::signal_wire::Serialize(applied, false));
-    }
-    ++g_cPayloadApplied;
-    UE_LOGI("drive_sync: payload applied eid=%u (name='%ls' size=%.0f) from slot %u",
-            eid, row.name.c_str(), row.size, senderSlot);
-}
-
-// --------------------------------------------------------------------------
 // slot line apply
 
 void OnSlotLine(const coop::net::DriveSlotStatePayload& p, uint8_t senderSlot, bool fromPending) {
@@ -387,12 +228,11 @@ void OnSlotLine(const coop::net::DriveSlotStatePayload& p, uint8_t senderSlot, b
                 // is stashed so the replay DROPS if the slot moved on --
                 // never resurrect a stale occupant.
                 for (auto it2 = g_pending.begin(); it2 != g_pending.end();) {
-                    if (it2->kind == 0 && it2->slotLine.role == p.role)
+                    if (it2->slotLine.role == p.role)
                         it2 = g_pending.erase(it2);
                     else ++it2;
                 }
                 Pending pd;
-                pd.kind = 0;
                 pd.slotLine = p;
                 pd.slotAtQueue = g_slotBase[p.role];
                 pd.senderSlot = senderSlot;
@@ -414,6 +254,7 @@ void OnSlotLine(const coop::net::DriveSlotStatePayload& p, uint8_t senderSlot, b
                 return;
             }
             coop::desk_snd_fx::ScopedWireApply guard;
+            LaneApply apply;
             DC::CallDrivePulledOut(slot);
             // Or it stays frozen in the port beside the new one. No grab took it out, so no hold of
             // the prop lane will unfreeze it; a drive already free needs nothing.
@@ -427,6 +268,7 @@ void OnSlotLine(const coop::net::DriveSlotStatePayload& p, uint8_t senderSlot, b
             // here, so a pose of it still in flight cannot pull the drive back out of the slot.
             coop::remote_prop::EndAnyHoldOn(drive);
             ReplayingInsert replaying;
+            LaneApply apply;
             DC::CallPutDriveIn(slot, drive);
             g_slotBase[p.role] = {true, true, p.driveEid};
         }
@@ -439,7 +281,7 @@ void OnSlotLine(const coop::net::DriveSlotStatePayload& p, uint8_t senderSlot, b
         // base check at replay would let a stale insert put the drive back in a slot it has left.
         if (!fromPending) {
             for (auto it2 = g_pending.begin(); it2 != g_pending.end();) {
-                if (it2->kind == 0 && it2->slotLine.role == p.role) it2 = g_pending.erase(it2);
+                if (it2->slotLine.role == p.role) it2 = g_pending.erase(it2);
                 else ++it2;
             }
         }
@@ -455,6 +297,7 @@ void OnSlotLine(const coop::net::DriveSlotStatePayload& p, uint8_t senderSlot, b
         bool frozen = false;
         {
             coop::desk_snd_fx::ScopedWireApply guard;
+            LaneApply apply;
             DC::CallDrivePulledOut(slot);
             frozen = ue_wrap::prop::IsFrozen(cur);  // 0 once the hold's first pose has unfrozen it
             DC::CompleteEjectLatch(slot, cur);
@@ -473,35 +316,25 @@ void RetryPendingTick() {
     std::vector<Pending> keep;
     for (auto& pd : g_pending) {
         if (now >= pd.until) {
-            UE_LOGW("drive_sync: pending apply kind=%d expired (actor never resolved)", pd.kind);
+            UE_LOGW("drive_sync: pending slot line role=%u expired (its drive never resolved)", pd.slotLine.role);
             continue;
         }
-        bool done = false;
-        if (pd.kind == 0) {
-            // If the slot's state moved since the line was
-            // queued, the world passed it by -- DROP, never replay stale.
-            const SlotBase& nowB = g_slotBase[pd.slotLine.role];
-            if (nowB.known != pd.slotAtQueue.known ||
-                nowB.occupied != pd.slotAtQueue.occupied ||
-                nowB.eid != pd.slotAtQueue.eid) {
-                UE_LOGW("drive_sync: pending slot line role=%u dropped (slot moved on)",
-                        pd.slotLine.role);
-                continue;
-            }
-            void* drive = LivePropActor(pd.slotLine.driveEid);
-            if (drive || !pd.slotLine.occupied) {
-                OnSlotLine(pd.slotLine, pd.senderSlot, /*fromPending*/true);
-                done = true;
-            }
-        } else if (pd.kind == 1) {
-            uint32_t eid = 0;
-            if (pd.blob.size() >= 4) std::memcpy(&eid, pd.blob.data(), 4);
-            if (LivePropActor(eid)) {
-                ApplyPayloadBlob(pd.blob, pd.senderSlot, /*fromPending*/true);
-                done = true;
-            }
+        // If the slot's state moved since the line was
+        // queued, the world passed it by -- DROP, never replay stale.
+        const SlotBase& nowB = g_slotBase[pd.slotLine.role];
+        if (nowB.known != pd.slotAtQueue.known ||
+            nowB.occupied != pd.slotAtQueue.occupied ||
+            nowB.eid != pd.slotAtQueue.eid) {
+            UE_LOGW("drive_sync: pending slot line role=%u dropped (slot moved on)",
+                    pd.slotLine.role);
+            continue;
         }
-        if (!done) keep.push_back(std::move(pd));
+        void* drive = LivePropActor(pd.slotLine.driveEid);
+        if (drive || !pd.slotLine.occupied) {
+            OnSlotLine(pd.slotLine, pd.senderSlot, /*fromPending*/true);
+            continue;
+        }
+        keep.push_back(std::move(pd));
     }
     g_pending.swap(keep);
 }
@@ -512,8 +345,6 @@ void PrimeAll() {
         g_lastEjectEid[r].store(0, std::memory_order_relaxed);
         ProcessSlot(r, /*announce*/false);
     }
-    g_driveBase.clear();
-    SweepPayloads(/*announce*/false);
 }
 
 }  // namespace
@@ -521,25 +352,19 @@ void PrimeAll() {
 // --------------------------------------------------------------------------
 
 void Install(coop::net::Session* session) {
-    // DrivePayload owns prop_drive's data_0, by eid, with a per-verb dirty mark and a 1 Hz diff
-    // poll. The prop save-record lane must not write the same field from a second address space.
-    coop::prop_save_data::DeclareClassOwnedElsewhere(L"prop_drive_C");
     g_session.store(session, std::memory_order_release);
     if (g_verbsRegistered) return;
     if (!DC::EnsureResolved()) return;
-    // One cb serves all six verb names; the tags discriminate. putDriveIn
+    // One cb serves all three verb names; the tags discriminate. putDriveIn
     // covers BOTH the slot FSM and the rack (the context's class discriminates).
     const bool ok =
         sg::WatchName(L"putDriveIn",      kVerbPutDriveIn, &OnVerbEntry, nullptr) &&
         sg::WatchName(L"drivePulledOut",  kVerbPulledOut,  &OnVerbEntry, nullptr) &&
         sg::WatchName(L"getDrive",        kVerbRackTake,   &OnVerbEntry, nullptr) &&
-        sg::WatchName(L"saveSignal",      kVerbPayload,    &OnVerbEntry, nullptr) &&
-        sg::WatchName(L"deleteSignal",    kVerbPayload,    &OnVerbEntry, nullptr) &&
-        sg::WatchName(L"comp_uploadData", kVerbPayload,    &OnVerbEntry, nullptr) &&
         sg::WatchClassName(L"mainPlayer_C", L"dropGrabObject", kReplayDropTag, &OnDropGrabPre, nullptr);
     if (ok) {
         g_verbsRegistered = true;
-        UE_LOGI("drive_sync: 6 verb watches live (dirty-marks armed at the script-body gate), and the replayed "
+        UE_LOGI("drive_sync: 3 verb watches live (dirty-marks armed at the script-body gate), and the replayed "
                 "insert's grab guard");
     }
 }
@@ -566,40 +391,27 @@ void Tick() {
     for (int r = 0; r < DC::kRoleCount; ++r)
         if (g_slotDirty[r].exchange(false, std::memory_order_relaxed))
             ProcessSlot(r, /*announce*/true);
-    if (g_payloadDirty.exchange(false, std::memory_order_relaxed))
-        SweepPayloads(/*announce*/true);
 
     const auto now = Clock::now();
-    if (now >= g_nextSweep) {  // 1 Hz safety sweeps (matcher gaps: eraser wipe etc.)
+    if (now >= g_nextSweep) {  // the 1 Hz slot sweep
         g_nextSweep = now + std::chrono::seconds(1);
         for (int r = 0; r < DC::kRoleCount; ++r) ProcessSlot(r, /*announce*/true);
-        SweepPayloads(/*announce*/true);
-        g_payloadAsm.Sweep(now, std::chrono::seconds(20));
         RetryPendingTick();
     }
 
     if (now >= g_nextStats) {
         g_nextStats = now + std::chrono::seconds(60);
-        UE_LOGI("drive_sync: 60s marks slot=%llu payload=%llu | sent slot=%llu "
-                "payload=%llu | applied slot=%llu payload=%llu | latchFix=%llu pending=%zu grabKept=%llu",
-                (unsigned long long)g_cMarksSlot.load(std::memory_order_relaxed),
-                (unsigned long long)g_cMarksPayload.load(std::memory_order_relaxed),
-                (unsigned long long)g_cSlotSent, (unsigned long long)g_cPayloadSent,
-                (unsigned long long)g_cSlotApplied, (unsigned long long)g_cPayloadApplied,
-                (unsigned long long)g_cLatchCompleted, g_pending.size(), (unsigned long long)g_cGrabKept);
+        UE_LOGI("drive_sync: 60s marks slot=%llu | sent slot=%llu | applied slot=%llu | latchFix=%llu pending=%zu "
+                "grabKept=%llu",
+                (unsigned long long)g_cMarksSlot.load(std::memory_order_relaxed), (unsigned long long)g_cSlotSent,
+                (unsigned long long)g_cSlotApplied, (unsigned long long)g_cLatchCompleted, g_pending.size(),
+                (unsigned long long)g_cGrabKept);
     }
 }
 
 void OnDriveSlotState(const coop::net::DriveSlotStatePayload& p, uint8_t senderSlot) {
     if (!DC::EnsureResolved()) return;
     OnSlotLine(p, senderSlot, /*fromPending*/false);
-}
-
-void OnDrivePayloadChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) {
-    std::vector<uint8_t> blob;
-    if (!g_payloadAsm.OnChunk(p, senderSlot, blob)) return;
-    if (!DC::EnsureResolved()) return;
-    ApplyPayloadBlob(blob, senderSlot, /*fromPending*/false);
 }
 
 void QueueConnectBroadcastForSlot(int peerSlot) {
@@ -620,31 +432,18 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
             coop::element::Registry::Get().EidForActor(drive)) : 0;
         s->SendReliableToSlot(peerSlot, coop::net::ReliableKind::DriveSlotState, &p, sizeof(p));
     }
-    // Drive payloads (non-default only -- default rows are the CDO the joiner
-    // already has via the save copy / mirror construction).
-    std::vector<std::pair<uint32_t, void*>> drives;
-    SnapshotDrives(drives);
-    int sent = 0;
-    for (const auto& [eid, actor] : drives) {
-        SD::Row row;
-        if (!DC::ReadDriveRow(actor, row) || RowIsDefault(row)) continue;
-        SendPayload(eid, row, peerSlot);
-        ++sent;
-    }
-    // (Rack canonicals ride drive_rack_sync's seed, called right after this
-    // one in subsystems -- the shipped slot-lines -> payloads -> racks order.)
-    UE_LOGI("drive_sync: connect seed -> joiner slot %d (%d of %d slot lines, %d payloads)",
-            peerSlot, lines, DC::kRoleCount, sent);
+    // (The rows ride drive_payload_sync's seed and the rack canonicals drive_rack_sync's, called right after this
+    // one in subsystems -- the slot lines -> rows -> racks order.)
+    UE_LOGI("drive_sync: connect seed -> joiner slot %d (%d of %d slot lines)", peerSlot, lines, DC::kRoleCount);
 }
 
-void NoteLocalDriveBirth(void* actor) {
-    if (!actor) return;
-    const auto now = Clock::now();
-    for (auto& nb : g_notedBirths) {
-        if (!nb.actor || now >= nb.until) { nb = {actor, now + kNotedBirthTtl}; return; }
-    }
-    g_notedBirths.push_back({actor, now + kNotedBirthTtl});
+bool HasPendingLine(int role, uint32_t driveEid) {
+    for (const Pending& pd : g_pending)
+        if (pd.slotLine.role == role && pd.slotLine.occupied && pd.slotLine.driveEid == driveEid) return true;
+    return false;
 }
+
+uint64_t AnnouncedCount() { return g_cSlotSent; }
 
 void OnDisconnect() {
     for (int r = 0; r < DC::kRoleCount; ++r) {
@@ -652,17 +451,13 @@ void OnDisconnect() {
         g_lastEjectEid[r].store(0, std::memory_order_relaxed);
         g_slotBase[r] = {};
     }
-    g_payloadDirty.store(false, std::memory_order_relaxed);
-    g_driveBase.clear();
     g_pending.clear();
-    g_payloadAsm.Clear();
-    g_notedBirths.clear();
     g_primed = false;
     g_wasConnected = false;
     g_replayingInsert = false;
     g_cGrabKept = 0;
     g_session.store(nullptr, std::memory_order_release);
-    UE_LOGI("drive_sync: teardown (slot/payload baselines + pending + noted births cleared)");
+    UE_LOGI("drive_sync: teardown (slot baselines + pending cleared)");
 }
 
 }  // namespace coop::drive_sync

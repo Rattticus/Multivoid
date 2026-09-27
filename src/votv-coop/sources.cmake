@@ -107,6 +107,7 @@ set(VOTVCOOP_SOURCES
     src/ue_wrap/desk/desk_press.cpp
     src/ue_wrap/desk/desk_detector.cpp
     src/ue_wrap/desk/drive_chain.cpp
+    src/ue_wrap/desk/drive_eraser.cpp
     src/ue_wrap/desk/daily_task.cpp
     src/ue_wrap/actors/sleep.cpp
     src/ue_wrap/world/email.cpp
@@ -396,7 +397,9 @@ set(VOTVCOOP_SOURCES
     src/coop/interactables/desk_input_sync.cpp
     src/coop/interactables/deck_play_sync.cpp
     src/coop/interactables/physmods_sync.cpp
+    src/coop/interactables/drive_payload_sync.cpp
     src/coop/interactables/drive_sync.cpp
+    src/coop/interactables/eraser_press_intent.cpp
     src/coop/interactables/drone_call_intent.cpp
     src/coop/interactables/door_verb_intent.cpp
     src/coop/interactables/door_state_verbs.cpp

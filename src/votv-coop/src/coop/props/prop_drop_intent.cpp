@@ -31,7 +31,7 @@
 #include "ue_wrap/devices/serverbox.h"          // IsUpgradeClass whitelist
 #include "coop/interactables/physmods_sync.h"   // the denied-birth reap
 #include "coop/interactables/server_upgrade_sync.h"  // the refused take-out's reap
-#include "coop/interactables/drive_sync.h"      // the denied rack-take reap
+#include "coop/interactables/drive_payload_sync.h"  // NoteOwnDrive, NoteClientBrought: a drive a player brings into the world
 #include "ue_wrap/desk/drive_chain.h"           // IsDriveClass whitelist
 #include "ue_wrap/core/types.h"
 #include "ue_wrap/core/ufunction_hook.h"         // InstallPostHook (chains after host_spawn_watcher's)
@@ -397,9 +397,9 @@ void Tick(coop::net::Session* session) {
         // tracked actors by the eid check, and the actor already carries the key the init minted
         // inside the finish spawn). Author it host-side via the eject intent, the same spawn
         // author, class-whitelisted at the host. The whitelist widens to desk modules (the unplug
-        // births a module into the hand, the same local-only-ghost class), to drives (a rack
-        // take on a client births a payload-bearing drive into the hand; the payload rides the
-        // drive payload broadcast at adoption, so no birth scalar is needed), to floppy discs and to the
+        // births a module into the hand, the same local-only-ghost class), to drives (a take that stays
+        // in the world, a cheat's spawn; the row goes to the host from drive_payload_sync once the echo binds the
+        // drive, so no birth scalar is needed), to floppy discs and to the
         // upgrade a server box's take-out hands the player.
         //
         // The disc is the one that is NOT born into a hand: a device's eject drops it in the world
@@ -468,12 +468,11 @@ void Tick(coop::net::Session* session) {
             // disc that has already come to rest during the key wait still crosses asleep, which
             // is where it is.
             if (!isDiscBirth && !isUpgradeBirth) p.physFlags |= pf::kSleep;
-            // A locally born drive carries its payload in its data slot: note the authorship, so
-            // the drive sync broadcasts it at adoption (the first eid sight); un-noted first sights
-            // stay prime-only.
-            if (ue_wrap::drive_chain::IsDriveClass(R::ClassOf(e.actor)))
-                coop::drive_sync::NoteLocalDriveBirth(e.actor);
         }
+        // A data drive this player brought into the world, born here or put back by any route, carries its row in its
+        // data slot, which only this copy has: its row goes to the host once the host's echo binds it.
+        if (ue_wrap::drive_chain::IsDriveClass(R::ClassOf(e.actor)))
+            coop::drive_payload_sync::NoteOwnDrive(e.actor);
         const auto scl = ue_wrap::engine::GetActorScale3D(e.actor);
         p.locX = loc.X; p.locY = loc.Y; p.locZ = loc.Z;
         p.rotPitch = ue_wrap::NormalizeAxis(rot.Pitch);
@@ -540,6 +539,8 @@ void OnPropDropIntent(coop::net::Session& session, const coop::net::PropDropInte
         return;
     }
     void* actor = HostSpawnPlacedProp(p, cls, key, senderSlot);
+    // A data drive the client brought in: its row, which only that client has, is the one the host takes for it.
+    if (actor) coop::drive_payload_sync::NoteClientBrought(actor, senderSlot);
     if (actor) {
         UE_LOGI("[PROP-DROP] HOST spawned client-placed prop key='%ls' cls='%ls' slot=%u at (%.1f,%.1f,%.1f) "
                 "-- FinishSpawn watcher broadcasts it this tick",
@@ -576,8 +577,8 @@ void OnReelEjectIntent(coop::net::Session& session, const coop::net::PropDropInt
     if (isModule && coop::physmods_sync::HostShouldReapModuleBirth(senderSlot, clsObj)) return;
     // The same for an upgrade a refused take-out handed over (the server upgrade sync logs).
     if (isServerUpg && coop::server_upgrade_sync::HostShouldReapUpgradeBirth(senderSlot)) return;
-    // Drive births are authored normally; a denied rack-take ghost is reaped later by its
-    // adoption payload's content hash (the drive sync).
+    // Drive births are authored normally; a denied rack-take ghost is reaped when its row arrives, by the row's
+    // hash (drive_payload_sync).
     OnPropDropIntent(session, p, senderSlot);  // same author: dup-guard + HostSpawnPlacedProp
 }
 

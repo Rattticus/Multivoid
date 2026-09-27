@@ -285,7 +285,7 @@ void HostApplyRackOp(const coop::net::RackStateHead& h, const std::vector<uint8_
             // Raced: the slot filled first. Deny + REFUND: the presser's drive
             // actor is already destroyed on its side; the host rematerializes
             // it at the rack (host-authored spawn -> the watcher fans it; the
-            // payload rides drive_sync's birth-invariant broadcast next sweep).
+            // row goes at the drive's enrolment, drive_payload_sync).
             deny(0);
             // The refund spawns above the rack; a rack that cannot be read places nothing.
             ue_wrap::FVector loc{};

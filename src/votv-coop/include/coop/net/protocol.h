@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 200;
+inline constexpr uint16_t kProtocolVersion = 201;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -570,7 +570,9 @@ enum class ReliableKind : uint8_t {
     // canonically on conflict. DriveSlotStatePayload.
     DriveSlotState = 109,
 
-    // Any peer, relayed: one drive's data row as a chunked blob.
+    // Host to all, or to a joiner at its world-ready: one drive's data row as a chunked blob. Client to host: the
+    // row of a drive that client brought into the world; the host answers a row it refuses with its own. Never
+    // relayed.
     DrivePayload = 110,
 
     // Peer to host: set or take a rack row; host to all: the canonical rack; host to one peer: a
@@ -901,6 +903,12 @@ enum class ReliableKind : uint8_t {
     // the sounds it makes for the presser's machine to make. Never relayed; a sender's presses run at a
     // bounded rate from a bounded queue. Late join: nothing to replay. DeskVerbPayload.
     DeskVerb = 160,
+
+    // Client to host: my player pressed the drive eraser's delete button with this drive seated; the host
+    // presses its own eraser once its slot holds that drive, and the wipe crosses as the host's drive row.
+    // Host to clients: what its eraser did, a press and its resume, for each client's eraser to show; a press
+    // it refused, to its presser alone. Never relayed. EraserPressIntentPayload.
+    EraserPressIntent = 161,
 };
 
 #pragma pack(push, 1)
@@ -2698,6 +2706,16 @@ struct DroneFlyIntentPayload {
 static_assert(sizeof(DroneFlyIntentPayload) == 8, "DroneFlyIntentPayload must be 8 bytes");
 static_assert(sizeof(DroneFlyIntentPayload) <= 256 - 20 - 8,
               "DroneFlyIntentPayload must fit one datagram");
+
+// A drive eraser press (EraserPressIntent). Client to host, event 0: the drive the presser saw seated, by eid; the
+// eraser itself is level-placed, one per world, so the host resolves its own and tests the sender's reach to it. Host
+// to clients, event 1-5 (ue_wrap::drive_eraser::Show): what the host's eraser did, for each client's eraser to show.
+struct EraserPressIntentPayload {
+    uint32_t driveEid;   // the drive in the presser's eraser slot (event 0), or the refused press's drive (event 5)
+    uint8_t  event;      // 0 = a client's press; 1 click, 2 start, 3 done, 4 deny, 5 refused
+    uint8_t  _pad[3];    // 8-byte alignment; zero
+};
+static_assert(sizeof(EraserPressIntentPayload) == 8, "EraserPressIntentPayload must be 8 bytes");
 
 // A throw intent (ThrowIntent). mode kRelease: the native drop; the host derives the launch from
 // the puppet's smoothed hand motion. mode kHardThrow: the native camera-directed throw; the client

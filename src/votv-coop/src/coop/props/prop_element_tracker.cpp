@@ -18,6 +18,7 @@
 #include "coop/net/session.h"
 #include "coop/player/hand_item.h"  // hand-axis boundary: CollectHandAxisActors (SeedWalk_ skip; local hand + remote mirrors)
 #include "coop/props/prop_synth_key.h"  // MintFreshKeyForDuplicate, the host's re-key of a clone
+#include "coop/interactables/drive_payload_sync.h"
 #include "ue_wrap/engine/engine.h"  // TryGetActorLocation
 #include "ue_wrap/core/game_thread.h"  // IsGameThread; setKey is a dispatch, so the re-key is game-thread gated
 #include "ue_wrap/core/log.h"
@@ -312,6 +313,8 @@ std::wstring MarkPropElement(void* actor, const std::wstring& key, const std::ws
     // Index key to actor for the connect re-snapshot's O(1) wire-key de-dupe, after the commit and
     // only on the winning path, so the index and the reverse stay consistent.
     IndexKeyForActor_(actor, enrollKey, internalIdx);
+    // A data drive's row travels with its enrolment (drive_payload_sync): the host's, and a client's own.
+    coop::drive_payload_sync::OnEnrolled(actor, static_cast<uint32_t>(eid));
     return enrollKey;
 }
 

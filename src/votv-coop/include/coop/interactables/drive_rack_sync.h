@@ -5,12 +5,12 @@
 // reflection, and a raced op is denied and refunded. The take-race axis -- the deny ring, the
 // taken ring, the TTL and the consume -- lives WHOLE in this module.
 //
-// Owner-API contract, a strictly ONE-WAY dependency (drive_sync includes this; this never
-// includes drive_sync.h):
+// Owner-API contract, a strictly ONE-WAY dependency (drive_sync and drive_payload_sync include
+// this; this includes neither):
 //   - drive_sync keeps ALL the verb watches, because putDriveIn is a shared slot-and-rack
 //     context; its callback forwards rack marks through MarkDirtyFromVerb().
-//   - drive_sync's payload apply asks TryConsumeDenyReap() for the reap VERDICT, while the
-//     reap ACTION -- destroy and skip-apply -- stays payload-side.
+//   - drive_payload_sync's apply of a client's row asks TryConsumeDenyReap() for the reap
+//     VERDICT, while the reap ACTION -- destroy and skip-apply -- stays there.
 // Game thread throughout.
 
 #pragma once
@@ -34,15 +34,15 @@ void Tick();
 void OnRackStateChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot);
 
 // HOST: queue the rack canonicals for a peer that just reached world-ready.
-// Called right AFTER drive_sync's seed (subsystems source order = the shipped
-// slot-lines -> payloads -> racks byte order on the one pinned lane).
+// Called right AFTER the drive rows' seed (subsystems source order = the shipped
+// slot lines -> drive rows -> racks byte order on the one pinned lane).
 void QueueConnectBroadcastForSlot(int peerSlot);
 
 // The verb-watch forward from drive_sync's OnVerbEntry (putDriveIn rack-ctx
 // + getDrive). Relaxed atomic store only -- capture-safe mid-verb.
 void MarkDirtyFromVerb();
 
-// The take-race reap VERDICT (drive_sync ApplyPayloadBlob, host side): if a
+// The take-race reap VERDICT (drive_payload_sync's apply of a client's row, host side): if a
 // deny record matches {senderSlot, rowHash} and is within TTL, consume it
 // (clear the slot) and return true -- the caller destroys the ghost instead
 // of applying. Mirrors the correlation this was extracted from, 1:1.

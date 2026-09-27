@@ -3,7 +3,8 @@
 // Fstruct_signalDataDynamic) and prop_driveRack_C (the 16-row storage arrays + gen()).
 //
 // Reflection access, struct layouts and UFunction thunks ONLY -- no coop or network state;
-// coop/interactables/drive_sync and drive_rack_sync own the lanes.
+// coop/interactables/drive_sync, drive_payload_sync and drive_rack_sync own the lanes; the eraser's own
+// press and show are ue_wrap/desk/drive_eraser.
 //
 // Game thread throughout (UObject access + reflected dispatch).
 
