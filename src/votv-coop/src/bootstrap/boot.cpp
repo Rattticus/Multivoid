@@ -37,8 +37,8 @@ volatile LONG g_bootLatch = 0;
 // instance has attempted but never started, and its restart re-entry must
 // not read as a live session.
 volatile LONG g_started = 0;
-// The load moment, taken as the loader's call begins: the boot thread starts only after the engine
-// patches, so its own reading would add their time.
+// The load moment, taken as the boot begins (StartOnce, after start_mod's predecessor checks): the boot
+// thread starts only after the engine patches, so its own reading would add their time.
 unsigned long long g_loadMs = 0;
 
 // Milliseconds since THIS process was created (GetProcessTimes creation time),
