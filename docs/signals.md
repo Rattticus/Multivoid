@@ -143,10 +143,12 @@ may sit in more than one, so a plug and an unplug each name their slot; the host
 re-broadcasts the whole array, and a refused one goes back to its author with it
 (`coop/interactables/physmods_sync`). The tape caddy's reel slots are presser-authored edges, and
 its accrual is deterministic and clamped, so instead of a park the host re-snaps it once a second
-(`coop/interactables/tape_caddy_sync`). The stationary PC's power and floppy axes are presser
-edges with the host as the content author (`coop/interactables/laptop_sync`), its file buffer is
-edit-script batches the host anchors and answers with a canonical
-(`coop/interactables/laptop_buffer_sync`), and the disc crate is a stack of tail operations with
+(`coop/interactables/tape_caddy_sync`). The stationary PC's power is a presser edge
+(`coop/interactables/laptop_sync`); its disc slot is the host's like a server box's, a peer's
+insert or eject a claim the host's canonical answers (`coop/interactables/floppy_slot_sync`); its
+file buffer is edit-script batches the host anchors and answers with a canonical
+(`coop/interactables/laptop_buffer_sync`), on the slot's lane and tagged with the slot's generation,
+so a batch or a canonical made on one disc never lands on another, and the disc crate is a stack of tail operations with
 a deny that reaps the author's just-spawned disc (`coop/interactables/floppybox_sync`). The
 laptop's signal database is a content-hash multiset with a host-canonical order, because the
 store has a move verb; each of its writers -- the laptop's add, remove and move, and the rename
@@ -219,7 +221,7 @@ not built. The ATV's physical modules are on [vehicles.md](vehicles.md).
 | `DrivePayload` | the host to all and to a joiner; a client to the host; the host to that client | a drive's row; a client's own new drive's row; the host's own row, answering a client row it refused |
 | `EraserPressIntent` | a client to the host; the host to all, or to a presser | the eraser's delete, with the drive the presser saw seated; what the host's eraser did, for each client's eraser to show; a press the host refused |
 | `ReelSlot`, `ReelPose` (stream), `ReelEjectIntent` | the presser; the host; a client | slot edges; the corrector; a reel birth |
-| `LaptopState`, `LaptopBlob`, `LaptopQuad` | the presser and the host | power and floppy edges; content streams; the file buffer |
+| `LaptopState`, `LaptopQuad` | the presser and the host | the power edge and the portable PC's lid; the file buffer, with the slot's generation |
 | `ServerState` | the host to all | the servers' broken set |
 | `SatConsole` | a client to the host; the host to that client | a typed line with its terminal's context; the lines the host's run printed, and its busy state |
 
@@ -231,7 +233,7 @@ is never applied before its base, and a reset the host made since the joiner's w
 goes ahead of them all, the game's own order of a reset, a catch and an arm; the deck list, the
 database and the emails are seeded as deltas against the blob instant; every drive slot, every drive
 row that differs from its class default (a row that arrives before its drive waits for it through
-the join), the rack, the module set, the reel slots, the laptop's power and content and the crate
+the join), the rack, the module set, the reel slots, the laptop's power, its slot (before its file buffer) and the crate
 arrive as canonical rows from the host; the desk's two loops are re-sent from component truth. A
 joiner never sees a running ping's stage visuals, only its outcome. A SAT console typist that leaves
 mid-command while another client keeps the session leaves the command running on the host and, back,
@@ -266,7 +268,7 @@ arrive with the save and never again.
 | signals, the catch, the dishes | `coop/interactables/signal_sync`, `coop/interactables/signal_wire`, `coop/interactables/signal_catch_sync`, `coop/interactables/dish_sync`, `coop/interactables/dish_calib_sync`, `coop/interactables/download_arm_sync` |
 | the deck and the refiner | `coop/interactables/deck_play_sync`, `coop/interactables/comp_sync` |
 | drives, racks, modules, tapes | `coop/interactables/drive_sync`, `coop/interactables/drive_payload_sync`, `coop/interactables/eraser_press_intent`, `coop/interactables/drive_rack_sync`, `coop/interactables/physmods_sync`, `coop/interactables/tape_caddy_sync` |
-| the laptop, the crate, the database, the servers | `coop/interactables/laptop_sync`, `coop/interactables/laptop_buffer_sync`, `coop/interactables/floppybox_sync`, `coop/interactables/meadow_db_sync`, `coop/interactables/serverbox_sync` |
+| the laptop, the crate, the database, the servers | `coop/interactables/laptop_sync`, `coop/interactables/floppy_slot_sync`, `coop/interactables/laptop_buffer_sync`, `coop/interactables/floppybox_sync`, `coop/interactables/meadow_db_sync`, `coop/interactables/serverbox_sync` |
 | the SAT console | `coop/interactables/sat_console_sync`, `coop/interactables/sat_console_table` |
 | the engine wrappers | `ue_wrap/desk/` (the dish, the console, the coordinate panel, the refiner pane, the drive chain, the tape caddy, the modules, the saved signals, the database, the audio, the SAT console) |
 | the join seeds | `coop/session/join_seed` |

@@ -3,9 +3,8 @@
 //
 // What the wrapper reaches:
 //   - the power and boot axis: isOpened, powered, and the native power-button press
-//   - the file-buffer quad (floppyData, floppyBuffer, floppyBufferUIDs, floppyReadwrites), the
-//     widget rebuild a write to it must be followed by, and a digest of the widget's own mirror
-//     of that buffer
+//   - the file-buffer quad (floppyData, floppyBuffer, floppyBufferUIDs, floppyReadwrites), and the
+//     widget rebuild a write to it must be followed by
 //
 // The floppy SLOT is not here: every device that has one holds the same fields, so they live in
 // ue_wrap/devices/floppy_slot. floppyData is the one field the two share -- the game keeps the
@@ -73,9 +72,5 @@ bool ReadQuadInts(int32_t& fdNum, int32_t& fbNum, int32_t& uidNum, int32_t& rw);
 // (native loadData recipe), updFloppy. False if the widget is unreachable
 // (fields are still written).
 bool WriteQuadAndRebuild(const BufferQuad& in);
-
-// Widget-side buffer mirror (selftest digest): bufferSlots count + FNV-1a64
-// over each row widget's 'data' string. False when the widget is unreachable.
-bool ReadWidgetBufferMirror(int32_t& outCount, uint64_t& outFnv);
 
 }  // namespace ue_wrap::laptop

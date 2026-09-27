@@ -78,8 +78,6 @@ CFG_ENUM(subject_drill, "subject_drill", "dev", "off", "off|insert|own", "VOTVCO
     "slot the client's grab must still hold. own: the client grabs the host's one drive the same way and "
     "seats it in its own play slot, and its grab must end there, as single player's does. Run it on a "
     "fresh host world; the client's '[subject_drill] client DONE' line ends it.")
-CFG_FLAG(laptop_selftest, "laptop_selftest", "dev", false, "VOTVCOOP_LAPTOP_SELFTEST",
-    "Autonomous selftest: laptop buffer sync.")
 CFG_FLAG(deck_selftest, "deck_selftest", "dev", false, nullptr,
     "Autonomous selftest: tape deck playback sync.")
 CFG_FLAG(drive_selftest, "drive_selftest", "dev", false, "VOTVCOOP_DRIVE_SELFTEST",

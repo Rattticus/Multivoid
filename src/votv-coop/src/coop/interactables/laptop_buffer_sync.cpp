@@ -3,12 +3,11 @@
 #include "coop/interactables/laptop_buffer_sync.h"
 
 #include "coop/comms/chat_feed.h"  // ToUtf8
-#include "coop/config/config.h"
+#include "coop/interactables/floppy_slot_sync.h"  // the laptop's generation and whether its occupancy is settled
 #include "coop/net/blob_chunks.h"
 #include "coop/net/session.h"
 #include "coop/session/net_pump.h"  // HasAnnouncedWorldReady (client send gate)
 
-#include "ue_wrap/devices/floppy_slot.h"
 #include "ue_wrap/devices/laptop.h"
 #include "ue_wrap/core/log.h"
 
@@ -69,13 +68,14 @@ bool g_havePrev = false;
 L::BufferQuad g_prev;          // the shadow (kept at SENT state on clients)
 uint64_t g_prevHash = 0;
 int32_t g_prevInts[4] = {-1, -1, -1, -1};  // {fdN, fbN, uidN, rw} pre-filter cache
-int32_t g_prevType = -2;       // floppyType predicate cache (-2 = unseen)
 uint64_t g_nextPoll = 0;
 bool g_announced = false;
 
 coop::blob_chunks::Assembler g_asm;
 uint32_t g_nextSeq = 1;
 bool g_canonRetry = false;  // a refused canonical send retries each poll
+Counts g_counts;
+bool g_devEjectAtNextBatch = false;  // [dev] HOST: the laptop drill's eject racing the next batch
 
 bool IsHost() {
     auto* s = g_session.load(std::memory_order_acquire);
@@ -83,9 +83,10 @@ bool IsHost() {
 }
 
 // ---- wire serialization ----
-// batch (op 0): [u8 0][u16 n]{ [u8 kind 0=removeAt|1=appendTail][u8 arrayId 0=fd|1=fb]
+// batch (op 0): [u8 0][u32 generation][u16 n]{ [u8 kind 0=removeAt|1=appendTail][u8 arrayId 0=fd|1=fb]
 //               [u16 idx][i32 uid][u64 hash][u16 strLen][utf8...] }[i32 rwDelta]
-// canonical (op 1): [u8 1][i32 rw][u16 fdN]{u16 len+utf8}[u16 fbN]{...}[u16 uidN]{i32}
+// canonical (op 1): [u8 1][u32 generation][i32 rw][u16 fdN]{u16 len+utf8}[u16 fbN]{...}[u16 uidN]{i32}
+// The generation is the slot lane's for the laptop (floppy_slot_sync::LaptopGeneration): which disc the edit is on.
 
 void PutU16(std::vector<uint8_t>& b, uint16_t v) {
     b.push_back(static_cast<uint8_t>(v & 0xFF));
@@ -155,9 +156,10 @@ void DeriveArray(uint8_t arrayId, const std::vector<std::wstring>& prev,
     }
 }
 
-std::vector<uint8_t> PackBatch(const std::vector<EditOp>& ops, int32_t rwDelta) {
+std::vector<uint8_t> PackBatch(const std::vector<EditOp>& ops, int32_t rwDelta, uint32_t gen) {
     std::vector<uint8_t> b;
     b.push_back(0);
+    PutU32(b, gen);
     PutU16(b, static_cast<uint16_t>(ops.size()));
     for (const auto& op : ops) {
         b.push_back(op.kind);
@@ -171,9 +173,10 @@ std::vector<uint8_t> PackBatch(const std::vector<EditOp>& ops, int32_t rwDelta) 
     return b;
 }
 
-std::vector<uint8_t> PackCanonical(const L::BufferQuad& q) {
+std::vector<uint8_t> PackCanonical(const L::BufferQuad& q, uint32_t gen) {
     std::vector<uint8_t> b;
     b.push_back(1);
+    PutU32(b, gen);
     PutU32(b, static_cast<uint32_t>(q.readWrites));
     PutU16(b, static_cast<uint16_t>(q.data.size()));
     for (const auto& s : q.data) PutStr(b, s);
@@ -188,8 +191,8 @@ std::vector<uint8_t> PackCanonical(const L::BufferQuad& q) {
 // canonical path is a SILENT divergence. Bound the canonical BELOW the cap
 // deterministically (drop TAIL buffer rows first, then tail fd rows) with a WARN --
 // the same accepted-residual class as the laptop content cap.
-std::vector<uint8_t> PackCanonicalBounded(L::BufferQuad q) {
-    std::vector<uint8_t> b = PackCanonical(q);
+std::vector<uint8_t> PackCanonicalBounded(L::BufferQuad q, uint32_t gen) {
+    std::vector<uint8_t> b = PackCanonical(q, gen);
     int dropped = 0;
     while (b.size() > coop::blob_chunks::MaxBlobBytes() &&
            (!q.buffer.empty() || !q.data.empty())) {
@@ -200,7 +203,7 @@ std::vector<uint8_t> PackCanonicalBounded(L::BufferQuad q) {
             q.data.pop_back();
         }
         ++dropped;
-        b = PackCanonical(q);
+        b = PackCanonical(q, gen);
     }
     if (dropped)
         UE_LOGW("laptop_buffer: canonical quad over the %zu B transport cap -- %d tail "
@@ -246,6 +249,11 @@ bool AnyClientReady(coop::net::Session* s) {
 }
 
 void HostBroadcastCanonical(coop::net::Session* s) {
+    // A change of the laptop's occupancy the slot lane has not published goes out first: its canonical names the disc.
+    if (!coop::floppy_slot_sync::LaptopOccupancySettled()) {
+        g_canonRetry = true;
+        return;
+    }
     L::BufferQuad q;
     if (!L::ReadQuad(q)) return;
     // No READY client -> nothing to deliver: prime silently (a loading joiner
@@ -259,8 +267,8 @@ void HostBroadcastCanonical(coop::net::Session* s) {
     // The canonical IS the ack, so a refused send must NOT prime (the detector
     // re-fires) and arms the per-poll retry. A bounded pack cannot hit the oversize
     // false; a false here is backpressure.
-    if (coop::blob_chunks::SendBlob(s, coop::net::ReliableKind::LaptopQuad,
-                                    g_nextSeq++, PackCanonicalBounded(q))) {
+    if (coop::blob_chunks::SendBlob(s, coop::net::ReliableKind::LaptopQuad, g_nextSeq++,
+                                    PackCanonicalBounded(q, coop::floppy_slot_sync::LaptopGeneration()))) {
         PrimeFrom(q);
         g_canonRetry = false;
     } else {
@@ -276,6 +284,24 @@ void HostBroadcastCanonical(coop::net::Session* s) {
 void HostApplyBatch(Reader& r, uint8_t senderSlot) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s) return;
+    if (g_devEjectAtNextBatch) {
+        g_devEjectAtNextBatch = false;
+        const bool ejected = L::CallEjectDisc();
+        UE_LOGI("laptop_buffer: [dev] the laptop's disc ejected ahead of slot %u's batch (%s)",
+                static_cast<unsigned>(senderSlot), ejected ? "ok" : "the eject failed");
+    }
+    // A batch made on another disc than the one the laptop holds here is not an edit of it: the canonical answers. The
+    // host's own change of the disc counts from the moment it is made, before the slot lane publishes it.
+    const uint32_t gen = r.U32();
+    if (!r.ok || gen != coop::floppy_slot_sync::LaptopGeneration() ||
+        !coop::floppy_slot_sync::LaptopOccupancySettled()) {
+        ++g_counts.batchesRefused;
+        UE_LOGI("laptop_buffer: batch from slot %u on generation %u refused -- the laptop is on %u here%s; canonical "
+                "follows", static_cast<unsigned>(senderSlot), gen, coop::floppy_slot_sync::LaptopGeneration(),
+                coop::floppy_slot_sync::LaptopOccupancySettled() ? "" : " and its disc has changed since");
+        HostBroadcastCanonical(s);
+        return;
+    }
     L::BufferQuad q;
     if (!L::ReadQuad(q)) return;
     const uint16_t n = r.U16();
@@ -325,7 +351,7 @@ void HostApplyBatch(Reader& r, uint8_t senderSlot) {
     if (!r.ok) {
         UE_LOGW("laptop_buffer: malformed batch from slot %u -- dropped (canonical follows)",
                 static_cast<unsigned>(senderSlot));
-    } else if (const size_t packed = PackCanonical(q).size();
+    } else if (const size_t packed = PackCanonical(q, gen).size();
                packed > coop::blob_chunks::MaxBlobBytes()) {
         // appendTail has NO cap of its own, so a wire batch could grow the host's engine
         // arrays without bound. The bound is NOT invented here -- it already exists one
@@ -354,14 +380,25 @@ void DeriveAndSendLocal(coop::net::Session* s);
 void ClientAdoptCanonical(Reader& r) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s) return;
+    const uint32_t gen = r.U32();
     L::BufferQuad wire;
     if (!ParseCanonical(r, wire)) {
         UE_LOGW("laptop_buffer: malformed canonical -- dropped");
         return;
     }
+    // A canonical of another disc than the one the laptop holds here is not applied to it: one of another generation,
+    // or any while this client's own change of the disc waits for the host, whose answer and canonical follow here.
+    if (gen != coop::floppy_slot_sync::LaptopGeneration() || !coop::floppy_slot_sync::LaptopOccupancySettled()) {
+        ++g_counts.canonicalsDropped;
+        UE_LOGI("laptop_buffer: canonical on generation %u dropped -- the laptop is on %u here%s", gen,
+                coop::floppy_slot_sync::LaptopGeneration(),
+                coop::floppy_slot_sync::LaptopOccupancySettled() ? "" : " and its own change of the disc is unanswered");
+        return;
+    }
     DeriveAndSendLocal(s);  // drain before adopt, the shape drive_rack_sync uses
     const uint64_t wireHash = QuadSeqHash(wire);
     L::BufferQuad local;
+    ++g_counts.canonicalsTaken;
     if (L::ReadQuad(local) && QuadSeqHash(local) == wireHash) {
         PrimeFrom(local);  // skip-rebuild-on-equal (the echo case -- no flash)
         return;
@@ -380,6 +417,8 @@ void DeriveAndSendLocal(coop::net::Session* s) {
     if (IsHost() || !g_havePrev) return;
     if (!coop::net_pump::HasAnnouncedWorldReady()) return;  // pre-ready = save echo
     if (IntsUnchanged()) return;  // the R3 pre-filter (no string reads on the idle path)
+    // Held while this client's own change of the laptop's occupancy waits for the host: the edit is on that disc.
+    if (!coop::floppy_slot_sync::LaptopOccupancySettled()) return;
     L::BufferQuad cur;
     if (!L::ReadQuad(cur)) return;
     const uint64_t h = QuadSeqHash(cur);
@@ -389,91 +428,13 @@ void DeriveAndSendLocal(coop::net::Session* s) {
     DeriveArray(1, g_prev.buffer, cur.buffer, &cur.bufferUids, ops);
     const int32_t rwDelta = cur.readWrites - g_prev.readWrites;
     if (ops.empty() && rwDelta == 0) { PrimeFrom(cur); return; }  // uid-only churn: prime
-    if (coop::blob_chunks::SendBlob(s, coop::net::ReliableKind::LaptopQuad,
-                                    g_nextSeq++, PackBatch(ops, rwDelta))) {
+    if (coop::blob_chunks::SendBlob(s, coop::net::ReliableKind::LaptopQuad, g_nextSeq++,
+                                    PackBatch(ops, rwDelta, coop::floppy_slot_sync::LaptopGeneration()))) {
         PrimeFrom(cur);  // SENT state (the canonical confirms / corrects)
         UE_LOGI("laptop_buffer: local edit -> batch (%zu op(s), rwDelta=%d)",
                 ops.size(), rwDelta);
     }
     // Send refused (backpressure): shadow stays; retry next poll, fresh seq.
-}
-
-// ---- [dev] laptop_selftest: host-inject (organic->canonical path) +
-// client-inject (derivation->batch->canonical circle), each 0->1->0, digests
-// logged for the smoke comparison. ----
-bool SelftestEnabled() {
-    static const bool s = coop::config::ResolveFlag(::coop::config_registry::rows::laptop_selftest);
-    return s;
-}
-
-int g_stStage = 0;
-uint64_t g_stAt = 0;
-uint64_t g_stNextDigest = 0;
-
-void LogDigest(const wchar_t* tag) {
-    L::BufferQuad q;
-    if (!L::ReadQuad(q)) return;
-    int32_t wc = -1; uint64_t wf = 0;
-    L::ReadWidgetBufferMirror(wc, wf);
-    // The digest folds the RAW arrays AND the widget mirror -- a rebuild that
-    // leaves the widget stale FAILS the cross-peer compare loudly (R7-2).
-    UE_LOGI("laptop_buffer: DIGEST %ls seq=%016llx widget={%d,%016llx} fd=%zu fb=%zu rw=%d",
-            tag, static_cast<unsigned long long>(QuadSeqHash(q)), wc,
-            static_cast<unsigned long long>(wf), q.data.size(), q.buffer.size(),
-            q.readWrites);
-}
-
-void SelftestTick(coop::net::Session* s) {
-    if (!SelftestEnabled() || !g_havePrev) return;
-    if (!s->connected()) return;
-    const uint64_t now = NowMs();
-    if (now >= g_stNextDigest) {
-        g_stNextDigest = now + 5000;
-        LogDigest(L"tick");
-    }
-    const bool host = IsHost();
-    // Host phase at +10 s / remove +18 s; client phase +25 s / remove +33 s.
-    switch (g_stStage) {
-        case 0:
-            g_stAt = now + (host ? 10000 : 25000);
-            g_stStage = 1;
-            break;
-        case 1: {
-            if (now < g_stAt) break;
-            L::BufferQuad q;
-            if (!L::ReadQuad(q)) break;
-            q.buffer.push_back(host ? L"LAPTOP-SELFTEST-HOST" : L"LAPTOP-SELFTEST-CLIENT");
-            q.bufferUids.push_back(host ? 777001 : 777002);
-            // Native-shaped mutation: raw write + widget rebuild, NO prime --
-            // the lane's own machinery (host detector / client derivation)
-            // must ship it or the digests diverge (discriminates the axis).
-            L::WriteQuadAndRebuild(q);
-            LogDigest(L"inject");
-            g_stAt = now + 8000;
-            g_stStage = 2;
-            break;
-        }
-        case 2: {
-            if (now < g_stAt) break;
-            L::BufferQuad q;
-            if (!L::ReadQuad(q)) break;
-            const std::wstring needle =
-                host ? L"LAPTOP-SELFTEST-HOST" : L"LAPTOP-SELFTEST-CLIENT";
-            for (size_t i = 0; i < q.buffer.size(); ++i) {
-                if (q.buffer[i] == needle) {
-                    q.buffer.erase(q.buffer.begin() + i);
-                    if (i < q.bufferUids.size())
-                        q.bufferUids.erase(q.bufferUids.begin() + i);
-                    break;
-                }
-            }
-            L::WriteQuadAndRebuild(q);
-            LogDigest(L"remove");
-            g_stStage = 3;
-            break;
-        }
-        default: break;
-    }
 }
 
 }  // namespace
@@ -496,21 +457,8 @@ void Tick() {
 
     g_asm.Sweep(Clock::now(), std::chrono::seconds(10));
 
-    // floppyType predicate: the slot machinery owns slot transitions (insert
-    // transports floppyData via LaptopBlob kind=0; eject clears it) -- on any
-    // type change prime-and-skip this tick, ordering-independent.
-    ue_wrap::floppy_slot::Scalars st;
-    if (!ue_wrap::floppy_slot::EnsureResolved(ue_wrap::floppy_slot::DeviceKind::Laptop) ||
-        !ue_wrap::floppy_slot::ReadScalars(ue_wrap::floppy_slot::DeviceKind::Laptop,
-                                           L::Instance(), st))
-        return;
-    if (st.floppyType != g_prevType) {
-        g_prevType = st.floppyType;
-        L::BufferQuad q;
-        if (L::ReadQuad(q)) PrimeFrom(q);
-        return;
-    }
-
+    // A change of which disc the laptop holds is the slot lane's (coop/interactables/floppy_slot_sync), and it primes
+    // this shadow as it takes one; until then both ends hold their sends.
     if (!g_havePrev) {
         L::BufferQuad q;
         if (L::ReadQuad(q)) PrimeFrom(q);  // first sight: silent prime (save state)
@@ -538,7 +486,6 @@ void Tick() {
         } else {
             DeriveAndSendLocal(s);
         }
-        SelftestTick(s);
     }
 }
 
@@ -567,16 +514,31 @@ void OnQuadChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) {
     }
 }
 
+Counts ReadCounts() { return g_counts; }
+
 void PrimeQuadBaseline() {
     L::BufferQuad q;
-    if (L::ReadQuad(q)) {
-        PrimeFrom(q);
-        ue_wrap::floppy_slot::Scalars st;
-        if (ue_wrap::floppy_slot::EnsureResolved(ue_wrap::floppy_slot::DeviceKind::Laptop) &&
-            ue_wrap::floppy_slot::ReadScalars(ue_wrap::floppy_slot::DeviceKind::Laptop,
-                                              L::Instance(), st))
-            g_prevType = st.floppyType;
-    }
+    if (L::ReadQuad(q)) PrimeFrom(q);
+}
+
+void DevEjectAtNextBatch() { g_devEjectAtNextBatch = true; }
+
+bool DevSendAppendOn(uint32_t generation, const std::wstring& row) {
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s || IsHost() || !g_havePrev) return false;
+    std::vector<std::wstring> after = g_prev.data;
+    after.push_back(row);
+    std::vector<EditOp> ops;
+    DeriveArray(0, g_prev.data, after, nullptr, ops);
+    return coop::blob_chunks::SendBlob(s, coop::net::ReliableKind::LaptopQuad, g_nextSeq++,
+                                       PackBatch(ops, 0, generation));
+}
+
+bool DevSendCanonicalOn(uint32_t generation, const L::BufferQuad& q) {
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s || !IsHost()) return false;
+    return coop::blob_chunks::SendBlob(s, coop::net::ReliableKind::LaptopQuad, g_nextSeq++,
+                                       PackCanonicalBounded(q, generation));
 }
 
 void QueueConnectBroadcastForSlot(int peerSlot) {
@@ -585,8 +547,8 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
     if (!L::EnsureResolved() || !L::Instance()) return;
     L::BufferQuad q;
     if (!L::ReadQuad(q)) return;
-    if (coop::blob_chunks::SendBlobToSlot(s, peerSlot, coop::net::ReliableKind::LaptopQuad,
-                                          g_nextSeq++, PackCanonicalBounded(q))) {
+    if (coop::blob_chunks::SendBlobToSlot(s, peerSlot, coop::net::ReliableKind::LaptopQuad, g_nextSeq++,
+                                          PackCanonicalBounded(q, coop::floppy_slot_sync::LaptopGeneration()))) {
         UE_LOGI("laptop_buffer: connect canonical -> slot %d (fd=%zu fb=%zu rw=%d)",
                 peerSlot, q.data.size(), q.buffer.size(), q.readWrites);
     } else {
@@ -599,17 +561,20 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
 }
 
 void OnDisconnect() {
+    if (g_counts.canonicalsTaken || g_counts.canonicalsDropped || g_counts.batchesRefused)
+        UE_LOGI("laptop_buffer: session counts -- canonicals taken %llu, dropped %llu; batches refused %llu",
+                static_cast<unsigned long long>(g_counts.canonicalsTaken),
+                static_cast<unsigned long long>(g_counts.canonicalsDropped),
+                static_cast<unsigned long long>(g_counts.batchesRefused));
     g_havePrev = false;
     g_prev = L::BufferQuad{};
     g_prevHash = 0;
-    g_prevType = -2;
     g_nextPoll = 0;
     g_asm.Clear();
     g_canonRetry = false;
+    g_counts = Counts{};
+    g_devEjectAtNextBatch = false;
     g_announced = false;
-    g_stStage = 0;
-    g_stAt = 0;
-    g_stNextDigest = 0;
 }
 
 }  // namespace coop::laptop_buffer_sync

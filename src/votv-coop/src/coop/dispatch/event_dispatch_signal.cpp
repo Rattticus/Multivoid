@@ -16,7 +16,7 @@
 #include "coop/interactables/dish_hashcode_sync.h"
 #include "coop/interactables/dish_sync.h"
 #include "coop/interactables/download_arm_sync.h"
-#include "coop/interactables/laptop_sync.h"      // LaptopState, LaptopBlob
+#include "coop/interactables/laptop_sync.h"      // LaptopState
 #include "coop/interactables/laptop_buffer_sync.h"  // LaptopQuad
 #include "coop/interactables/floppy_slot_sync.h"
 #include "coop/interactables/floppybox_sync.h"   // FloppyBoxState
@@ -224,23 +224,6 @@ bool HandleSignalEvent(net::Session& /*session*/,
                 ? static_cast<uint8_t>(msg.senderPeerSlot)
                 : static_cast<uint8_t>(0xFF);
         coop::meadow_db_sync::OnOrderChunk(oc, oslot);
-        break;
-    }
-    case net::ReliableKind::LaptopBlob: {
-        // Laptop content chunks (slot/disc; the host re-fans them byte-for-byte inside
-        // laptop_sync with the origin byte).
-        if (msg.payloadLen < sizeof(net::BlobChunkPayload)) {
-            UE_LOGW("event_feed: LaptopBlob payload too short (%zu < %zu)",
-                    static_cast<size_t>(msg.payloadLen), sizeof(net::BlobChunkPayload));
-            break;
-        }
-        net::BlobChunkPayload lb{};
-        std::memcpy(&lb, msg.payload, sizeof(lb));
-        const uint8_t lbslot =
-            (msg.senderPeerSlot >= 0 && msg.senderPeerSlot < net::kMaxPeers)
-                ? static_cast<uint8_t>(msg.senderPeerSlot)
-                : static_cast<uint8_t>(0xFF);
-        coop::laptop_sync::OnLaptopBlobChunk(lb, lbslot);
         break;
     }
     case net::ReliableKind::LaptopQuad: {

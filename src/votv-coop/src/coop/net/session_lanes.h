@@ -68,8 +68,11 @@ inline Lane LaneForKind(ReliableKind k) {
     case ReliableKind::PropSaveData:       return Lane::Bulk;
     case ReliableKind::PropSaveDataIntent: return Lane::Bulk;
     // A device slot rides the same lane for the same reason: a peer's insert destroys the disc and
-    // then reports the slot, and on another lane the report could pass the destroy.
+    // then reports the slot, and on another lane the report could pass the destroy. The laptop's
+    // file quad follows its slot: a canonical or a batch must not pass the slot change that names
+    // its disc.
     case ReliableKind::FloppySlotState:    return Lane::Bulk;
+    case ReliableKind::LaptopQuad:         return Lane::Bulk;
     // PropConvert destroys the ball and spawns the pile, so it shares the spawn lane; on another
     // lane a convert could overtake the ball's spawn and leave a never-destroyed ball.
     case ReliableKind::PropConvert:    return Lane::Bulk;
@@ -122,9 +125,7 @@ inline Lane LaneForKind(ReliableKind k) {
     case ReliableKind::DeskState:      return Lane::Normal;
     case ReliableKind::DeskInput:      return Lane::Normal;
     case ReliableKind::DeskScanEvent:  return Lane::Normal;
-    // LaptopState's scalar edges and their content chunks assume in-lane order; pinned. The disc
-    // prop lifecycle rides Bulk independently by design: receivers never act on LaptopState for
-    // destroys.
+    // LaptopState carries the laptop's power and the portable PC's lid; its disc slot is FloppySlotState's.
     case ReliableKind::LaptopState:    return Lane::Normal;
     // PlayDeckEvent is order-coupled with DeskInput and with SavedSignalAppend (a play must land
     // after its row's append); pinned.
@@ -180,11 +181,7 @@ inline Lane LaneForKind(ReliableKind k) {
     case ReliableKind::EmailDelete:       return Lane::Normal;
     case ReliableKind::SavedSignalAppend: return Lane::Normal;
     case ReliableKind::SavedSignalDelete: return Lane::Normal;
-    // The laptop family shares LaptopState's lane: a park pairs with the content stream behind it,
-    // the quad batches are cross-referenced with slot edges, and the floppy box rides the family
-    // lane for the one-FIFO discipline.
-    case ReliableKind::LaptopBlob:     return Lane::Normal;
-    case ReliableKind::LaptopQuad:     return Lane::Normal;
+    // The floppy box rides the laptop family's lane for the one-FIFO discipline.
     case ReliableKind::FloppyBoxState: return Lane::Normal;
     // The container-contents slice stays behind the entity lifecycle it references: a blob for an
     // eid whose spawn has not landed parks and retries, and one FIFO makes the park rare.

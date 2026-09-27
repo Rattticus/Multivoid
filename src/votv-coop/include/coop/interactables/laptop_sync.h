@@ -1,11 +1,9 @@
-// coop/interactables/laptop_sync.h -- the stationary PC (Alaptop_C) power and floppy lane, and the
-// LaptopState wire the portable PC's lid (coop/interactables/portable_pc_lid) rides as op 6.
+// coop/interactables/laptop_sync.h -- the stationary PC's (Alaptop_C) power, and the LaptopState wire the portable
+// PC's lid (coop/interactables/portable_pc_lid) rides as op 6.
 //
-// Edges are authored by the presser, there is ONE destroy owner -- the existing K2_DestroyActor
-// seam -- the HOST is content authority, and a joiner gets ground-truth rows rather than a replayed
-// history. The disc PROP lifecycle is NOT this lane's: an insert destroy already crosses on the
-// generic destroy seam and an eject spawn on the birth channels. Game thread throughout, on the
-// net-pump tick and the reliable dispatch.
+// The edge is authored by the presser, the host re-fans it, and a joiner gets the ground-truth state rather than a
+// replayed history. The PC's disc slot is coop/interactables/floppy_slot_sync's, its file quad
+// coop/interactables/laptop_buffer_sync's. Game thread throughout, on the net-pump tick and the reliable dispatch.
 
 #pragma once
 
@@ -19,30 +17,18 @@ namespace coop::laptop_sync {
 
 void Install(coop::net::Session* session);
 
-// 4 Hz: resolve, the content streams' TTL sweep and a parked slot edge's lost-content fallback, the
-// power target, and the power and slot edge polls. Two axes:
-//   POWER   the isOpened edge, polled because every entry verb is EX-invisible. A
-//           receiver replays the native actionOptionIndex(b8) under the wire-apply
-//           echo guard when local differs from wire; one whose powered or anim gate
-//           declines retries until it converges, and coop/world/power_panel converges
-//           the wall-power input (every peer's setPower runs from the host's canonical).
-//   FLOPPY  floppyType change edges, insert and eject, plus the slot scalars and
-//           content strings.
+// 4 Hz: resolve, the power target, and the power edge poll: the isOpened edge, polled because every entry verb is
+// EX-invisible. A receiver replays the native actionOptionIndex(b8) under the wire-apply echo guard when local
+// differs from wire; one whose powered or anim gate declines retries until it converges, and
+// coop/world/power_panel converges the wall-power input (every peer's setPower runs from the host's canonical).
 // The portable PC (prop_portablePc_C) is a remote terminal to THIS laptop: its lid is
-// coop/interactables/portable_pc_lid's, on op 6, and its buffer QUAD laptop_buffer_sync's, whose
-// shadow prime piggybacks PrimeBaselines.
+// coop/interactables/portable_pc_lid's, on op 6.
 void Tick();
 
 // Wire ingest (both roles). HOST: applies + re-fans (except origin). Op 6 goes to the lid lane.
 void OnLaptopState(const coop::net::LaptopStatePayload& p, uint8_t senderSlot);
 
-// LaptopBlob content chunks: the host re-fans a client's chunks one for one, then both roles
-// assemble and apply. The blob is the laptop SLOT's content alone, pairing with the parked op=1/3
-// edge; a disc's content is its save record, which coop/props/prop_save_data carries by Key.
-void OnLaptopBlobChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot);
-
-// HOST: ship the joiner the laptop's state (op=3) and, with a disc in its slot, the slot's content
-// blob. The lid lane sends its own rows.
+// HOST: ship the joiner the laptop's power (op=3). The lid lane sends its own rows.
 void QueueConnectBroadcastForSlot(int peerSlot);
 
 void OnDisconnect();

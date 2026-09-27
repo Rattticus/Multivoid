@@ -347,42 +347,24 @@ puppet included (`coop/items/coingun_sync`). The client is told the result.
 
 ### The floppy slot
 
-### The signal servers
-
-A base runs dozens of signal boxes, and the game breaks them on its own timer and on world events:
-lightning, damage, triggers, the desk's virus. Three verbs write a box's state -- its break, the
-virus's typed break and its fix -- and the script-body gate watches all three by name. A client
-refuses every one of them through its whole connected session, since each break is a world event
-the host's own game makes, and its player's own repair -- the fix the gamemode's repair widget
-calls when the minigame succeeds -- goes to the host as an intent, which the host runs on its box
-when it is broken and within the player's reach, answering a refusal with its state to that player
-alone; the widget's points and stats stay the player's. The host polls each box's broken and
-damaged flags, the repair type its break rolled, and the three totals the gamemode keeps for the
-farm, broadcasts a change at once after a repair and within a second otherwise, and a client writes
-the flags and the type and calls the box's own re-skin, which is notify-free and so repaints
-without firing the notice a real break fires. The box list, the verbs, the label, the break state
-and the repair widget resolve in one engine wrapper (`ue_wrap/devices/serverbox`); the lane beside
-it owns the wire half -- the row, its width, the poll, the repair intent and who may author any of
-it (`coop/interactables/serverbox_sync`).
-
-A box also takes up to three physical upgrades, a count of its own that its break dice weigh. A player
-installs one by using a held upgrade on the box, which destroys the upgrade, and takes one out with E at
-the box's upgrade bay, which hands a new upgrade over; both run on the machine of the player who acted.
-The two verbs are watched on the box's class at the script-body gate, and each sends what its body
-changed: a client sends the host an install or a take-out, naming the box by its place in the
-gamemode's list; the host applies it within the game's own limits, re-meshes the box and sends every
-box's count, which every peer adopts. An op that lost a race goes back to its author with the counts --
-a refused install is refunded by an upgrade the host spawns at the box, a refused take-out's upgrade is
-removed from its author's hand -- and a joiner gets every box's count at its world-ready
-(`coop/interactables/server_upgrade_sync`).
-
 A laptop and a signal server hold a disc the same way: inserting one moves its type, its remaining
 writes, its data rows and the JSON of its whole save struct into four fields of the device and
 destroys the actor, and ejecting one spawns the disc back from those fields. The four are one
 concept with one owner, and they are state, not an event: the host holds every device's slot, each
 peer polls its own devices once a second behind a digest that reads the raw field bytes, and a peer
-whose own game changed a slot sends the host the outcome. The host applies it and answers with the
-canonical, which is also the acknowledgement.
+whose own game changed a slot sends the host the outcome as a claim. The host applies it and answers
+with the canonical, which is also the acknowledgement (`coop/interactables/floppy_slot_sync`).
+
+The laptop also edits the files of the disc it holds, which its file quad carries as edit scripts
+(`coop/interactables/laptop_buffer_sync`). So the laptop's slot is watched for which disc it holds
+alone: the rows and the writes travel with a change of that and are the quad's between two. A
+canonical naming the disc a laptop already holds leaves its files alone, and the slot lane primes
+the quad at each change it takes -- a claim sent, a publish, a canonical written -- so an edit made
+after it is the quad's to send, even one made before the host answered the claim. The host counts
+each change of the laptop's disc; the quad's batches and canonicals carry that count on the slot's
+lane, a batch made on another disc is answered with the canonical instead of applied, a canonical of
+another disc is dropped, and neither end applies or sends one while its own change of the disc waits
+for the other.
 
 Emptying a slot writes only what the device's own eject writes -- the type and the rows. The eject
 runs in two phases: it clears those two, and about a second later, when the carrier's timeline
@@ -413,6 +395,35 @@ re-reports every body already inside it, which is how the game re-takes a disc s
 slot, and that report comes once. The two devices disagree on the pause: a signal server waits a
 second, a laptop half of one. The window is set under the shorter of the two, so neither device's
 own re-take is touched and an ejecting peer behaves exactly as it does in single player.
+
+### The signal servers
+
+A base runs dozens of signal boxes, and the game breaks them on its own timer and on world events:
+lightning, damage, triggers, the desk's virus. Three verbs write a box's state -- its break, the
+virus's typed break and its fix -- and the script-body gate watches all three by name. A client
+refuses every one of them through its whole connected session, since each break is a world event
+the host's own game makes, and its player's own repair -- the fix the gamemode's repair widget
+calls when the minigame succeeds -- goes to the host as an intent, which the host runs on its box
+when it is broken and within the player's reach, answering a refusal with its state to that player
+alone; the widget's points and stats stay the player's. The host polls each box's broken and
+damaged flags, the repair type its break rolled, and the three totals the gamemode keeps for the
+farm, broadcasts a change at once after a repair and within a second otherwise, and a client writes
+the flags and the type and calls the box's own re-skin, which is notify-free and so repaints
+without firing the notice a real break fires. The box list, the verbs, the label, the break state
+and the repair widget resolve in one engine wrapper (`ue_wrap/devices/serverbox`); the lane beside
+it owns the wire half -- the row, its width, the poll, the repair intent and who may author any of
+it (`coop/interactables/serverbox_sync`).
+
+A box also takes up to three physical upgrades, a count of its own that its break dice weigh. A player
+installs one by using a held upgrade on the box, which destroys the upgrade, and takes one out with E at
+the box's upgrade bay, which hands a new upgrade over; both run on the machine of the player who acted.
+The two verbs are watched on the box's class at the script-body gate, and each sends what its body
+changed: a client sends the host an install or a take-out, naming the box by its place in the
+gamemode's list; the host applies it within the game's own limits, re-meshes the box and sends every
+box's count, which every peer adopts. An op that lost a race goes back to its author with the counts --
+a refused install is refunded by an upgrade the host spawns at the box, a refused take-out's upgrade is
+removed from its author's hand -- and a joiner gets every box's count at its world-ready
+(`coop/interactables/server_upgrade_sync`).
 
 ## Who owns what
 
@@ -453,7 +464,7 @@ own re-take is touched and an ejecting peer behaves exactly as it does in single
 | `OrderRequest`, `OrderRefused` | a client to the host; the host to one client | the items by row; a refusal and its reason |
 | `OrderQueue` | the host to all | a change to the delivery queue: a reset, an order queued (its items by row or by class), the first one taken off |
 | `CoinGunSell`, `CoinGunResult`, `CoinCollect` | a client to the host; the host to one client; a client to the host | the sold prop's key; the outcome; a coin the client tripped |
-| `FloppySlotState` | a peer to the host with a claim; the host to all with the canonical | one device's slot, or a set of them: the type, the writes, the rows and the save JSON |
+| `FloppySlotState` | a peer to the host with a claim; the host to all with the canonical | one device's slot, or a set of them -- the server boxes' and the laptop's: the type, the writes, the rows and the save JSON, and the laptop's generation |
 
 ## Late join
 
@@ -471,7 +482,9 @@ state it shows, and the first rows a world takes play no sound.
 
 Every device's floppy slot goes to a joiner at the same edge, an empty one as much as a full one:
 the joiner's world came from the host's save file, which coop stops the game refreshing, so it knows
-nothing the host has done since.
+nothing the host has done since. The laptop's file quad follows the laptop's slot on the same lane
+and under the same count, so the joiner takes the disc before its files, and a set the transport
+refused is sent again with the quad behind it.
 
 The inbox rides the joiner's save transfer, so it arrives whole. A mail written during the 30 to
 60 seconds the joiner spends loading is in neither that save nor any later diff, so the host
@@ -489,7 +502,7 @@ an error line.
 | The coin collect has two entries; the interceptor sits on the overlap entry, and the E-press entry dispatches inside the Blueprint where it cannot fire, so a coin a client collects by pressing is credited on the client only and the host's next balance broadcast erases it | `[V]` `coop/items/coingun_sync` |
 | A client's earnings from anything but the drone and the coin gun (a point sack, a chest, an achievement) reach only its own machine and are erased by the host's next broadcast | `[V]` `coop/world/balance_sync` is one-way |
 | A client's light-group index has been reported dropping to zero after a join; not reproduced | `[?]` [issue 11](https://github.com/VOTV-MP/Multivoid/issues/11) |
-| A slot change reaches the other peer on the next poll, so up to a second plus the round trip. A player who reaches a box inside that window acts on the slot as it was: an eject of a disc the other peer has just inserted answers "No floppy disc in the slot" and is not retried | `[V]` the lane polls at 1 Hz; a faster poll would narrow the window rather than close it |
+| A slot change reaches the other peer on the next poll, so up to a second plus the round trip. A player who reaches a box inside that window acts on the slot as it was: an eject of a disc the other peer has just inserted answers "No floppy disc in the slot" and is not retried, and a client's insert into a slot the host has just filled replaces the host's disc when the claim lands, which loses that disc | `[V]` the lane polls at 1 Hz, and the host applies a claim over whatever its slot holds (`coop/interactables/floppy_slot_sync`); a faster poll would narrow the window rather than close it |
 
 ## Code map
 

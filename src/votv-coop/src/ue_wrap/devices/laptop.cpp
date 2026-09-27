@@ -22,7 +22,6 @@ namespace R = reflection;
 // free-what-we-replaced doctrine is documented there.
 using field_io::FStringView;
 using field_io::TArrayView;
-using field_io::ReadFStringAt;
 using field_io::WriteFStringField;
 using field_io::ReadFStringArrayField;
 using field_io::WriteFStringArrayField;
@@ -48,7 +47,6 @@ uint64_t g_nextResolveTryMs = 0;
 // is loaded by construction, so nothing waits on a widget class by name, and its verbs go through
 // the dispatch cache, which climbs to the declaring class (RemoveFromParent is UWidget's).
 R::InstanceOffset g_widgetBufferSlots{L"bufferSlots"};  // ui_laptop.bufferSlots (TArray<UUserWidget*>)
-R::InstanceOffset g_bufRowData{L"data"};                // ui_bufferDatablock_C.data (FString)
 R::InstanceOffset g_widgetNearestActor{L"nearestActor"};  // ui_laptop.nearestActor (AActor*)
 
 void* WidgetOf(void* inst) {
@@ -230,32 +228,6 @@ bool WriteQuadAndRebuild(const BufferQuad& in) {
     // Rebuild: the native loadData recipe (genFloppyBuffer + updFloppy).
     component_calls::CallParamlessNamed(widget, L"genFloppyBuffer");
     CallWidgetUpdFloppy(l);
-    return true;
-}
-
-bool ReadWidgetBufferMirror(int32_t& outCount, uint64_t& outFnv) {
-    void* l = Instance();
-    if (!l) return false;
-    void* widget = WidgetOf(l);
-    const int32_t slotsOff = g_widgetBufferSlots.Of(widget);
-    if (slotsOff < 0) return false;
-    const auto* slots = reinterpret_cast<const TArrayView*>(
-        reinterpret_cast<const uint8_t*>(widget) + slotsOff);
-    outCount = (slots->data && slots->num > 0 && slots->num <= 4096) ? slots->num : 0;
-    uint64_t h = 1469598103934665603ull;
-    for (int32_t i = 0; i < outCount; ++i) {
-        void* row = *reinterpret_cast<void* const*>(slots->data + i * 8);
-        if (!row || !R::IsLive(row)) continue;
-        const int32_t dataOff = g_bufRowData.Of(row);
-        if (dataOff < 0) return false;
-        const std::wstring s = ReadFStringAt(row, dataOff);
-        const auto* bytes = reinterpret_cast<const uint8_t*>(s.data());
-        for (size_t b = 0; b < s.size() * sizeof(wchar_t); ++b) {
-            h ^= bytes[b];
-            h *= 1099511628211ull;
-        }
-    }
-    outFnv = h;
     return true;
 }
 

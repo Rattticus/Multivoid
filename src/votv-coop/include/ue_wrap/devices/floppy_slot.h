@@ -58,8 +58,11 @@ bool ReadContent(DeviceKind kind, void* device, Content& out);
 
 // Alloc-free digest over the slot's raw field buffers -- the scalars, and the FString and
 // TArray<FString> bytes read through their headers, with no string minted. It is the poll's
-// pre-filter, so a full read runs only where the digest moved.
-bool ReadDigest(DeviceKind kind, void* device, uint64_t& out);
+// pre-filter, so a full read runs only where the digest moved. `Occupancy` hashes which disc sits
+// in the slot (its type, zip, name type and record) and leaves out what a disc's own files change
+// while it sits there (the rows, the read-writes): a device whose file edits another lane carries.
+enum class DigestScope : uint8_t { Whole, Occupancy };
+bool ReadDigest(DeviceKind kind, void* device, uint64_t& out, DigestScope scope);
 
 // The slot's OVERLAP entries: the BeginOverlap delegates a device binds on the hitbox that feeds
 // its slot, which take a disc without anybody pressing anything. The box binds one on `Box`, the

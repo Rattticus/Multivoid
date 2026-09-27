@@ -3,13 +3,16 @@
 #include "coop/interactables/floppy_slot_sync.h"
 
 #include "coop/comms/chat_feed.h"  // ToUtf8
+#include "coop/interactables/laptop_buffer_sync.h"  // the quad's shadow primes after a laptop apply
 #include "coop/net/blob_chunks.h"
 #include "coop/net/session.h"
 
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/actors/floppy_disc.h"
 #include "ue_wrap/devices/floppy_slot.h"
+#include "ue_wrap/devices/laptop.h"
 #include "ue_wrap/devices/serverbox.h"
 
 #include <windows.h>
@@ -63,7 +66,9 @@ std::wstring FromUtf8(const std::string& s) {
 }
 
 // ---- wire ----
-// head [u8 op][u8 deviceKind]; op 0=claim{[u8 index][slot]}, 1=canonical{[u16 n]{[u8 index][slot]}}
+// head [u8 op][u8 deviceKind]; op 0=claim{[u8 index][slot]}, 1=canonical{[u32 generation][u16 n]{[u8 index][slot]}}
+// The generation counts the host's changes of the laptop's occupancy (0 for the boxes): the laptop's file quad carries
+// it too, so the two lanes agree which disc an edit belongs to.
 // slot [i32 type][i32 rw][u8 zip][u32 nametypeLen][utf8][u32 jsonLen][utf8][u16 rows]{[u32 len][utf8]}
 // nametype is empty for every class but the laptop's, and it is on the wire because the format
 // claims to leave room for that device: a member the digest raises an edge on and the wire drops
@@ -139,14 +144,25 @@ bool ParseSlot(Reader& r, Slot& out) {
 
 // ---- devices ----
 
-// The live device list for a kind. Only the server box has one today; the laptop is the second
-// row this wire format leaves room for, and its own lane still owns it.
+// The live device list for a kind: the gamemode's server boxes, or the one laptop.
+constexpr FS::DeviceKind kKinds[] = {FS::DeviceKind::ServerBox, FS::DeviceKind::Laptop};
+
 size_t ReadDevices(FS::DeviceKind kind, std::vector<void*>& out) {
     out.clear();
-    if (kind != FS::DeviceKind::ServerBox) return 0;
+    if (kind == FS::DeviceKind::Laptop) {
+        void* laptop = ue_wrap::laptop::EnsureResolved() ? ue_wrap::laptop::Instance() : nullptr;
+        if (laptop) out.push_back(laptop);
+        return out.size();
+    }
     SB::ReadServers(out);
     if (out.size() > kMaxDevices) out.resize(kMaxDevices);
     return out.size();
+}
+
+// The laptop's file rows and read-writes are the quad's (coop/interactables/laptop_buffer_sync) between two changes of
+// its occupancy, so its digest is the occupancy alone and a file edit raises no claim here.
+FS::DigestScope ScopeOf(FS::DeviceKind kind) {
+    return kind == FS::DeviceKind::Laptop ? FS::DigestScope::Occupancy : FS::DigestScope::Whole;
 }
 
 bool ReadSlotOf(FS::DeviceKind kind, void* device, Slot& out) {
@@ -165,8 +181,10 @@ std::set<uint32_t> g_unsendable;     // slots this peer cannot put on the wire a
 // session's. Its boxes come up at class defaults, the save's loadData fills them a tick or two
 // later, and a sweep that read THAT as a local edge would claim the joiner's stale world over the
 // host's live one -- publishing, as canonical, the disappearance of a disc the host inserted after
-// its last save. Prime and stay mute until the host has spoken.
-bool g_haveCanonical = false;
+// its last save. Prime and stay mute until the host has spoken -- per kind, because each kind's
+// connect set is its own blob and a refused one is retried alone: the boxes' set landing first says
+// nothing about the laptop.
+bool g_haveCanonical[FS::kDeviceKindCount] = {};
 
 // CLIENT: a claim the host drops -- for its rate, its size, a bad index or a malformed body --
 // gets no answer of any kind, and this peer primed its shadow when the claim was SENT. Without
@@ -179,6 +197,25 @@ constexpr int      kMaxClaimTries = 3;
 // HOST: a joiner whose connect set the transport refused has a permanently stale world -- the 1 Hz
 // sweep covers edges, not a set nobody asked for. Re-send it.
 std::map<int, int> g_connectRetry;   // peer slot -> tries left
+
+// The laptop's generation: the host's count of its occupancy changes; a client's is the last canonical's.
+uint32_t g_laptopGen = 0;
+uint32_t GenOf(FS::DeviceKind kind) { return kind == FS::DeviceKind::Laptop ? g_laptopGen : 0; }
+
+// HOST: the occupancy the current generation names. The generation moves when the laptop's occupancy does, however the
+// host comes to see it -- its sweep, its silent prime, its answer to a claim -- and at nothing else: a claim for the disc
+// the laptop already holds, or a publish the transport refused and the sweep sends again, names the same disc.
+uint64_t g_laptopGenDigest = 0;
+bool     g_laptopGenKnown = false;
+
+void NoteLaptopOccupancy(void* laptop) {
+    uint64_t d = 0;
+    if (!FS::ReadDigest(FS::DeviceKind::Laptop, laptop, d, FS::DigestScope::Occupancy)) return;
+    if (g_laptopGenKnown && d == g_laptopGenDigest) return;
+    if (g_laptopGenKnown) ++g_laptopGen;
+    g_laptopGenDigest = d;
+    g_laptopGenKnown = true;
+}
 constexpr int kMaxConnectTries = 5;
 uint64_t g_nextSweep = 0;
 coop::blob_chunks::Assembler g_asm;
@@ -204,7 +241,7 @@ bool AnyClientReady(coop::net::Session* s) {
 
 void PrimeShadow(FS::DeviceKind kind, size_t index, void* device) {
     uint64_t d = 0;
-    if (FS::ReadDigest(kind, device, d)) g_shadow[ShadowKey(kind, index)] = d;
+    if (FS::ReadDigest(kind, device, d, ScopeOf(kind))) g_shadow[ShadowKey(kind, index)] = d;
 }
 
 // A slot this peer cannot put on the wire -- past the size ceiling, or with rows the reader will
@@ -261,6 +298,7 @@ std::vector<std::vector<uint8_t>> PackCanonicalSet(
         std::vector<uint8_t> blob;
         blob.push_back(kOpCanonical);
         blob.push_back(static_cast<uint8_t>(kind));
+        PutU32(blob, GenOf(kind));
         PutU16(blob, count);
         blob.insert(blob.end(), body.begin(), body.end());
         blobs.push_back(std::move(blob));
@@ -268,15 +306,25 @@ std::vector<std::vector<uint8_t>> PackCanonicalSet(
     return blobs;
 }
 
-bool SlotEquals(const Slot& a, const Slot& b) {
+bool SlotEquals(FS::DeviceKind kind, const Slot& a, const Slot& b) {
     // Two empty slots are the same slot. What each still holds in floppyReadwrites and
     // floppyObjectData is residue its own eject left for a deferred spawn to read, not state, and
     // comparing it would make every peer rewrite an empty box it already agrees about.
     if (a.st.floppyType < 0 || b.st.floppyType < 0)
         return a.st.floppyType < 0 && b.st.floppyType < 0;
-    return a.st.floppyType == b.st.floppyType && a.st.readWrites == b.st.readWrites &&
-           a.st.zip == b.st.zip && a.c.nametype == b.c.nametype &&
-           a.c.objectData == b.c.objectData && a.c.data == b.c.data;
+    const bool sameDisc = a.st.floppyType == b.st.floppyType && a.st.zip == b.st.zip &&
+                          a.c.nametype == b.c.nametype && a.c.objectData == b.c.objectData;
+    // The laptop holding the disc the canonical names is the canonical: its rows and read-writes are its quad's
+    // until the disc changes, and a peer's own edits since its claim are in them.
+    if (ScopeOf(kind) == FS::DigestScope::Occupancy) return sameDisc;
+    return sameDisc && a.st.readWrites == b.st.readWrites && a.c.data == b.c.data;
+}
+
+// Every change of the laptop's occupancy this lane takes -- a claim sent, a publish, a canonical written -- moves the
+// disc's rows with it, so the quad's shadow takes them there: an edit made after it is the quad's to send, and one made
+// before it rode the slot.
+void PrimeQuadIfLaptop(FS::DeviceKind kind) {
+    if (kind == FS::DeviceKind::Laptop) coop::laptop_buffer_sync::PrimeQuadBaseline();
 }
 
 // Apply one slot to a live device and prime the shadow to what was written, so the next poll
@@ -294,19 +342,21 @@ bool ApplySlot(FS::DeviceKind kind, size_t index, void* device, const Slot& s) {
     }
     Slot cur;
     const bool read = ReadSlotOf(kind, device, cur);
-    if (read && SlotEquals(cur, s)) {
+    if (read && SlotEquals(kind, cur, s)) {
         PrimeShadow(kind, index, device);
         return false;
     }
     if (s.st.floppyType < 0) FS::ClearSlot(kind, device);
     else                     FS::WriteSlot(kind, device, s.st, s.c);
     PrimeShadow(kind, index, device);
+    PrimeQuadIfLaptop(kind);
     return true;
 }
 
 // ---- host ----
 
 void HostBroadcastOne(coop::net::Session* s, FS::DeviceKind kind, size_t index, void* device) {
+    if (kind == FS::DeviceKind::Laptop) NoteLaptopOccupancy(device);
     Slot cur;
     if (!ReadSlotOf(kind, device, cur)) {
         ParkUnsendable(kind, index, device, "its rows did not read", 0);
@@ -316,6 +366,7 @@ void HostBroadcastOne(coop::net::Session* s, FS::DeviceKind kind, size_t index, 
     // refused chunks, and the joiner's ready edge sends the whole set anyway.
     if (!AnyClientReady(s)) {
         PrimeShadow(kind, index, device);
+        PrimeQuadIfLaptop(kind);
         g_retry.erase(ShadowKey(kind, index));
         return;
     }
@@ -327,11 +378,13 @@ void HostBroadcastOne(coop::net::Session* s, FS::DeviceKind kind, size_t index, 
     std::vector<uint8_t> blob;
     blob.push_back(kOpCanonical);
     blob.push_back(static_cast<uint8_t>(kind));
+    PutU32(blob, GenOf(kind));
     PutU16(blob, 1);
     blob.insert(blob.end(), body.begin(), body.end());
     if (coop::blob_chunks::SendBlob(s, coop::net::ReliableKind::FloppySlotState, g_nextSeq++,
                                     blob)) {
         PrimeShadow(kind, index, device);
+        PrimeQuadIfLaptop(kind);
         g_retry.erase(ShadowKey(kind, index));
         g_unsendable.erase(ShadowKey(kind, index));
     } else {
@@ -364,6 +417,7 @@ void ClientClaim(coop::net::Session* s, FS::DeviceKind kind, size_t index, void*
         // The claim is a report, not the truth: prime on the SENT state so the poll stops
         // re-claiming, and let the host's canonical correct it if the host said otherwise.
         PrimeShadow(kind, index, device);
+        PrimeQuadIfLaptop(kind);
         const uint32_t key = ShadowKey(kind, index);
         g_retry.erase(key);
         g_unsendable.erase(key);
@@ -382,8 +436,7 @@ void ClientClaim(coop::net::Session* s, FS::DeviceKind kind, size_t index, void*
 
 // Every device's slot to one joiner. True when every blob was accepted; a refused one leaves the
 // retry armed, because the 1 Hz sweep covers EDGES and a set nobody asked for is not an edge.
-bool SendConnectSet(coop::net::Session* s, int peerSlot) {
-    const auto kind = FS::DeviceKind::ServerBox;
+bool SendConnectSetOf(coop::net::Session* s, int peerSlot, FS::DeviceKind kind) {
     if (!FS::EnsureResolved(kind)) return false;
     std::vector<void*> devices;
     const size_t n = ReadDevices(kind, devices);
@@ -412,8 +465,18 @@ bool SendConnectSet(coop::net::Session* s, int peerSlot) {
                                               g_nextSeq++, b))
             ++sent;
     const bool whole = sent == static_cast<int>(blobs.size());
-    UE_LOGI("floppy_slot_sync: connect set -> slot %d (%zu device(s) in %d of %zu blob(s))",
-            peerSlot, entries.size(), sent, blobs.size());
+    UE_LOGI("floppy_slot_sync: connect set -> slot %d (kind %u: %zu device(s) in %d of %zu blob(s), generation %u)",
+            peerSlot, static_cast<unsigned>(kind), entries.size(), sent, blobs.size(), GenOf(kind));
+    // The laptop's file quad follows its slot on the same lane and under the same generation, so a joiner takes the
+    // disc before its files, and a set the transport refused brings its quad with its retry.
+    if (whole && kind == FS::DeviceKind::Laptop) coop::laptop_buffer_sync::QueueConnectBroadcastForSlot(peerSlot);
+    return whole;
+}
+
+// The boxes', then the laptop's: a kind that did not go out keeps the retry armed.
+bool SendConnectSet(coop::net::Session* s, int peerSlot) {
+    bool whole = true;
+    for (FS::DeviceKind kind : kKinds) whole = SendConnectSetOf(s, peerSlot, kind) && whole;
     if (whole) g_connectRetry.erase(peerSlot);
     return whole;
 }
@@ -469,6 +532,38 @@ bool RateAllows(uint8_t senderSlot, bool& warnNow) {
     return true;
 }
 
+// One kind's sweep: a device whose digest left the shadow is published (host) or claimed (client).
+void SweepKind(coop::net::Session* s, FS::DeviceKind kind, bool host) {
+    if (!FS::EnsureResolved(kind)) return;
+    static std::vector<void*> devices;  // reused: the sweep must not allocate a list per second
+    const size_t n = ReadDevices(kind, devices);
+    for (size_t i = 0; i < n; ++i) {
+        void* d = devices[i];
+        if (!d || !R::IsLive(d)) continue;
+        uint64_t digest = 0;
+        if (!FS::ReadDigest(kind, d, digest, ScopeOf(kind))) continue;
+        const uint32_t key = ShadowKey(kind, i);
+        auto it = g_shadow.find(key);
+        if (it == g_shadow.end()) {
+            // First sight primes silently: a prime is not an edge, and the joiner's own connect
+            // set is what makes the two peers agree at the start.
+            g_shadow[key] = digest;
+            if (host && kind == FS::DeviceKind::Laptop) NoteLaptopOccupancy(d);
+            continue;
+        }
+        if (!host && !g_haveCanonical[static_cast<uint8_t>(kind)]) {
+            // Pre-canonical, every local difference is this peer's own save loading. Prime it
+            // away rather than claiming it.
+            g_shadow[key] = digest;
+            continue;
+        }
+        const bool overdue = !host && AnswerOverdue(key, d, i, kind);
+        if (it->second == digest && !g_retry.count(key) && !overdue) continue;
+        if (host) HostBroadcastOne(s, kind, i, d);
+        else      ClientClaim(s, kind, i, d);
+    }
+}
+
 }  // namespace
 
 void Install(coop::net::Session* session) {
@@ -485,38 +580,10 @@ void Tick() {
 
     g_asm.Sweep(std::chrono::steady_clock::now(), std::chrono::seconds(10));
 
-    const auto kind = FS::DeviceKind::ServerBox;
-    if (!FS::EnsureResolved(kind)) return;
-
     const bool host = IsHost();
     if (host) DrainConnectRetries(s);
 
-    static std::vector<void*> devices;  // reused: the sweep must not allocate a list per second
-    const size_t n = ReadDevices(kind, devices);
-    for (size_t i = 0; i < n; ++i) {
-        void* d = devices[i];
-        if (!d || !R::IsLive(d)) continue;
-        uint64_t digest = 0;
-        if (!FS::ReadDigest(kind, d, digest)) continue;
-        const uint32_t key = ShadowKey(kind, i);
-        auto it = g_shadow.find(key);
-        if (it == g_shadow.end()) {
-            // First sight primes silently: a prime is not an edge, and the joiner's own connect
-            // set is what makes the two peers agree at the start.
-            g_shadow[key] = digest;
-            continue;
-        }
-        if (!host && !g_haveCanonical) {
-            // Pre-canonical, every local difference is this peer's own save loading. Prime it
-            // away rather than claiming it.
-            g_shadow[key] = digest;
-            continue;
-        }
-        const bool overdue = !host && AnswerOverdue(key, d, i, kind);
-        if (it->second == digest && !g_retry.count(key) && !overdue) continue;
-        if (host) HostBroadcastOne(s, kind, i, d);
-        else      ClientClaim(s, kind, i, d);
-    }
+    for (FS::DeviceKind kind : kKinds) SweepKind(s, kind, host);
 }
 
 void OnChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) {
@@ -606,6 +673,7 @@ void OnChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) {
                 static_cast<unsigned>(senderSlot));
         return;
     }
+    const uint32_t gen = r.U32();
     const uint16_t count = r.U16();
     if (count > kMaxDevices) {
         UE_LOGW("floppy_slot_sync: canonical names %u devices, past the %zu that can exist -- "
@@ -626,7 +694,8 @@ void OnChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) {
     if (!r.ok)
         UE_LOGW("floppy_slot_sync: canonical truncated after %d of %u device(s)",
                 applied + unchanged + skipped, count);
-    g_haveCanonical = true;
+    g_haveCanonical[kindB] = true;
+    if (kind == FS::DeviceKind::Laptop && r.ok) g_laptopGen = gen;
     if (applied || skipped)
         UE_LOGI("floppy_slot_sync: CLIENT applied canonical -- %d device(s) written, %d already "
                 "matched, %d skipped (of %zu local)", applied, unchanged, skipped, n);
@@ -637,6 +706,29 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
     if (!s || s->role() != coop::net::Role::Host) return;
     g_connectRetry[peerSlot] = kMaxConnectTries;
     SendConnectSet(s, peerSlot);
+}
+
+uint32_t LaptopGeneration() { return g_laptopGen; }
+
+bool LaptopOccupancySettled() {
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s || !s->connected()) return true;  // no session: nobody to agree with
+    constexpr auto kLaptop = FS::DeviceKind::Laptop;
+    void* laptop = ue_wrap::laptop::EnsureResolved() ? ue_wrap::laptop::Instance() : nullptr;
+    uint64_t d = 0;
+    if (!laptop || !FS::EnsureResolved(kLaptop) || !FS::ReadDigest(kLaptop, laptop, d, FS::DigestScope::Occupancy))
+        return false;
+    const uint32_t key = ShadowKey(kLaptop, 0);
+    auto it = g_shadow.find(key);
+    if (it == g_shadow.end() || it->second != d) return false;  // an edge this lane has not taken yet
+    if (IsHost()) return !g_retry.count(key);                     // published
+    return g_haveCanonical[static_cast<uint8_t>(kLaptop)] && !g_awaiting.count(key);  // the host answered its claim
+}
+
+void DevClaimLaptopNow() {
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s || !s->connected() || IsHost()) return;
+    SweepKind(s, FS::DeviceKind::Laptop, false);
 }
 
 void OnPeerGone(uint8_t senderSlot) {
@@ -650,8 +742,12 @@ void OnDisconnect() {
     g_unsendable.clear();
     g_awaiting.clear();
     g_connectRetry.clear();
-    g_haveCanonical = false;
+    for (bool& have : g_haveCanonical) have = false;
+    g_laptopGen = 0;
+    g_laptopGenDigest = 0;
+    g_laptopGenKnown = false;
     FS::ResetCache();
+    ue_wrap::floppy_disc::ResetCache();  // the disc's class and offsets are world-scoped too
     g_rate.clear();
     g_asm.Clear();
     g_nextSweep = 0;

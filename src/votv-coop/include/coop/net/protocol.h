@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 206;
+inline constexpr uint16_t kProtocolVersion = 207;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -555,8 +555,8 @@ enum class ReliableKind : uint8_t {
     // component. DeskSndFxPayload.
     DeskSndFx = 105,
 
-    // From the presser, relayed: the laptop's power and floppy edges, its connect state and the
-    // portable PC's lid. LaptopStatePayload; content rides LaptopBlob.
+    // From the presser, relayed: the laptop's power edge, its connect state and the portable PC's
+    // lid. LaptopStatePayload. The laptop's disc slot is FloppySlotState's.
     LaptopState = 106,
 
     // From the presser, relayed: deck playback play or stop, generation-guarded. PlayDeckEventPayload.
@@ -590,12 +590,9 @@ enum class ReliableKind : uint8_t {
     // content hashes in array order; clients apply host-authored lines only.
     MeadowOrder = 114,
 
-    // Laptop slot or disc content as a chunked blob; the host refans a client's chunks as they are.
-    // Same lane as LaptopState.
-    LaptopBlob = 115,
-
     // Client to host: an edit-script batch over the laptop's file buffers; host to all: the
-    // canonical quad, which is also the acknowledgement. Chunked blob.
+    // canonical quad, which is also the acknowledgement. Both carry the laptop's slot generation
+    // (FloppySlotState's) and ride its lane. Chunked blob.
     LaptopQuad = 116,
 
     // Client to host: push or pop on a disc crate; host to all: the canonical arrays; host to one
@@ -1666,18 +1663,15 @@ struct SkySignalCatchPayload {
 };
 static_assert(sizeof(SkySignalCatchPayload) == 68, "SkySignalCatchPayload must be 68 bytes");
 
-// The laptop's edges (LaptopState). op: 0 power, 1 insert (slot scalars plus the thrown disc's eid,
-// 0 when held), 2 eject, 3 connect state, 6 the portable PC's lid. Content rides LaptopBlob.
+// The laptop's power and the portable PC's lid (LaptopState). op: 0 power, 3 connect state, 6 the
+// portable PC's lid.
 struct LaptopStatePayload {
-    uint8_t  op;          // 0=power, 1=insert, 2=eject, 3=state, 6=portable-PC lid
+    uint8_t  op;          // 0=power, 3=state, 6=portable-PC lid
     uint8_t  isOpened;    // op 0/3: laptop power; op 6: lid opened
-    uint8_t  zip;         // op 1/3
-    uint8_t  slot;        // op 1: 0=floppy hitbox, 1=zip hitbox
-    int32_t  floppyType;  // op 1/3 (-1 = empty)
-    int32_t  readWrites;  // op 1/3
-    uint32_t eid;         // op 1: thrown world-disc eid (0=held); op 6: portable PC eid
+    uint8_t  _pad[2];     // 2 -- zeroed
+    uint32_t eid;         // op 6: portable PC eid
 };
-static_assert(sizeof(LaptopStatePayload) == 16, "LaptopStatePayload must be 16 bytes");
+static_assert(sizeof(LaptopStatePayload) == 8, "LaptopStatePayload must be 8 bytes");
 static_assert(sizeof(LaptopStatePayload) <= 228, "LaptopStatePayload must fit the inline reliable buffer");
 
 // The desk's scalar snapshot (DeskState), host to a joiner with adopt set; receivers write raw and

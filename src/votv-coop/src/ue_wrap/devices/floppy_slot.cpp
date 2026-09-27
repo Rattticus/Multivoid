@@ -284,7 +284,7 @@ bool ReadContent(DeviceKind kind, void* device, Content& out) {
     return !(rawRows > 0 && out.data.empty());
 }
 
-bool ReadDigest(DeviceKind kind, void* device, uint64_t& out) {
+bool ReadDigest(DeviceKind kind, void* device, uint64_t& out, DigestScope scope) {
     const Desc* d = DescOf(kind);
     if (!device || !d || !d->resolved) return false;
     const auto* p = reinterpret_cast<const uint8_t*>(device);
@@ -295,10 +295,11 @@ bool ReadDigest(DeviceKind kind, void* device, uint64_t& out) {
     // own second phase clears floppyObjectData once it has read it -- floppyReadwrites it never
     // clears at all -- and a poll reading either would publish twice.
     if (*reinterpret_cast<const int32_t*>(p + d->offType) < 0) { out = h; return true; }
-    Mix(h, p + d->offReadWrites, sizeof(int32_t));
     if (d->offZip >= 0) Mix(h, p + d->offZip, 1);
     MixFString(h, device, d->offNametype);
     MixFString(h, device, d->offObjectData);
+    if (scope == DigestScope::Occupancy) { out = h; return true; }
+    Mix(h, p + d->offReadWrites, sizeof(int32_t));
     const auto* arr = reinterpret_cast<const TArrayView*>(p + d->offData);
     const int32_t rows = (arr->data && arr->num > 0 && arr->num <= kMaxCount) ? arr->num : 0;
     Mix(h, &rows, sizeof(rows));
