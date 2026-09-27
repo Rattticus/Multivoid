@@ -39,4 +39,10 @@ int ReadLocal();
 // does not resolve or `mode` names no mode (nothing written). Game thread.
 int WriteTo(void* gameInstance, int mode);
 
+// Whether the running world lets its players cheat, as the game's own gate, lib_C::isBuoyant, answers when its
+// gamemode is not flying: the gamemode's hasWeapon, which Sandbox sets (mainGamemode.cpp:2879-2883,
+// lib.cpp:1646-1688). Read, never that gate called: its flying branch reads a key file and, without one, quits
+// the game (lib.cpp:1690-1698). False while flying, or when the gamemode or its members do not read. Game thread.
+bool CheatsAllowed(bool& allowed);
+
 }  // namespace ue_wrap::game_mode

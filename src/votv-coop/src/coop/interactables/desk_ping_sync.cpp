@@ -16,7 +16,7 @@
 #include "ue_wrap/desk/coords_panel.h"
 #include "ue_wrap/desk/desk_ping.h"
 #include "ue_wrap/world/profile.h"
-#include "ue_wrap/world/votv_lib.h"
+#include "ue_wrap/world/game_mode.h"
 
 #include <atomic>
 #include <chrono>
@@ -36,11 +36,17 @@ std::atomic<coop::net::Session*> g_session{nullptr};
 Counts g_counts;
 
 // A client sends one verdict a ping, and a ping runs for seconds; past this a sender's intents are dropped unanswered
-// and said at most every kSayEveryMs.
+// and said at most every kSayEveryMs. An insta-catch is a click in the cheat menu, and has a budget of its own, so
+// the clicks spend nothing a ping needs.
 constexpr coop::net::IntentBudget kBudget{4.0f, 0.5f};
+constexpr coop::net::IntentBudget kInstaBudget{4.0f, 2.0f};
 constexpr uint64_t kSayEveryMs = 10000;
 coop::net::IntentBucket g_budget[coop::net::kMaxPeers];
+coop::net::IntentBucket g_instaBudget[coop::net::kMaxPeers];
 uint64_t g_nextSayMs[coop::net::kMaxPeers] = {};
+// A refusal is answered every time and said at most every kSayEveryMs a sender, the ones between counted.
+uint64_t g_nextRefuseSayMs[coop::net::kMaxPeers] = {};
+uint32_t g_refusedQuiet[coop::net::kMaxPeers] = {};
 
 uint64_t NowMs() {
     using namespace std::chrono;
@@ -251,8 +257,9 @@ bool Finite(const CP::DishAim& a) {
 }
 
 void OnIntent(coop::net::Session& s, const coop::net::DeskPingVerdictPayload& p, uint8_t slot) {
+    const bool insta = p.op == PV::kOpInsta;
     const uint64_t now = NowMs();
-    if (!g_budget[slot].Take(kBudget, now)) {
+    if (!(insta ? g_instaBudget[slot].Take(kInstaBudget, now) : g_budget[slot].Take(kBudget, now))) {
         ++g_counts.overBudget;
         if (now >= g_nextSayMs[slot]) {
             g_nextSayMs[slot] = now + kSayEveryMs;
@@ -261,37 +268,49 @@ void OnIntent(coop::net::Session& s, const coop::net::DeskPingVerdictPayload& p,
         }
         return;
     }
-    const bool insta = p.op == PV::kOpInsta;
     void* desk = CD::EnsureResolved() ? CD::Instance() : nullptr;
     bool pinging = false;
     // A ping's verdict is primed through the coordinate process's watch; every verdict is counted through its own.
     const bool rolls = g_live[kWatchVerdict] && (insta || g_live[kWatchProcess]);
     const bool readable = rolls && desk && DP::ReadPinging(desk, pinging);
-    const bool claimed = coop::device_occupancy::HolderOf(L"desk") == slot;
+    // A ping runs from the desk its sender holds; the cheat menu's insta-catch from anywhere, as its key has no
+    // interface gate (mainPlayer.cpp:2457-2490), on the aim of whoever holds the desk.
+    const bool holds = coop::device_occupancy::HolderOf(L"desk") == slot;
+    const bool claimed = insta || holds;
     const CP::DishAim aim = AimOf(p);
     const bool finite = Finite(aim);
-    // A ping's verdict comes from a ping its sender runs, as the input lane reports it, on a triangle the atlas pings;
-    // an insta-catch's, from a game that lets its players cheat, the host's being the world's.
-    bool cheats = false;
-    const bool from = insta ? (desk && ue_wrap::votv_lib::CheatsAllowed(desk, cheats) && cheats)
-                            : coop::desk_input_sync::PingActiveSlot() == slot && CP::AimCanPing(aim);
     const bool busy = pinging || g_run.queued || g_run.pending;
+    // A ping's verdict comes from a ping its sender runs, as the input lane reports it, on a triangle the atlas pings;
+    // an insta-catch's, from a game that lets its players cheat, the host's being the world's (read off the
+    // gamemode, never the gate that can quit a game).
+    bool cheats = false;
+    const bool from = !insta ? coop::desk_input_sync::PingActiveSlot() == slot && CP::AimCanPing(aim)
+                             : ue_wrap::game_mode::CheatsAllowed(cheats) && cheats;
     if (!readable || !claimed || !finite || !from || busy) {
         const bool onlyBusy = readable && claimed && finite && from;
         if (onlyBusy) ++g_counts.busy;
         Send(&s, slot, PV::kOpRefused, p.seq, onlyBusy ? PV::kRefusedBusy : PV::kRefusedLost);
-        UE_LOGI("desk_ping: HOST refused slot %u's %s verdict #%u (%s)", static_cast<unsigned>(slot),
-                insta ? "insta-catch's" : "ping's", p.seq,
+        if (now < g_nextRefuseSayMs[slot]) {
+            ++g_refusedQuiet[slot];
+            return;
+        }
+        g_nextRefuseSayMs[slot] = now + kSayEveryMs;
+        UE_LOGI("desk_ping: HOST refused slot %u's %s verdict #%u (%s; %u more refused unsaid before it)",
+                static_cast<unsigned>(slot), insta ? "insta-catch's" : "ping's", p.seq,
                 !readable  ? "its desk or its watches are not live"
                 : !claimed ? "the sender does not hold the desk"
                 : !finite  ? "its view or aim is not finite"
                 : !from    ? (insta ? "the host's game does not let its players cheat"
                                     : "the sender runs no ping on a pingable triangle")
-                           : "its desk is pinging or holds another verdict");
+                           : "its desk is pinging or holds another verdict",
+                g_refusedQuiet[slot]);
+        g_refusedQuiet[slot] = 0;
         return;
     }
-    CP::WriteCursorOnly(aim.viewX, aim.viewY);
-    CP::WriteDishCommitted(aim);
+    if (holds) {
+        CP::WriteCursorOnly(aim.viewX, aim.viewY);
+        CP::WriteDishCommitted(aim);
+    }
     g_run = HostRun{};
     g_run.slot = slot;
     g_run.seq = p.seq;
@@ -305,8 +324,8 @@ void OnIntent(coop::net::Session& s, const coop::net::DeskPingVerdictPayload& p,
     }
     // The insta-catch runs now, as the sender's own call ran: its verdict and consequences inside this call.
     g_run.pending = true;
-    ++g_counts.instas;
     const bool called = DP::CallInstaCatch(desk);
+    if (called) ++g_counts.instas;
     if (g_run.pending) {
         g_run.pending = false;
         Send(&s, slot, PV::kOpRefused, p.seq);
@@ -407,7 +426,10 @@ void OnMessage(coop::net::Session& session, const coop::net::DeskPingVerdictPayl
 void OnPeerLeft(uint8_t slot) {
     if (slot >= coop::net::kMaxPeers) return;
     g_budget[slot].Reset();
+    g_instaBudget[slot].Reset();
     g_nextSayMs[slot] = 0;
+    g_nextRefuseSayMs[slot] = 0;
+    g_refusedQuiet[slot] = 0;
     // A verdict waiting for the desk goes with its pinger; one already primed rolled in its body, and the run that
     // follows is the input lane's to attribute (desk_input_sync::OnPeerLeft).
     if (g_run.queued && g_run.slot == slot) {
@@ -423,7 +445,10 @@ void OnDisconnect() {
     g_run = HostRun{};
     for (uint8_t slot = 0; slot < coop::net::kMaxPeers; ++slot) {
         g_budget[slot].Reset();
+        g_instaBudget[slot].Reset();
         g_nextSayMs[slot] = 0;
+        g_nextRefuseSayMs[slot] = 0;
+        g_refusedQuiet[slot] = 0;
     }
 }
 

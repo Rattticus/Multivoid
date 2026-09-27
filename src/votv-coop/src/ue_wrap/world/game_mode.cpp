@@ -27,7 +27,25 @@ int32_t ModeOffset(void* gameInstance) {
     return R::FindPropertyOffset(cls, L"GameMode");
 }
 
+// A bool member of the gamemode, read as the byte a Blueprint bool is.
+bool GamemodeBool(void* gm, R::InstanceOffset& member, bool& out) {
+    const int32_t off = member.Of(gm);
+    if (off < 0) return false;
+    out = *(static_cast<const uint8_t*>(gm) + off) != 0;
+    return true;
+}
+
 }  // namespace
+
+bool CheatsAllowed(bool& allowed) {
+    static R::InstanceOffset s_hasWeapon{L"hasWeapon"};
+    static R::InstanceOffset s_isFlying{L"isFlying"};
+    void* gm = world_singleton::Gamemode();
+    bool flying = false, weapon = false;
+    if (!gm || !GamemodeBool(gm, s_isFlying, flying) || flying || !GamemodeBool(gm, s_hasWeapon, weapon)) return false;
+    allowed = weapon;
+    return true;
+}
 
 const wchar_t* Name(int ord) { return IsValid(ord) ? kNames[ord] : nullptr; }
 

@@ -39,7 +39,7 @@ struct Counts {
     uint32_t answered;    // CLIENT: refusals from the host shown as a failed ping
     uint32_t finds;       // CLIENT: finds the host handed this profile
     uint32_t primed;      // HOST: client pings primed into its desk
-    uint32_t instas;      // HOST: client insta-catches run on its desk
+    uint32_t instas;      // HOST: client insta-catches dispatched on its desk
     uint32_t rolled;      // HOST: client verdicts its desk rolled
     uint32_t caught;      // HOST: client verdicts that caught
     uint32_t busy;        // HOST: intents refused while its desk was pinging or held another's verdict

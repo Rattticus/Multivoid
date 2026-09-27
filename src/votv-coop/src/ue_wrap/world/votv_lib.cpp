@@ -13,42 +13,44 @@ namespace {
 
 namespace R = ue_wrap::reflection;
 
-// One-time latched resolution (no per-call GUObjectArray walks). lib_C is a
-// BlueprintFunctionLibrary -- static BP calls dispatch on its CDO.
-// The default object is held by slot and serial, so a lib_C loaded again is found again rather than served dead.
+// lib_C is a BlueprintFunctionLibrary -- static BP calls dispatch on its CDO. The default object is held by slot and
+// serial, so a lib_C loaded again is found again rather than served dead; a class whose default object did not read
+// is not walked for it again. Each function comes through the memoised lookup, a miss served as a miss while its
+// class lives, so one that stops resolving costs its own callers alone and nothing per call.
 ue_wrap::CachedObjRef g_libCdo;
-void* g_stepFn  = nullptr;
-void* g_glossFn = nullptr;
-void* g_buoyantFn = nullptr;  // found on its own call, so step and addGloss never wait on it
+ue_wrap::CachedObjRef g_cdoMissFor;  // the lib_C class whose default object did not read
 
-bool Resolve() {
-    if (g_libCdo.Alive() && g_stepFn && g_glossFn) return true;
+void* Cdo() {
+    if (g_libCdo.Alive()) return g_libCdo.Raw();
     void* cls = R::FindClass(L"lib_C");
-    if (!cls) return false;  // not loaded yet (menu) -- retry on a later call
+    if (!cls || g_cdoMissFor.Is(cls)) return nullptr;  // not loaded yet (menu), or this class's did not read
+    g_libCdo.Set(R::FindClassDefaultObject(L"lib_C"));
     if (!g_libCdo.Alive()) {
-        g_libCdo.Set(R::FindClassDefaultObject(L"lib_C"));
-        g_stepFn = g_glossFn = g_buoyantFn = nullptr;  // found again on the class the new default object is of
+        g_cdoMissFor.Set(cls);
+        UE_LOGW("votv_lib: the lib_C class %p has no live default object -- its calls fail until it loads again", cls);
+        return nullptr;
     }
-    if (!g_stepFn) g_stepFn = R::FindFunction(cls, L"step");
-    if (!g_glossFn) g_glossFn = R::FindFunction(cls, L"addGloss");
-    if (g_libCdo.Alive() && g_stepFn && g_glossFn) {
-        UE_LOGI("votv_lib: resolved lib_C step and addGloss (cdo=%p)", g_libCdo.Raw());
-        return true;
-    }
-    return false;
+    UE_LOGI("votv_lib: resolved the lib_C default object (%p)", g_libCdo.Raw());
+    return g_libCdo.Raw();
+}
+
+void* Fn(const wchar_t* name) {
+    void* cdo = Cdo();
+    return cdo ? R::FindDispatchFunctionCached(R::ClassOf(cdo), name) : nullptr;
 }
 
 }  // namespace
 
 bool CharacterStep(void* character, float volume) {
-    if (!character || !Resolve()) return false;
+    void* fn = character ? Fn(L"step") : nullptr;
+    if (!fn) return false;
     // Signature: step(ACharacter* Character, float Z_offset, AActor* callActor, float Volume, float
     // Pitch, float speedVolume, UAudioComponent* AudioComponent, UObject* __WorldContext,
     // FHitResult& OutHit). Volume is the caller's -- a puppet's steps are presentation and read too
     // loud at the native 1.0 -- and callActor is us, where the local player's own call passes null.
     // lib_C::step tests callActor for int_objects and calls its `stepped`; mainPlayer_C implements
     // the interface with an empty event, so ours costs one dispatch and does nothing.
-    ue_wrap::ParamFrame f(g_stepFn);
+    ue_wrap::ParamFrame f(fn);
     f.Set<void*>(L"Character", character);
     f.Set<float>(L"Z_offset", 0.f);
     f.Set<void*>(L"callActor", character);
@@ -62,24 +64,13 @@ bool CharacterStep(void* character, float volume) {
 }
 
 bool AddGloss(const std::wstring& name, int32_t level, void* worldContext) {
-    if (name.empty() || !worldContext || !Resolve()) return false;
+    void* fn = !name.empty() && worldContext ? Fn(L"addGloss") : nullptr;
+    if (!fn) return false;
     const R::FName fname = ue_wrap::fname_utils::StringToFName(name);
     if (fname.ComparisonIndex == 0) return false;
-    ue_wrap::ParamFrame f(g_glossFn);
+    ue_wrap::ParamFrame f(fn);
     return f.valid() && f.Set<R::FName>(L"name", fname) && f.Set<int32_t>(L"level", level) &&
            f.Set<void*>(L"__WorldContext", worldContext) && ue_wrap::Call(g_libCdo.Raw(), f);
-}
-
-bool CheatsAllowed(void* worldContext, bool& allowed) {
-    if (!worldContext || !Resolve()) return false;
-    if (!g_buoyantFn) g_buoyantFn = R::FindFunction(R::ClassOf(g_libCdo.Raw()), L"isBuoyant");
-    if (!g_buoyantFn) return false;
-    ue_wrap::ParamFrame f(g_buoyantFn);
-    if (!f.valid() || !f.Set<void*>(L"actor", nullptr) || !f.Set<void*>(L"__WorldContext", worldContext) ||
-        !ue_wrap::Call(g_libCdo.Raw(), f))
-        return false;
-    allowed = f.Get<bool>(L"buoyant");
-    return true;
 }
 
 }  // namespace ue_wrap::votv_lib

@@ -31,10 +31,5 @@ bool CharacterStep(void* character, float volume);
 // resolves, or when the name does not convert. Game thread (ProcessEvent).
 bool AddGloss(const std::wstring& name, int32_t level, void* worldContext);
 
-// Dispatch lib_C::isBuoyant(null, worldContext): whether this machine's game lets its player cheat, the check the
-// cheat menu opens on and each of its commands runs (mainPlayer.cpp:2457-2460, ui_cheatMenu.cpp:732-735). It is the
-// gamemode's hasWeapon, set in Sandbox (mainGamemode.cpp:2879-2883), or, with isFlying, a developer key file matching
-// a hashed secret (lib.cpp:1652-1686). False when it does not dispatch. Game thread (ProcessEvent).
-bool CheatsAllowed(void* worldContext, bool& allowed);
 
 }  // namespace ue_wrap::votv_lib
