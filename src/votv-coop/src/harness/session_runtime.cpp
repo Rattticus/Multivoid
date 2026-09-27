@@ -422,17 +422,18 @@ void RunPlayLoop(bool bootedIntoGameplay) {
                         // by name. Blocks the TimelineThread, the abort drained inside.
                         //
                         // BOTH halves below are required. The direct arm is for a process that
-                        // auto-loaded its OWN world at boot (the LAN rigs, both peers given the same
-                        // save) AND still stands in it: the boot fact alone would send a rig that
-                        // quit to the menu, or whose host session ended and fled there, into a
-                        // connect with no world to connect in. A client in any other world downloads
-                        // the host's -- that world is not the join's -- and leaves its own for the
-                        // menu first, since the menu join assumes the menu (join_leave).
+                        // auto-loaded its OWN world at boot -- only the play test scenario boots so,
+                        // as a host or solo run; an env client boots at the menu -- AND still stands
+                        // in it: the boot fact alone would send one that quit to the menu, or whose
+                        // host session ended and fled there, into a connect with no world to connect
+                        // in. A client in any other world downloads the host's -- that world is not
+                        // the join's -- and leaves its own for the menu first, since the menu join
+                        // assumes the menu (join_leave).
                         if (pending.role == coop::net::Role::Client &&
                             !(bootedIntoGameplay && InGameplayWorld())) {
                             if (!harness::join_leave::Begin(pending)) StartMenuModeJoin_(pending);
                         } else if (!StartCoopSession(pending, &why)) {
-                            // A client standing in its own world (the rigs) gets the notice,
+                            // A client standing in its own booted world gets the notice,
                             // and the abort drain clears the cover: never a browser over
                             // gameplay. A host start here is only logged, by Start.
                             coop::join_progress::Fail(why.code, why.detail);
