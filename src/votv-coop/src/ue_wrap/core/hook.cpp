@@ -146,9 +146,10 @@ MH_STATUS DisableLocked(void* target) {
 // identical; only the byte encoding the follower keys on changes. Safe because it runs
 // before the enable: the target is still unpatched, so nothing executes the relay yet.
 // Fail-closed: if the expected relay signature is not in the slot, leave it untouched
-// (MinHook's layout changed; surface it rather than guess).
-bool MakeRelayFollowJmpImmune(void* trampoline, void* detour) {
-    if (!trampoline || !detour) return false;
+// (MinHook's layout changed; surface it rather than guess). Returns the relay, where the entry's
+// jump lands, or null when it was not found or not rewritten.
+uint8_t* MakeRelayFollowJmpImmune(void* trampoline, void* detour) {
+    if (!trampoline || !detour) return nullptr;
     auto* base = static_cast<uint8_t*>(trampoline);
     const uint64_t want = reinterpret_cast<uint64_t>(detour);
     uint8_t* relay = nullptr;
@@ -165,12 +166,12 @@ bool MakeRelayFollowJmpImmune(void* trampoline, void* detour) {
     if (!relay) {
         UE_LOGE("hook: immune-relay: FF25 relay not found in trampoline slot -- "
                 "MinHook layout changed? leaving relay as-is (fail-closed)");
-        return false;
+        return nullptr;
     }
     DWORD oldProt = 0;
     if (!VirtualProtect(relay, 14, PAGE_EXECUTE_READWRITE, &oldProt)) {
         UE_LOGE("hook: immune-relay: VirtualProtect(RWX) failed on relay %p", relay);
-        return false;
+        return nullptr;
     }
     uint8_t buf[14];
     buf[0] = 0x48; buf[1] = 0xB8;                 // mov rax, imm64
@@ -183,7 +184,7 @@ bool MakeRelayFollowJmpImmune(void* trampoline, void* detour) {
     FlushInstructionCache(GetCurrentProcess(), relay, 14);
     UE_LOGI("hook: immune-relay: relay @%p rewritten to MOV RAX,&detour/JMP RAX "
             "(followJmp-immune)", relay);
-    return true;
+    return relay;
 }
 
 }  // namespace
@@ -225,8 +226,9 @@ bool Install(void* target, void* detour, void** trampoline, bool followJmpImmune
     // so thread-safe). `*trampoline` is the slot base; the relay lives inside it. Best effort: a
     // failure is logged and non-fatal (the classic relay still works absent a co-resident
     // jmp-following hook engine).
+    uint8_t* relay = nullptr;
     if (followJmpImmune) {
-        MakeRelayFollowJmpImmune(*trampoline, detour);
+        relay = MakeRelayFollowJmpImmune(*trampoline, detour);
     }
     s = EnableLocked(target);
     if (s != MH_OK) {
@@ -253,7 +255,15 @@ bool Install(void* target, void* detour, void** trampoline, bool followJmpImmune
         if (n < kMaxEntries) {
             EntryShot& e = g_entries[n];
             e.target = target;
-            std::memcpy(e.expect, target, kJumpBytes);  // our jump
+            // Our jump as MinHook writes it, onto the relay in our trampoline's slot: composed, not read back, so
+            // a jump another engine wrote over ours between the enable and this record is caught too.
+            if (relay) {
+                const int32_t rel = static_cast<int32_t>(relay - (static_cast<uint8_t*>(target) + kJumpBytes));
+                e.expect[0] = 0xE9;
+                std::memcpy(e.expect + 1, &rel, sizeof(rel));
+            } else {
+                std::memcpy(e.expect, target, kJumpBytes);  // no relay found: our jump as it reads now
+            }
             std::memcpy(e.expect + kJumpBytes, before + kJumpBytes, kEntryBytes - kJumpBytes);
             const int back = ReturnOffset(*trampoline, target);
             e.checked = back ? (back + 8 < kEntryBytes ? back + 8 : kEntryBytes) : kJumpBytes;
