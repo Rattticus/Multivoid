@@ -8,6 +8,7 @@
 
 #include "coop/config/config.h"
 #include "coop/dev/dev_gate.h"
+#include "coop/dev/game_window.h"
 #include "coop/input/input_owner.h"
 #include "harness/screenshot.h"
 #include "ue_wrap/core/call.h"
@@ -456,22 +457,9 @@ bool g_didHoverOn = false, g_didHoverOff = false, g_didGc = false, g_didGcCheck 
 int  g_gcChildCount = -1;
 ue_wrap::FVector2D g_gcRootSize{0.f, 0.f}, g_gcImgSize{0.f, 0.f};
 
-// The game's own top-level window, found from the game thread that created it. Deterministic
-// where the foreground window is not: an unattended run can have another window focused, and
+// The game's own top-level window (coop/dev/game_window): an unattended run can have another window focused, and
 // that must be told apart from a hit-test failure.
-BOOL CALLBACK PickThreadWindow(HWND h, LPARAM lp) {
-    if (!::IsWindowVisible(h)) return TRUE;
-    RECT rc{};
-    if (!::GetClientRect(h, &rc) || rc.right - rc.left < 64 || rc.bottom - rc.top < 64) return TRUE;
-    *reinterpret_cast<HWND*>(lp) = h;
-    return FALSE;  // first match wins
-}
-HWND GameWindow() {
-    HWND found = nullptr;
-    ::EnumThreadWindows(::GetCurrentThreadId(), &PickThreadWindow,
-                        reinterpret_cast<LPARAM>(&found));
-    return found;
-}
+using coop::dev::game_window::GameWindow;
 
 // Move the OS cursor to a client-space point and verify it landed: SetCursorPos is silently
 // clamped by whatever ClipCursor rect is live, and an unverified move would turn a clamp into a

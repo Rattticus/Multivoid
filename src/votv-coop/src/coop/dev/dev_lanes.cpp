@@ -20,6 +20,7 @@
 #include "coop/dev/sat_console_drill.h"  // [dev] a client's SAT console commands run on the host
 #include "coop/dev/calib_drill.h"  // [dev] a dish's precision is the host's; a player's verb reaches it
 #include "coop/dev/desk_crossing_drill.h"  // [dev] the desk's detection needle crosses on the host alone
+#include "coop/dev/desk_ping_drill.h"      // [dev] a client's ping is rolled on the host
 #include "coop/dev/desk_verb_drill.h"  // [dev] a client presses the desk's save family through its own input
 #include "coop/dev/drive_drill.h"  // [dev] a drive's row is the host's; a client's eraser press and births reach it
 #include "coop/dev/grid_drill.h"  // [dev] the power grid: a client's presses and repair, the host's break and lockout
@@ -127,6 +128,7 @@ void EndSession() {
     coop::dev::tower_drill::OnDisconnect();  // [dev] the tower and the legs belong to one world
     coop::dev::desk_verb_drill::OnDisconnect();  // [dev] the legs start over
     coop::dev::desk_crossing_drill::OnDisconnect();  // [dev] the legs start over, a held host step let go
+    coop::dev::desk_ping_drill::OnDisconnect();  // [dev] the legs start over
     coop::dev::order_selftest::OnDisconnect();  // [dev] a rejoin's peers run their legs again
     coop::dev::meadow_selftest::OnDisconnect();  // [dev] a rejoin's peers run their legs again
     coop::dev::lid_drill::OnDisconnect();  // [dev] the PC and the legs belong to one world
@@ -187,6 +189,7 @@ void TickDrills(coop::net::Session& session) {
     coop::dev::tower_drill::Tick(&session);  // [dev] the coordinate towers drill (a latched read when off)
     coop::dev::desk_verb_drill::Tick(&session);  // [dev] the desk's save family drill (a latched read when off)
     coop::dev::desk_crossing_drill::Tick(&session);  // [dev] the needle's crossing drill (a latched read when off)
+    coop::dev::desk_ping_drill::Tick(&session);  // [dev] the ping verdict drill (a latched read when off)
     coop::dev::drive_selftest::Tick();  // [dev] rack-lane e2e circles (single bool read when off; 5 s self-throttle)
     coop::dev::floppy_selftest::Tick();  // [dev] disc/server episodes (single bool read when off; 6 s census period)
     coop::dev::hookdrag_selftest::Tick();  // [dev] the hook drag and its 4 Hz position log (single bool read when off)

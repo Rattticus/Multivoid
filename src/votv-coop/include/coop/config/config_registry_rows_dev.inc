@@ -425,6 +425,14 @@ CFG_STRING(tower_drill, "tower_drill", "dev", "", "VOTVCOOP_TOWER_DRILL", false,
     "join: the host breaks the tower as it hosts, and the joiner's tower reads the host's without a roll of its "
     "own. red, joinred: the controls, a client whose gates stand open and who applies no rows, as before the "
     "lane. Lines tagged [TOWER-DRILL]; the client's DONE line ends it.")
+CFG_STRING(desk_ping_drill, "desk_ping_drill", "dev", "", "VOTVCOOP_DESK_PING_DRILL", false,
+    "Drill (BOTH peers): a client's ping is rolled on the host. run: the client walks to the main desk, enters the "
+    "coordinates screen, commits a triangle and presses its coord_ping key on the game window; legs: miss (a clear "
+    "sky), catch (the host's fixture signal under the triangle), busy (a second verdict right behind the catch's). "
+    "The client says its gatherSignal was entered and never ran, the host's failure line reached its log once, the "
+    "catch is on its profile and desk, and the busy verdict came back refused; the host that it rolled two, caught "
+    "the second without counting it as its own, relayed it as the client's, and refused the third. Lines tagged "
+    "[DESK-PING-DRILL]; 'client DONE PASS|FAIL' ends it; ABANDONED is a step that could not run.")
 CFG_STRING(grid_drill, "grid_drill", "dev", "", "VOTVCOOP_GRID_DRILL", false,
     "Drill (BOTH peers): the power grid, arm by arm. run: the client presses the panel's light lever, the host "
     "breaks the drill's generator (the one nearest the panel), the client's Activate press from where it stands is "
