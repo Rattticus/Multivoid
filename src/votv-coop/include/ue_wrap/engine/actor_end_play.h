@@ -46,9 +46,10 @@ bool HasBegunPlay(const void* actor);
 bool Patch();
 
 // Arm the patched function once Actor's vtable, read from its class default object, names it. The engine
-// builds that object while it initializes, which the boot thread can reach first, so Install waits for it.
-// Idempotent; false (logged) when nothing was patched, Default__Actor never appears, or the vtable names
-// another function. The boot thread, after the health checks: it may wait.
+// builds that object while it initializes, which the boot thread can reach first, so Install waits for it,
+// then up to a second for its constructor to set the vtable. Idempotent; false (logged) when nothing was
+// patched, Default__Actor never appears, or the vtable names another function. The boot thread, after the
+// health checks: it may wait, and the boot thread's later steps (the harness, the overlay) wait with it.
 bool Install();
 bool IsInstalled();
 

@@ -136,32 +136,38 @@ bool Install() {
     // from its class default object, names the function every actor reaches through Super. It must be
     // the patched one. The engine builds that object while it initializes, and the boot thread can get
     // here first: arming then found none and left EndPlay unseen for the whole process. So the arm waits
-    // until the object is in the array and its constructor has set Actor's vtable, polling; the bound is
-    // only for a build that never gets there.
-    constexpr int kCdoWaitMs = 30000;
-    constexpr int kCdoPollMs = 50;  // a poll walks the whole object array by name
+    // for the object to enter the array, bounded only for a build that never makes one, then briefly for
+    // its constructor to set Actor's vtable: a vtable still naming another function a second later is the
+    // profile's mismatch, said then, and the boot thread's later steps wait no longer for it.
+    constexpr ULONGLONG kCdoWaitMs = 30000;
+    constexpr ULONGLONG kVtableWaitMs = 1000;
+    constexpr DWORD kPollMs = 50;  // the object's poll walks the whole object array by name
     uintptr_t image = 0;
     size_t imageSize = 0;
     ue_wrap::MainModuleRange(image, imageSize);
-    const auto inImage = [&](uintptr_t p) { return p >= image && p < image + imageSize; };
+    const auto endPlayOf = [&](void* obj) -> uintptr_t {
+        const auto* const vtbl = *static_cast<const uintptr_t* const*>(obj);
+        const auto at = reinterpret_cast<uintptr_t>(vtbl);
+        const bool inImage = at >= image && at + prof::kActor_EndPlay_VtblOff + sizeof(uintptr_t) <= image + imageSize;
+        return inImage ? vtbl[prof::kActor_EndPlay_VtblOff / sizeof(uintptr_t)] : 0;
+    };
+    const ULONGLONG start = ::GetTickCount64();
     void* cdo = nullptr;
-    uintptr_t addr = 0;
-    int waitedMs = 0;
-    for (;;) {
-        cdo = ue_wrap::reflection::FindClassDefaultObject(L"Actor");
-        const auto* const vtbl = cdo ? *static_cast<const uintptr_t* const*>(cdo) : nullptr;
-        addr = inImage(reinterpret_cast<uintptr_t>(vtbl)) ? vtbl[prof::kActor_EndPlay_VtblOff / sizeof(uintptr_t)]
-                                                          : 0;
-        if (addr == g_target || waitedMs >= kCdoWaitMs) break;
-        ::Sleep(kCdoPollMs);
-        waitedMs += kCdoPollMs;
-    }
+    while (!(cdo = ue_wrap::reflection::FindClassDefaultObject(L"Actor")) && ::GetTickCount64() - start < kCdoWaitMs)
+        ::Sleep(kPollMs);
     if (!cdo) {
-        UE_LOGE("actor_end_play: Default__Actor did not appear in the object array in %d ms -- NOT armed, no "
-                "actor's end of play is seen", waitedMs);
+        UE_LOGE("actor_end_play: Default__Actor did not appear in the object array in %llu ms -- NOT armed, no "
+                "actor's end of play is seen", ::GetTickCount64() - start);
         return false;
     }
-    if (waitedMs > 0) UE_LOGI("actor_end_play: Actor's class default object was ready after %d ms", waitedMs);
+    const ULONGLONG found = ::GetTickCount64();
+    uintptr_t addr = endPlayOf(cdo);
+    while (addr != g_target && ::GetTickCount64() - found < kVtableWaitMs) {
+        ::Sleep(kPollMs);
+        addr = endPlayOf(cdo);
+    }
+    if (addr == g_target && ::GetTickCount64() - start >= kPollMs)
+        UE_LOGI("actor_end_play: Actor's class default object was ready after %llu ms", ::GetTickCount64() - start);
     if (addr != g_target) {
         UE_LOGE("actor_end_play: Actor's vtable at +0x%zX names %p, not the patched %p (sdk_profile.h "
                 "kActor_EndPlay_VtblOff) -- NOT armed, no actor's end of play is seen",
