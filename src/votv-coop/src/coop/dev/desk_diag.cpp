@@ -134,7 +134,7 @@ std::string RollLine() {
     else
         std::snprintf(part, sizeof(part), "hash(UNRESOLVED)");
     line += part;
-    ue_wrap::coord_tower::State towers[4];
+    void* towers[4];
     const int32_t nt = ue_wrap::coord_tower::ReadAll(towers, 4);
     if (nt < 0) {
         line += " towers(UNRESOLVED)";
@@ -142,8 +142,14 @@ std::string RollLine() {
         std::snprintf(part, sizeof(part), " towers(%d:", nt);
         line += part;
         for (int32_t i = 0; i < nt; ++i) {
-            std::snprintf(part, sizeof(part), " %d=b%d o%d f%ls p%ls", towers[i].id, towers[i].isBroken ? 1 : 0,
-                          towers[i].opened ? 1 : 0, towers[i].fuses.c_str(), towers[i].puzzleLights.c_str());
+            ue_wrap::coord_tower::State t;
+            if (!ue_wrap::coord_tower::Read(towers[i], t)) continue;
+            char fuses[ue_wrap::coord_tower::kMaxFuses + 1] = {};
+            char lights[ue_wrap::coord_tower::kMaxLights + 1] = {};
+            for (int f = 0; f < t.fuseCount; ++f) fuses[f] = static_cast<char>('0' + t.fuses[f] % 10);
+            for (int p = 0; p < t.lightCount; ++p) lights[p] = t.lights[p] ? '1' : '0';
+            std::snprintf(part, sizeof(part), " %d=b%d o%d f%s p%s", t.id, t.isBroken ? 1 : 0, t.opened ? 1 : 0,
+                          fuses, lights);
             line += part;
         }
         line += ")";
