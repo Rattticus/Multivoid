@@ -144,8 +144,9 @@ the numpad's (told apart by the key, since the numpad's accept passes the copy's
 keycard's swipe, a pass changer -- go to the host as an intent, and the host runs the verb on its
 copy, judging a submit against its own password. A digit clicked on the keys needs the light's power
 on the presser's own copy, as single player's click does, and a client's copy holds the host's
-light power, since every peer runs the panel's own setPower from the host's canonical: a client's
-clicks stop in a blackout and come back with the power. The entries run in order, and the next one waits
+light power, since a client applies the host's canonical through the panel's own buttonsVisibility,
+whose tail runs setPower once the panel is enabled and its generators read whole: a client's clicks
+stop in a blackout and come back with the power. The entries run in order, and the next one waits
 while the host has no body for the sender and while the keypad's open is in the 0.2 s tail that
 clears its buffer, so none is lost to either wait (a full queue still refuses). A keycard's
 verdict is taken only while the sender holds a keycard. An accept unlocks a door; opening it is
