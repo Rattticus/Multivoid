@@ -3,6 +3,7 @@
 
 #include "ue_wrap/devices/generator.h"
 
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/component_calls.h"
 #include "ue_wrap/core/field_io.h"
@@ -10,6 +11,7 @@
 #include "ue_wrap/core/object_index.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile_names.h"
+#include "ue_wrap/engine/engine.h"            // SpawnActor
 #include "ue_wrap/engine/engine_component.h"  // GetComponentLocation
 #include "ue_wrap/engine/hit_result.h"
 #include "ue_wrap/world/world_singleton.h"
@@ -36,8 +38,10 @@ int32_t  g_offCycle = -1;
 int32_t  g_offUpgrade = -1;
 int32_t  g_offButton = -1;        // button_activate
 int32_t  g_offTrigger = -1;       // triggerWhenCompleted
+int32_t  g_offUpgradeRoot = -1;   // upgradeRoot
 int32_t  g_offLookButton = -1;    // lookAtButton, the drill's press
 uint8_t  g_maskLookButton = 0;
+ue_wrap::CachedObjRef g_upgradeCls;  // prop_transformerUpgrade_C
 int32_t  g_offPanelObj = -1;      // panelObj, the drill's puzzle shortcut
 int32_t  g_offTurnOn = -1;        // turnon, the drill's read of the last cue
 
@@ -112,6 +116,8 @@ bool EnsureResolved() {
     if (offButton < 0) return refuse(L"button_activate");
     const int32_t offTrigger = R::FindPropertyOffset(cls, L"triggerWhenCompleted");
     if (offTrigger < 0) return refuse(L"triggerWhenCompleted");
+    const int32_t offUpgradeRoot = R::FindPropertyOffset(cls, L"upgradeRoot");
+    if (offUpgradeRoot < 0) return refuse(L"upgradeRoot");
     for (const wchar_t* verb : kVerbs)
         if (!R::FindDispatchFunctionCached(cls, verb)) return refuse(verb);
     // The drill's reads only: a miss leaves its press, its shortcut or its cue unavailable, not the lane.
@@ -126,10 +132,11 @@ bool EnsureResolved() {
     g_offUpgrade = offUpgrade;
     g_offButton = offButton;
     g_offTrigger = offTrigger;
+    g_offUpgradeRoot = offUpgradeRoot;
     g_resolved = true;
     UE_LOGI("generator: resolved list@0x%X isBroken@0x%X/%02X cyc@0x%X/%02X cycle@0x%X upgradeLevel@0x%X "
-            "button_activate@0x%X triggerWhenCompleted@0x%X", offList, offBroken, maskBroken, offCyc, maskCyc, offCycle,
-            offUpgrade, offButton, offTrigger);
+            "button_activate@0x%X triggerWhenCompleted@0x%X upgradeRoot@0x%X", offList, offBroken, maskBroken, offCyc,
+            maskCyc, offCycle, offUpgrade, offButton, offTrigger, offUpgradeRoot);
     return true;
 }
 
@@ -202,6 +209,28 @@ void* ActivateButton(void* gen) {
     if (!gen || !g_resolved) return nullptr;
     void* button = ObjectAt(gen, g_offButton);
     return (button && R::IsLive(button)) ? button : nullptr;
+}
+
+void* UpgradeSlot(void* gen) {
+    if (!gen || !g_resolved) return nullptr;
+    void* slot = ObjectAt(gen, g_offUpgradeRoot);
+    return (slot && R::IsLive(slot)) ? slot : nullptr;
+}
+
+bool IsUpgrade(void* actor) {
+    if (!actor || !R::IsLive(actor)) return false;
+    if (!g_upgradeCls.Alive()) {
+        void* found = object_index::ClassByName(L"prop_transformerUpgrade_C");
+        if (!found) return false;  // not loaded: no upgrade exists yet
+        g_upgradeCls.Set(found);
+    }
+    void* base = g_upgradeCls.Raw();
+    return R::IsDescendantOfAny(R::ClassOf(actor), &base, 1, 8);
+}
+
+void* SpawnUpgrade(const FVector& at) {
+    void* cls = object_index::ClassByName(L"prop_transformerUpgrade_C");
+    return cls ? engine::SpawnActor(cls, at) : nullptr;
 }
 
 bool PressActivate(void* gen, void* player) {

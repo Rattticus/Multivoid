@@ -12,6 +12,8 @@
 
 #pragma once
 
+#include "ue_wrap/core/types.h"  // FVector
+
 #include <cstddef>
 #include <cstdint>
 #include <vector>
@@ -59,6 +61,15 @@ bool Repair(void* gen);
 // The Activate button (button_activate), the component a player's look-at trace must strike to repair or
 // service; null before the generator resolves. Game thread.
 void* ActivateButton(void* gen);
+
+// The upgrade slot (upgradeRoot, the billboard its buttons hang from), where the insert takes a held upgrade; null
+// before the generator resolves. Game thread.
+void* UpgradeSlot(void* gen);
+
+// Whether `actor` is an upgrade the insert takes (a prop_transformerUpgrade_C, as the insert's cast reads it), and
+// one spawned at `at`, which the host's spawn watcher gives every peer. Game thread.
+bool IsUpgrade(void* actor);
+void* SpawnUpgrade(const FVector& at);
 
 // [dev] the grid drill's repair as a player makes it: the look that marks the Activate button as the one under the
 // trace (getActionOptions writes lookAtButton), then actionOptionIndex(player, a hit on the button, 4, the button).
