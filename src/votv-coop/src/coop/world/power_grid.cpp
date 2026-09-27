@@ -43,6 +43,7 @@ using coop::net::kPowerGridGenerators;
 
 static_assert(coop::net::kMaxPeers <= 4, "PowerGridPayload::ack holds four slots");
 static_assert(coop::net::kMaxPeers <= 8, "the owed rows are one bit a slot");
+static_assert(kInputBurst >= coop::net::kPowerPuzzleFields, "a flush of every held field fits one burst");
 
 constexpr wchar_t kGenClass[]   = L"generator_C";
 constexpr int32_t kMaxUpgrade   = 6;    // the insert's own gate, `upgradeLevel < 6`
@@ -57,10 +58,8 @@ constexpr uint64_t kWaitMs = 10000;
 constexpr size_t   kMaxQueued = 32;
 // A puzzle input waits this long at the head for its sender's claim on the panel, which rides another kind.
 constexpr uint64_t kClaimWaitMs = 2000;
-// While a panel changes outside the generators' verbs (a drag), the rows go at most this often.
-constexpr uint64_t kPuzzleRowsEveryMs = 100;
-// A player swings at a generator a few times a second at most; a sender's ops run at this rate, the rest waiting
-// their turn (door_verb_intent's bound).
+// A player swings at a generator a few times a second at most; a sender's acts run at this rate, the rest waiting
+// their turn (door_verb_intent's bound). Its puzzle inputs run at their own (power_grid.h).
 constexpr float kOpBurst = 4.0f;
 constexpr float kOpPerSecond = 4.0f;
 
@@ -88,10 +87,12 @@ coop::roster_ledger::PerSlotState<uint16_t> g_ack;
 bool g_ackDirty = false;
 struct Waiting { PowerGridPayload p; uint64_t arrivedMs; };
 std::deque<Waiting> g_waiting[coop::net::kMaxPeers];
-struct Bucket { float tokens = kOpBurst; uint64_t lastMs = 0; };
-Bucket g_rate[coop::net::kMaxPeers];
+struct Bucket { float tokens = -1.0f; uint64_t lastMs = 0; };  // below zero: full, nothing spent yet
+Bucket g_rate[coop::net::kMaxPeers];       // a sender's acts
+Bucket g_inputRate[coop::net::kMaxPeers];  // a sender's puzzle inputs
 uint8_t g_owed = 0;
-uint64_t g_opsTaken = 0, g_opsRefused = 0, g_noisyAnswered = 0, g_inputsTaken = 0;
+uint64_t g_opsTaken = 0, g_opsRefused = 0, g_noisyAnswered = 0, g_inputsTaken = 0, g_queuesFull = 0;
+uint64_t g_rowsBroadcast = 0;
 bool g_puzzleDirty = false;
 uint64_t g_lastRowsMs = 0;
 
@@ -145,12 +146,13 @@ bool SeqAfter(uint16_t a, uint16_t b) { return static_cast<int16_t>(static_cast<
 
 uint8_t LocalSlot() { return coop::players::Registry::Get().LocalPeerId(); }
 
-bool TakeToken(uint8_t slot) {
-    Bucket& b = g_rate[slot];
+bool TakeToken(Bucket& b, float burst, float perSecond) {
     const uint64_t now = NowMs();
-    if (b.lastMs != 0 && now > b.lastMs) {
-        b.tokens += kOpPerSecond * static_cast<float>(now - b.lastMs) / 1000.0f;
-        if (b.tokens > kOpBurst) b.tokens = kOpBurst;
+    if (b.tokens < 0.0f) {
+        b.tokens = burst;
+    } else if (b.lastMs != 0 && now > b.lastMs) {
+        b.tokens += perSecond * static_cast<float>(now - b.lastMs) / 1000.0f;
+        if (b.tokens > burst) b.tokens = burst;
     }
     b.lastMs = now;
     if (b.tokens < 1.0f) return false;
@@ -223,6 +225,7 @@ void HostSendRows(coop::net::Session* s, int onlySlot = -1) {
     g_puzzleDirty = false;
     if (!g_ackDirty && g_haveSent && SameRows(p, g_lastSent)) return;
     s->SendReliable(coop::net::ReliableKind::PowerGridState, &p, sizeof(p));
+    ++g_rowsBroadcast;
     g_lastSent = p;
     g_haveSent = true;
     g_ackDirty = false;
@@ -338,8 +341,10 @@ Take HostTakeOp(coop::net::Session* s, const Waiting& wt, uint8_t sender) {
     if (say)
         UE_LOGI("power_grid: host took slot %u's %s of generator %u (seq %u)%s%ls", sender, OpName(p.op), p.index,
                 p.seq, hit ? " with " : "", item.c_str());
-    // The change and the acknowledgement to every peer: nothing new when the verb's own exit already sent them.
-    HostSendRows(s);
+    // The change and the acknowledgement to every peer: nothing new when the verb's own exit already sent them. A
+    // puzzle input's go with the panel's coalesced rows, at most every 100 ms however fast the inputs come.
+    if (p.op == coop::net::kPowerGridOpPuzzle) g_puzzleDirty = true;
+    else HostSendRows(s);
     return Take::Done;
 }
 
@@ -350,16 +355,21 @@ void HostRefuseQueue(coop::net::Session* s, uint8_t slot, uint16_t newestSeq) {
     if (SeqAfter(newestSeq, g_ack[slot])) g_ack[slot] = newestSeq;
     g_ackDirty = true;
     g_opsRefused += n + 1;
-    UE_LOGE("power_grid: host refused slot %u's %zu waiting ops and seq %u -- its queue is full", slot, n, newestSeq);
+    if (++g_queuesFull <= 3 || g_queuesFull % 100 == 0)
+        UE_LOGE("power_grid: host refused slot %u's %zu waiting ops and seq %u -- its queue is full (%llu times)", slot,
+                n, newestSeq, static_cast<unsigned long long>(g_queuesFull));
     HostSendRows(s, slot);
 }
 
-// A puzzle input is a value a drag writes several times a second, the rest a player's act: only acts spend the
-// sender's rate, and an input still waits its turn behind them.
-bool Spend(uint8_t slot, uint8_t op) { return op == coop::net::kPowerGridOpPuzzle || TakeToken(slot); }
+// A puzzle input is a value a drag writes several times a second, the rest a player's act: each spends its own
+// rate, and an input still waits its turn behind the acts.
+bool Spend(uint8_t slot, uint8_t op) {
+    return op == coop::net::kPowerGridOpPuzzle ? TakeToken(g_inputRate[slot], kInputBurst, kInputPerSecond)
+                                               : TakeToken(g_rate[slot], kOpBurst, kOpPerSecond);
+}
 
 void Refund(uint8_t slot, uint8_t op) {
-    if (op != coop::net::kPowerGridOpPuzzle) g_rate[slot].tokens += 1.0f;  // a wait runs nothing
+    (op == coop::net::kPowerGridOpPuzzle ? g_inputRate : g_rate)[slot].tokens += 1.0f;  // a wait runs nothing
 }
 
 // An op from the wire is taken at once when its slot has none waiting and, for an act, a token to spend.
@@ -702,6 +712,7 @@ void OnPeerLeft(uint8_t slot) {
     if (slot == 0 || slot >= coop::net::kMaxPeers) return;
     g_waiting[slot].clear();
     g_rate[slot] = Bucket{};
+    g_inputRate[slot] = Bucket{};
     g_owed = static_cast<uint8_t>(g_owed & ~(1u << slot));
 }
 
@@ -709,6 +720,8 @@ size_t PendingOps() { return g_pending.size(); }
 uint64_t ClientOpsSent() { return g_opsSent; }
 uint64_t HostOpsTaken() { return g_opsTaken; }
 uint64_t HostOpsRefused() { return g_opsRefused; }
+uint64_t HostInputsTaken() { return g_inputsTaken; }
+uint64_t HostRowsBroadcast() { return g_rowsBroadcast; }
 
 void DevRefuseInstalls(bool on) {
     if (on != g_devRefuseInstalls) UE_LOGI("power_grid: [dev] the host %s installs", on ? "refuses" : "judges");
@@ -732,17 +745,19 @@ void OnDisconnect() {
     g_devRefuseInstalls = false;
     if (g_editsRefused || g_opsSent || g_rowsApplied || g_opsTaken || g_inputsTaken || g_opsRefused)
         UE_LOGI("power_grid: session end -- own edits refused %llu, ops sent %llu, rows applied %llu; as host: ops "
-                "taken %llu, puzzle inputs taken %llu, refused %llu",
+                "taken %llu, puzzle inputs taken %llu, refused %llu, rows broadcast %llu",
                 static_cast<unsigned long long>(g_editsRefused), static_cast<unsigned long long>(g_opsSent),
                 static_cast<unsigned long long>(g_rowsApplied), static_cast<unsigned long long>(g_opsTaken),
-                static_cast<unsigned long long>(g_inputsTaken), static_cast<unsigned long long>(g_opsRefused));
+                static_cast<unsigned long long>(g_inputsTaken), static_cast<unsigned long long>(g_opsRefused),
+                static_cast<unsigned long long>(g_rowsBroadcast));
     g_editsRefused = g_opsSent = g_hitsSent = g_rowsApplied = 0;
-    g_opsTaken = g_opsRefused = g_noisyAnswered = g_inputsTaken = 0;
+    g_opsTaken = g_opsRefused = g_noisyAnswered = g_inputsTaken = g_queuesFull = g_rowsBroadcast = 0;
     g_haveSent = g_ackDirty = g_puzzleDirty = false;
     g_lastRowsMs = 0;
     for (int slot = 0; slot < coop::net::kMaxPeers; ++slot) {
         g_waiting[slot].clear();
         g_rate[slot] = Bucket{};
+        g_inputRate[slot] = Bucket{};
     }
     for (auto& ref : g_verbFn) ref.Reset();
     g_owed = 0;

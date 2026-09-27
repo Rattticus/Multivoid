@@ -27,6 +27,15 @@ namespace coop::power_grid {
 // keypad lanes' reach, which coop/element/intent_authority pads with the generator's bounds and the puppet's lag.
 inline constexpr float kGeneratorReachUU = 400.0f;
 
+// A client's puzzle inputs are taken at this rate, apart from its acts: its client sends a field at most every 100 ms,
+// one control at a time under one hand, and every held field at once before an act (power_puzzle), so a burst of
+// every field and twice a hand's rate bound a modified client without ever holding a player back.
+inline constexpr float kInputBurst = 16.0f;
+inline constexpr float kInputPerSecond = 20.0f;
+
+// While a panel changes outside the generators' verbs (a drag, a client's inputs), the rows go at most this often.
+inline constexpr uint64_t kPuzzleRowsEveryMs = 100;
+
 // Register the generators' gates, and the decay tick's and the puzzle's. Idempotent. Session install.
 void Install(coop::net::Session* session);
 
@@ -53,13 +62,15 @@ uint16_t NextSeq();
 void HostPuzzleChanged();
 
 // [dev] the grid drill's readings. CLIENT: my ops the host has not yet taken, those sent this session, and the
-// host's last rows (false before they came). HOST: the ops it took this session, puzzle inputs not counted, and
-// those it refused. Game thread.
+// host's last rows (false before they came). HOST: the ops it took this session, puzzle inputs not counted, those
+// it refused, the puzzle inputs it took, and its rows broadcasts. Game thread.
 size_t PendingOps();
 uint64_t ClientOpsSent();
 bool LastRows(coop::net::PowerGridPayload& out);
 uint64_t HostOpsTaken();
 uint64_t HostOpsRefused();
+uint64_t HostInputsTaken();
+uint64_t HostRowsBroadcast();
 
 // [dev] the grid drill's upgrade legs. HOST: refuse installs as if another had filled the generator first. CLIENT:
 // an install op with no insert behind it, what a forged client sends. Game thread.
