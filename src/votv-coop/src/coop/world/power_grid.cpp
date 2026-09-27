@@ -348,9 +348,18 @@ Take HostTakeOp(coop::net::Session* s, const Waiting& wt, uint8_t sender) {
     return Take::Done;
 }
 
-// Every waiting op of `slot` refused with its newest, whose acknowledgement answers them all: its queue is full.
-void HostRefuseQueue(coop::net::Session* s, uint8_t slot, uint16_t newestSeq) {
+// Every waiting op of `slot` refused with its newest, whose acknowledgement answers them all: its queue is full. An
+// install among them spent its upgrade before it came, and is refunded as its own refusal would refund it.
+void HostRefuseQueue(coop::net::Session* s, uint8_t slot, const Waiting& newest) {
+    const uint16_t newestSeq = newest.p.seq;
     const size_t n = g_waiting[slot].size();
+    g_waiting[slot].push_back(newest);
+    std::vector<void*> gens;
+    for (const Waiting& w : g_waiting[slot]) {
+        if (w.p.op != coop::net::kPowerGridOpUpgrade || !coop::power_upgrade::TakeSpend(slot, w.p.index)) continue;
+        if (gens.empty()) GEN::ReadGenerators(gens);
+        if (w.p.index < gens.size() && gens[w.p.index]) coop::power_upgrade::Refund(slot, gens[w.p.index]);
+    }
     g_waiting[slot].clear();
     if (SeqAfter(newestSeq, g_ack[slot])) g_ack[slot] = newestSeq;
     g_ackDirty = true;
@@ -382,7 +391,7 @@ void HostOffer(coop::net::Session* s, const PowerGridPayload& p, uint8_t sender)
         Refund(sender, p.op);
     }
     if (q.size() >= kMaxQueued) {
-        HostRefuseQueue(s, sender, p.seq);
+        HostRefuseQueue(s, sender, w);
         return;
     }
     q.push_back(w);
