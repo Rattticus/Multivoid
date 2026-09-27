@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 202;
+inline constexpr uint16_t kProtocolVersion = 203;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -915,6 +915,13 @@ enum class ReliableKind : uint8_t {
     // lever or the panel's retract, which the host runs, and a fuse my player pulled or inserted, which the
     // host takes or refuses. Never relayed. CoordTowerPayload.
     CoordTowerState = 162,
+
+    // The ping's verdict on the main desk. Client to host: the client's own ping, or its cheat menu's insta-catch,
+    // reached its verdict, which its gate refused, with the view and the aim the verdict's circle and the dishes'
+    // target come from; the host rolls the verdict on its own desk from them, an insta-catch's only where its own game
+    // lets a player cheat. Host to that client alone: a refusal with its reason, and after a catch the find for the
+    // pinger's own profile. Never relayed. Late join: nothing to replay. DeskPingVerdictPayload.
+    DeskPingVerdict = 163,
 };
 
 #pragma pack(push, 1)
@@ -1918,6 +1925,30 @@ struct DishAimStatePayload {
     uint8_t _pad[3];                 // 3
 };
 static_assert(sizeof(DishAimStatePayload) == 32, "DishAimStatePayload must be 32 bytes");
+
+// DeskPingVerdict's ops (coop/interactables/desk_ping_sync).
+namespace desk_ping {
+inline constexpr uint8_t kOpIntent = 0;   // client to host: roll the verdict of this ping
+inline constexpr uint8_t kOpRefused = 1;  // host to the pinger: the verdict is not rolled, for `reason`
+inline constexpr uint8_t kOpFound = 2;    // host to the pinger: the verdict caught a signal; the find is its own
+inline constexpr uint8_t kOpInsta = 3;    // client to host: roll the verdict of this cheat-menu insta-catch
+inline constexpr uint8_t kRefusedBusy = 0;  // the host's desk was pinging, or held another verdict
+inline constexpr uint8_t kRefusedLost = 1;  // any other: no claim, no ping running, an aim not finite or not pingable,
+                                            // cheats the host's game does not allow, or a desk that did not roll it
+}  // namespace desk_ping
+
+// A ping's verdict and its answers (DeskPingVerdict). Each answer echoes the intent's seq.
+struct DeskPingVerdictPayload {
+    uint8_t  op;         // desk_ping::kOp*
+    uint8_t  reason;     // op 1: desk_ping::kRefused*
+    uint8_t  _pad[2];    // zeroed
+    uint32_t seq;        // ops 0 and 3: the pinger's verdict count; echoed by ops 1-2
+    float    viewX;      // ops 0 and 3: the coords panel's viewCoordinate, the dishes' target
+    float    viewY;
+    DishAimStatePayload aim;  // ops 0 and 3: the committed triangle the verdict's circle comes from
+};
+static_assert(sizeof(DeskPingVerdictPayload) == 48, "DeskPingVerdictPayload must be 48 bytes");
+static_assert(sizeof(DeskPingVerdictPayload) <= 228, "DeskPingVerdictPayload must fit the inline reliable buffer");
 
 // The shared payload of the keyed monotone-decreasing dirt scalars (WindowCleanState, GrimeState):
 // the instance's identity string (a Key for a window, a quantized position for a grime decal), the

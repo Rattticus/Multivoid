@@ -71,7 +71,12 @@ the client interpolates it and overwrites its own accrual, whose garbage the ove
 triangulation ping is a latent state machine gated on a flag; it runs on one machine, the
 presser's, and receivers treat the flag as bookkeeping and never write it, because writing it
 woke a phantom parallel machine on every observer. A desk hold covers the pinger's run so nobody
-else can claim the desk mid-ping, and the outcome reaches every peer through the normal lanes.
+else can claim the desk mid-ping. The run is the pinger's presentation, and its verdict is the
+host's (`coop/interactables/desk_ping_sync`): at stage 3 a client's gate refuses the verdict and
+sends its view and triangle, the host checks the claim, the running ping and the triangle and
+primes its own machine, whose next coordinate process rolls the verdict, and the outcome reaches
+every peer through the normal lanes, the catch as the pinger's and the find on its profile. A client's
+cheat-menu insta-catch crosses the same way and runs as the host's own, where the host's game lets a player cheat.
 
 The coordinate-panel cursor is a sixty-hertz unreliable stream from whoever is moving it,
 interpolated on the mirror and written as a pure memcpy the widget repaints
@@ -85,15 +90,16 @@ state and are re-sent to a joiner from the components' ground truth.
 The sky-signal set is rolled on the host only; a client kills its own roller timer, keeps its
 widget lifetimes wire-driven and reconciles its set to the host's snapshot
 (`coop/interactables/console_state_sync`, which also carries the desk's live-visible scalars, the
-committed dish-aim coordinates and the nine one-shot log lines). A catch is one host-validated
-event whose identity half (the caught data, the sky-row delete, the machine reset, the sound) is
-replayed on every peer (`coop/interactables/signal_catch_sync`); the unprimed change edge is the
-authority, because a claim-gated detector lost a live catch to the hold's own release. The dish
+committed dish-aim coordinates and the nine one-shot log lines). A catch is the host's event,
+its verdict rolled there, whose identity half (the caught data, the sky-row delete, the machine
+reset) is replayed on every client (`coop/interactables/signal_catch_sync`); the host's unprimed
+change edge is the authority, because a claim-gated detector lost a live catch to the hold's own
+release. The dish
 theater is host-only: the client's dish simulation is parked, the host replays the slew and
 streams the poses of all twenty-four dishes, the armed download's polarity is host-authored, and
 so is a dish's precision: the host sends its changed dishes' values and a joiner all of them, and a
-client's copy holds the host's values, whatever moved it off one (a mirrored lightning strike's hit,
-its own ping's slew) put back at its poll, before the gamemode averages the dishes into the rate
+client's copy holds the host's values, whatever moved it off one (a mirrored lightning strike's hit)
+put back at its poll, before the gamemode averages the dishes into the rate
 its desk downloads with, and before a player's verb reads them. A client player's own two verbs are
 the exception, the toolgun's calibration tool and the uncalibrator: they run on its copy and send
 what they changed to the host, which performs what it can and answers with the live dishes named, to
@@ -176,10 +182,10 @@ not built. The ATV's physical modules are on [vehicles.md](vehicles.md).
 | a screen's occupancy | the host arbitrates | first claim wins; a client claims optimistically |
 | desk input scalars | the last presser | polled deltas, relayed except to the originator |
 | the download simulation, the needle, the rate | the host | a streamed output vector; the client overwrites its own |
-| the ping | the presser's machine | one machine; observers keep the flag as bookkeeping |
+| the ping | the presser's machine; its verdict the host | the verdict as an intent; observers keep the flag as bookkeeping |
 | the cursor | whoever moves it | a sixty-hertz stream |
 | the desk's sounds | the presser | effect events at the audio seam |
-| the sky-signal set, the catch, the dishes | the host | roller, host-validated event, parked client sim |
+| the sky-signal set, the catch, the dishes | the host | roller, the host's event, parked client sim |
 | the deck list, the database | every peer's shadow | content-hashed appends and deletes; the host's order |
 | playback | the presser; anyone may stop | edge events |
 | the refiner | the one machine whose decode latched | a state stream |
@@ -199,7 +205,8 @@ not built. The ATV's physical modules are on [vehicles.md](vehicles.md).
 | `DeskInput`, `DeskScanEvent`, `DeskState`, `DeskLogLine` | the presser, relayed | a field delta; a quick-scan; the desk scalars; a one-shot log line |
 | `DeskSimPose` (stream), `DeskCursorPose` (stream) | the host to all; the mover to all | the simulation outputs; the cursor |
 | `DeskSndFx` | the presser, relayed | an audio effect event |
-| `SkySignalState`, `SkySignalCatch`, `DishAimState` | the host; the catcher and the host; the occupant | the signal set; a catch; committed coordinates |
+| `SkySignalState`, `SkySignalCatch`, `DishAimState` | the host; the host; the occupant | the signal set; a catch; committed coordinates |
+| `DeskPingVerdict` | a client to the host; the host to that client | a ping's or a cheat insta-catch's verdict to roll, the view and triangle it rolls from; its refusal, or the pinger's find |
 | `DishArm`, `DishSnapshot`, `DishCalib`, `DishPose` (stream) | the host; the host to a joiner; the host, to all, to an intent's author and to a joiner; the host | the armed download; every dish's pose for a joiner; the changed dishes' precision, the live dishes an intent named (to all once the host performed any of it, to its author alone when it performed none), and every dish's for a joiner; dish poses |
 | `DishCalibIntent` | a client to the host | the dishes whose precision the client's player just set with the toolgun's calibration tool or the uncalibrator |
 | `SavedSignalAppend`, `SavedSignalDelete`, `MeadowAppend`, `MeadowDelete`, `MeadowOrder` | any peer, relayed; order from the host | list rows by content hash; the database's order |
@@ -247,7 +254,7 @@ its wipe arrives as the drive's row. The upgrade levels arrive with the save and
 | Concept | Files |
 |---|---|
 | occupancy | `coop/interactables/device_occupancy` |
-| the desk | `coop/interactables/desk_input_sync`, `coop/interactables/desk_sim_sync`, `coop/interactables/desk_cursor_sync`, `coop/interactables/desk_snd_fx`, `coop/interactables/console_state_sync` |
+| the desk | `coop/interactables/desk_input_sync`, `coop/interactables/desk_sim_sync`, `coop/interactables/desk_ping_sync`, `coop/interactables/desk_cursor_sync`, `coop/interactables/desk_snd_fx`, `coop/interactables/console_state_sync` |
 | signals, the catch, the dishes | `coop/interactables/signal_sync`, `coop/interactables/signal_wire`, `coop/interactables/signal_catch_sync`, `coop/interactables/dish_sync`, `coop/interactables/dish_calib_sync` |
 | the deck and the refiner | `coop/interactables/deck_play_sync`, `coop/interactables/comp_sync` |
 | drives, racks, modules, tapes | `coop/interactables/drive_sync`, `coop/interactables/drive_payload_sync`, `coop/interactables/eraser_press_intent`, `coop/interactables/drive_rack_sync`, `coop/interactables/physmods_sync`, `coop/interactables/tape_caddy_sync` |
@@ -255,4 +262,4 @@ its wipe arrives as the drive's row. The upgrade levels arrive with the save and
 | the SAT console | `coop/interactables/sat_console_sync`, `coop/interactables/sat_console_table` |
 | the engine wrappers | `ue_wrap/desk/` (the dish, the console, the coordinate panel, the refiner pane, the drive chain, the tape caddy, the modules, the saved signals, the database, the audio, the SAT console) |
 | the join seeds | `coop/session/join_seed` |
-| tests and instruments | `coop/dev/drive_selftest`, `coop/dev/drive_drill`, `coop/dev/desk_diag`, `coop/dev/sat_console_drill`, `coop/dev/calib_drill`, `harness/autotest/autotest_seeddrill.cpp`, `harness/autotest/autotest_driveslot.cpp` (a drive taken out on one peer is out and carried on the other) |
+| tests and instruments | `coop/dev/drive_selftest`, `coop/dev/drive_drill`, `coop/dev/desk_diag`, `coop/dev/sat_console_drill`, `coop/dev/calib_drill`, `coop/dev/desk_ping_drill`, `harness/autotest/autotest_seeddrill.cpp`, `harness/autotest/autotest_driveslot.cpp` (a drive taken out on one peer is out and carried on the other) |

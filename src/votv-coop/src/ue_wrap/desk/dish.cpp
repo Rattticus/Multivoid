@@ -351,13 +351,6 @@ bool WriteIsMoving(int32_t index, bool moving) {
     return true;
 }
 
-bool StopDish(int32_t index) {
-    if (!g_l4Resolved) return false;
-    void* d = DishByIndex(index);
-    void* fn = d ? R::FindDispatchFunctionCached(R::ClassOf(d), L"stop") : nullptr;
-    return fn && CallNoArg(d, fn);
-}
-
 bool DeactivateCues(int32_t index) {
     if (!g_l4Resolved) return false;
     void* d = DishByIndex(index);

@@ -90,10 +90,6 @@ bool WritePose(int32_t index, float yawZ, float rollY);
 // slew loop + stop() -- NOT a setter-managed field).
 bool WriteIsMoving(int32_t index, bool moving);
 
-// Reflected Adish_C::stop() (Public|BlueprintCallable; 2 flag writes). The
-// caller owns the stale-set cleanup (cues + activeDishes).
-bool StopDish(int32_t index);
-
 // Audio cues (satellite_move_Cue / satellite_Cue): reflected UActorComponent
 // Activate/Deactivate + IsActive. A mid-slew kill leaves the looping cues
 // Active forever -- the park owns deactivation.

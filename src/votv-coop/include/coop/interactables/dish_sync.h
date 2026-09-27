@@ -8,10 +8,10 @@
 // So each axis gets ONE author. POSES: a client's dish simulation is PARKED -- its
 // dish-moving ticker stopped, with a paired restore on the teardown fanout -- and the host streams
 // movers-only rows plus a settle tail, which one applier drives kinematically through an
-// interpolation window, so the stream's rate is not visible as stepping. That applier serves
-// the stream rows and the join seed alike, and skips a dish whose own local loop is still
-// live. ARM: the host's raw poll is the only author, and a client applies the host's polarity
-// rather than rolling its own. CALIBRATION: the host authors it too, in a lane of its own
+// interpolation window, so the stream's rate is not visible as stepping, for the stream rows and
+// the join seed alike; a client's ping never succeeds on its own machine (desk_ping_sync). ARM:
+// the host's raw poll is the only author, and a client applies the host's polarity rather than
+// rolling its own. CALIBRATION: the host authors it too, in a lane of its own
 // (coop/interactables/dish_calib_sync), polled from this lane's slow tick, with its own join seed.
 
 #pragma once
@@ -40,13 +40,6 @@ void OnDishSnapshot(const coop::net::DishSnapshotPayload& p, uint8_t senderSlot)
 // activeDishes) and, when the host machine is armed, a DishArm row (AFTER the
 // desk rows + the kind=0 catch row on the same ordered lane).
 void QueueConnectBroadcastForSlot(int peerSlot);
-
-// CLIENT, called by signal_catch_sync IMMEDIATELY AFTER the catch payload is
-// sent: kill the client's own unpreventable ping slews -- for every dish where
-// local isMoving && !wire-shadow: reflected stop() + deactivate both satellite
-// cues + activeDishes[i]=false. (The ordering -- payload first, kill second --
-// is what keeps ReadSlewFromMovingDish able to see a moving dish.)
-void KillOwnPingSlews();
 
 // Teardown fanout: the wire-residue sweep (clear OUR mirrored isMoving/
 // activeDishes/cues on every shadow-true dish) THEN the ticker restore

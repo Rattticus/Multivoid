@@ -413,6 +413,7 @@ set(VOTVCOOP_SOURCES
     src/coop/interactables/toggle_verbs.cpp
     src/coop/interactables/drive_rack_sync.cpp
     src/coop/interactables/desk_snd_fx.cpp
+    src/coop/interactables/desk_ping_sync.cpp
     src/coop/interactables/desk_sim_sync.cpp
     src/coop/interactables/dish_hashcode_sync.cpp
     src/coop/interactables/dish_sync.cpp

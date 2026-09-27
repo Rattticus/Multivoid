@@ -78,13 +78,12 @@ int32_t g_prevPolarity = -1;
 // predicate, re-armed per episode).
 bool g_reinitWindowLogged = false;
 
-// The client state. The wire shadow: what our mirror last wrote (never engine-read). A live
-// local loop is exactly local moving and not shadow: on a parked client the moving flag has
-// two writers only, the own ping loop and our raw mirror write (which starts no blueprint
-// loop).
+// The client state. The wire shadow: what our mirror last wrote (never engine-read). On a
+// parked client the moving flag has one writer, our raw mirror write, which starts no
+// blueprint loop: a client's ping never succeeds on its own machine (desk_ping_sync).
 bool g_shadowMoving[coop::net::kMaxDishes] = {};
-// Dishes whose cues we touched (the kill sweep, the mirror edges); the 1 Hz cue reconciler
-// probes only these (the pending-latent cue leak class).
+// Dishes whose cues the mirror edges touched; the 1 Hz cue reconciler probes only these (the
+// pending-latent cue leak class).
 uint32_t g_cueWatch = 0;
 // The park latch: the parked ticker instance (a fresh instance re-parks).
 void* g_parkedDisher = nullptr;
@@ -155,38 +154,10 @@ void AdvanceDishInterpSingle(int32_t index, uint64_t now) {
     }
 }
 
-// Collect the live local loop mask for all dishes (the own-ping pre-kill window: the local
-// moving flag is true while our wire shadow is false).
-void ReadLocalLiveMask(bool localLive[coop::net::kMaxDishes]) {
-    std::memset(localLive, 0, sizeof(bool) * coop::net::kMaxDishes);
-    D::DishRow rows[coop::net::kMaxDishes];
-    const int32_t n = D::ReadAllRows(rows, coop::net::kMaxDishes);
-    for (int32_t i = 0; i < n; ++i) {
-        const int32_t idx = rows[i].index;
-        if (idx >= 0 && idx < coop::net::kMaxDishes)
-            localLive[idx] = rows[i].isMoving && !g_shadowMoving[idx];
-    }
-}
-
-// The per-frame client drive: advance open dish windows, respecting the local-loop guard.
+// The per-frame client drive: advance open dish windows.
 void AdvanceDishInterp() {
-    bool localLive[coop::net::kMaxDishes] = {};
-    ReadLocalLiveMask(localLive);
     const uint64_t now = NowMs();
-    for (int32_t i = 0; i < coop::net::kMaxDishes; ++i) {
-        if (localLive[i]) {
-            auto& d = g_dishInterp[i];
-            if (d.primed && d.window.IsOpen()) {
-                d.curYaw = d.targetYaw;
-                d.curRoll = d.targetRoll;
-                d.errorYaw = d.errorRoll = 0.f;
-                d.window.Close();
-                d.dirty = false;
-            }
-            continue;
-        }
-        AdvanceDishInterpSingle(i, now);
-    }
+    for (int32_t i = 0; i < coop::net::kMaxDishes; ++i) AdvanceDishInterpSingle(i, now);
 }
 
 // The one row applier (stream rows and snapshot rows): the shadow, the raw moving flag, the
@@ -239,24 +210,11 @@ void ApplyDishRow(int32_t index, bool isMoving, float yawZ, float rollY, bool sn
     d.primed = true;
 }
 
-// Apply one incoming pose batch (client). Skips dishes with a live local loop.
+// Apply one incoming pose batch (client).
 void ApplyPoseBatch(const coop::net::DishPoseBody& body) {
-    bool localLive[coop::net::kMaxDishes] = {};
-    ReadLocalLiveMask(localLive);
-    static Clock::time_point s_lastSkipLog{};
     for (int32_t i = 0; i < body.count && i < coop::net::kMaxDishes; ++i) {
         const auto& r = body.rows[i];
         if (r.index >= coop::net::kMaxDishes) continue;
-        if (localLive[r.index]) {
-            // The own-ping pre-kill window: a rate-limited decline log.
-            const auto now = Clock::now();
-            if (now - s_lastSkipLog > std::chrono::seconds(2)) {
-                s_lastSkipLog = now;
-                UE_LOGI("[dish] %d '%ls' pose row skipped (local live loop, pre-kill window)",
-                        static_cast<int>(r.index), D::TechName(r.index).c_str());
-            }
-            continue;
-        }
         ApplyDishRow(r.index, r.isMoving != 0,
                      coop::net::DequantDeg(r.yawCdeg), coop::net::DequantDeg(r.rollCdeg));
     }
@@ -607,35 +565,6 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
         UE_LOGI("dish_sync: connect ARM row -> slot %d (decoded=%.1f polarity=%d)",
                 peerSlot, a.decoded, a.polarity);
     }
-}
-
-void KillOwnPingSlews() {
-    auto* s = g_session.load(std::memory_order_acquire);
-    if (!s || s->role() == coop::net::Role::Host) return;  // host slews natively
-    if (!D::EnsureResolved()) return;
-    D::DishRow rows[coop::net::kMaxDishes];
-    const int32_t n = D::ReadAllRows(rows, coop::net::kMaxDishes);
-    int32_t killed = 0, skipped = 0;
-    for (int32_t i = 0; i < n; ++i) {
-        const auto& r = rows[i];
-        if (r.index < 0 || r.index >= coop::net::kMaxDishes) continue;
-        if (!r.isMoving) continue;
-        if (g_shadowMoving[r.index]) {
-            // A mirror-written flag, not a live local loop: decline and log (every exit is
-            // visible).
-            UE_LOGI("[dish] %d '%ls' kill sweep skip (mirror-moving, not a local loop)",
-                    r.index, D::TechName(r.index).c_str());
-            ++skipped;
-            continue;
-        }
-        D::StopDish(r.index);          // a clean latent-chain death at the gate
-        D::DeactivateCues(r.index);    // the stop verb's stale set
-        D::WriteActiveDish(r.index, false);
-        g_cueWatch |= (1u << r.index); // the pending-latent movePow leak class
-        ++killed;
-    }
-    UE_LOGI("dish_sync: own-ping kill sweep -- %d slew(s) killed, %d skipped "
-            "(host owns the theater)", killed, skipped);
 }
 
 void OnDisconnect() {

@@ -46,8 +46,14 @@ void PrimeBaselines();
 void OnPeerLeft(int slot);
 
 // HOST: the slot whose ping FSM is currently running (0 = the host itself),
-// 0xFF when none. device_occupancy's desk-claim arbitration consults this.
+// 0xFF when none: a client's own, from its deltas, else the one a verdict the
+// host's machine runs for. device_occupancy's desk-claim arbitration consults this.
 uint8_t PingActiveSlot();
+
+// HOST: the host's machine was just primed with `slot`'s verdict (desk_ping_sync):
+// its next rising edge is that client's run, to its falling edge. 0xFF withdraws a
+// push whose run never rose.
+void AttributePrimedRun(uint8_t slot);
 
 // HOST, connect edge (ConnectReplayForSlot): re-derive the ping attribution from
 // the machine's ground truth. A solo host's rising edge is absorbed into the

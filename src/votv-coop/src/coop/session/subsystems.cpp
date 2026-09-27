@@ -11,6 +11,7 @@
 #include "coop/interactables/console_state_sync.h"
 #include "coop/interactables/desk_cursor_sync.h"
 #include "coop/interactables/desk_input_sync.h"
+#include "coop/interactables/desk_ping_sync.h"
 #include "coop/interactables/deck_play_sync.h"  // deck playback lane
 #include "coop/interactables/physmods_sync.h"  // desk physical-modules lane
 #include "coop/items/order_queue_sync.h"  // the delivery order queue, the host's, mirrored
@@ -233,6 +234,7 @@ void Install(coop::net::Session& session) {
     coop::drive_sync::Install(&session);  // the drive chain's slot lane (verb dirty-marks + the slot sweep; the slot and rack verb watches)
     coop::drive_payload_sync::Install(&session);  // a drive's row: the host authors it at prop_drive_C::upd
     coop::drive_rack_sync::Install(&session);  // rack storage lane (marks forwarded from drive_sync)
+    coop::desk_ping_sync::Install(&session);  // the ping's verdict: a client's refused and rolled on the host's desk
     coop::desk_sim_sync::Install(&session);  // download-SIM host-authoritative output stream (decoded/needle/rate/frData/poData/offsets; client overwrites)
     coop::dish_sync::Install(&session);  // host-auth dish pose mirror + host-polarity ARM edge (client sim parked)
     coop::dish_calib_sync::Install(&session);  // the dishes' precision: the host authors it, a client's own verbs are intents
@@ -436,6 +438,8 @@ void DisconnectSlot(coop::net::Session& session, int slot) {
     coop::item_activate::OnDisconnectForSlot(slot);
     coop::device_occupancy::OnDisconnectForSlot(slot);  // release a leaver's device claims
     coop::desk_input_sync::OnPeerLeft(slot);  // clear a leaver's dangling coordIsPing (its ping would swallow every peer's desk keys)
+    coop::desk_ping_sync::OnPeerLeft(static_cast<uint8_t>(slot));  // and the verdict it sent, if the desk has not run it
+    coop::signal_catch_sync::OnPeerLeft(static_cast<uint8_t>(slot));  // and the catch marked as its
     coop::desk_snd_fx::OnPeerLeft(slot);  // host-owned teardown of the leaver's loop sounds (broadcast OFF)
     coop::upgrade_sync::OnPeerLeft(static_cast<uint8_t>(slot));  // and its queued purchases
     coop::comp_sync::OnPeerDisconnect(static_cast<uint8_t>(slot));  // pause the mirror if the decode simulator left
@@ -529,6 +533,7 @@ DisconnectStats DisconnectAll() {
     coop::props::prop_record_refresh::OnDisconnect();  // per-prop coalescing state
     coop::dev::dev_lanes::RearmSelftests();  // [dev] the selftests re-arm for the next session
     coop::desk_cursor_sync::OnDisconnect();
+    coop::desk_ping_sync::OnDisconnect();
     coop::desk_sim_sync::OnDisconnect();
     coop::dish_sync::OnDisconnect();  // wire-residue sweep + the disher's restore (the suppression loan)
     coop::dish_hashcode_sync::OnDisconnect();
@@ -640,6 +645,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:containerContents"}; coop::props::container_contents_sync::Tick(); }  // edge-driven dirty drain (4 Hz gate)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:containerView"}; coop::props::container_view_close::Tick(); }  // a client's view into a container, closed out of reach
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:desk_cursor"}; coop::desk_cursor_sync::Tick(); }  // coords-panel live cursor -- holder streams viewCoordinate / mirror interpolates (50ms) + WriteCursorOnly
+    { PP::Scope _s{PP::Bucket::Interactable}; coop::desk_ping_sync::Tick(); }  // the ping lane's watches until live
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:desk_sim"}; coop::desk_sim_sync::Tick(); }  // download-SIM -- host streams outputs (10Hz) / client interpolates + WriteSimOutputs
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:dish"}; coop::dish_sync::Tick(); }  // host pose sweep + arm poll (4Hz) / client apply + park latch / calib diff-poll (1Hz)
     { PP::Scope _s{PP::Bucket::Interactable}; coop::dish_hashcode_sync::Tick(); }  // host: the marked codes, a joiner's owed set / client: rows waiting for their dish

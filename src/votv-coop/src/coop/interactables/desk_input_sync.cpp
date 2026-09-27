@@ -37,6 +37,12 @@ bool g_primed = false;
 // machine, and writing it into a receiver would wake a phantom parallel sim there.
 // The machine field is written only by the local native FSM.
 uint8_t g_pingSetterSlot = 0xFF;
+// HOST: a client's verdict the host's machine runs for it (desk_ping_sync), kept apart from g_pingSetterSlot, which
+// that client's own deltas write: its own next ping may start before the host's run ends, so one variable would let
+// the run's falling edge clear the ping's attribution. The slot is pushed at the priming and taken by the machine's
+// next rising edge, and the run is that client's until the falling edge.
+uint8_t g_nextPrimedSlot = 0xFF;
+uint8_t g_primedRunSlot = 0xFF;
 
 bool g_scanWidgetWarned = false;  // log-once for the spawnDirs null-guard
 
@@ -145,8 +151,19 @@ void PollOnce(coop::net::Session* s) {
     if (cur.coordIsPing != g_baseline.coordIsPing) {
         SendDelta(s, DeskInputField::CoordIsPing, 0, 0, cur.coordIsPing);
         if (s->role() == coop::net::Role::Host) {
-            if (cur.coordIsPing) g_pingSetterSlot = 0;       // the host's own press
-            else if (g_pingSetterSlot == 0) g_pingSetterSlot = 0xFF;  // its FSM ended
+            // The host's own press, or a client's verdict the host's machine runs (desk_ping_sync).
+            if (cur.coordIsPing) {
+                if (g_nextPrimedSlot != 0xFF) {
+                    g_primedRunSlot = g_nextPrimedSlot;
+                    g_nextPrimedSlot = 0xFF;
+                } else {
+                    g_pingSetterSlot = 0;
+                }
+            } else if (g_primedRunSlot != 0xFF) {
+                g_primedRunSlot = 0xFF;  // the verdict's run ended
+            } else if (g_pingSetterSlot == 0) {
+                g_pingSetterSlot = 0xFF;  // its FSM ended
+            }
         }
     }
 
@@ -253,12 +270,15 @@ void PrimeBaselines() {
     }
 }
 
-uint8_t PingActiveSlot() { return g_pingSetterSlot; }
+uint8_t PingActiveSlot() { return g_pingSetterSlot != 0xFF ? g_pingSetterSlot : g_primedRunSlot; }
+
+void AttributePrimedRun(uint8_t slot) { g_nextPrimedSlot = slot; }
 
 void SeedPingAttributionFromMachine() {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || s->role() != coop::net::Role::Host) return;
-    if (g_pingSetterSlot != 0xFF) return;  // a live wire attribution wins
+    if (g_pingSetterSlot != 0xFF || g_primedRunSlot != 0xFF || g_nextPrimedSlot != 0xFF)
+        return;  // a live attribution wins
     CD::Scalars sc;
     if (!CD::EnsureResolved() || !CD::Instance() || !CD::ReadScalars(sc)) return;
     if (!sc.coordIsPing) return;
@@ -272,7 +292,12 @@ void SeedPingAttributionFromMachine() {
 void OnPeerLeft(int slot) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || s->role() != coop::net::Role::Host) return;
-    if (g_pingSetterSlot != static_cast<uint8_t>(slot)) return;
+    const uint8_t leaver = static_cast<uint8_t>(slot);
+    // A verdict the host's machine runs for the leaver finishes as the host machine's own run: the desk stays held,
+    // by the host, until the machine's falling edge.
+    if (g_nextPrimedSlot == leaver) g_nextPrimedSlot = 0;
+    if (g_primedRunSlot == leaver) g_primedRunSlot = 0;
+    if (g_pingSetterSlot != leaver) return;
     // No machine-field clear: no receiver wire-writes the ping flag, so no peer's
     // machine can hold a leaver's dangling TRUE. Only the attribution -- the
     // desk-claim deny's input -- needs clearing; the leaver's own machine died with
@@ -287,6 +312,8 @@ void OnDisconnect() {
     g_baseline = {};
     g_primed = false;
     g_pingSetterSlot = 0xFF;
+    g_nextPrimedSlot = 0xFF;
+    g_primedRunSlot = 0xFF;
     g_scanWidgetWarned = false;
     g_nextPoll = {};
 }

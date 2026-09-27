@@ -63,7 +63,7 @@ host validates and commits contested writes), `local` (never shared).
 | Device occupancy | who is using a device | arbiter | snapshot of the table | works |
 | Desk input and console | field-granular input deltas, cooldown charges, the console text | presser; host relays | seed | works, five known breaks |
 | Dish | the dish pose, the client's own simulation parked; the precision, a client's own verbs sent to the host | host | snapshot; the precision a seed | works, one known break; the precision tested |
-| Signal catch | the catch as an intent the host replays | presser and host | seed | tested |
+| Signal catch | the ping's verdict as an intent the host rolls; the catch the host's, relayed as the pinger's | host | seed | tested |
 | Download and decode simulation | the host-run simulation's outputs | host | adopt | works, one known break |
 | Playback deck | the play and stop edges | presser | none | tested |
 | Drives and racks, physical modules, tapes, floppy box | slot and rack lanes with compare-and-swap at the host; a drive's row the host's, a client's copy put back, a client's new drive's row sent to the host; the eraser's delete run by the host | arbiter | seed from the host's canon | built |

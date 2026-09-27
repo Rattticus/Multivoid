@@ -169,6 +169,7 @@ Never spawn from an observer directly; post it. `[V]`
 | every screen and panel verb | `EX_LocalVirtualFunction` | no | poll the state field `[V]` |
 | the desk keyboard's key router | widget input | yes, on the occupant's machine only | the desk input lane `[V]` |
 | the desk ping | not a verb: a latent tick machine gated on a flag | | never write the flag into a mirror `[V]` |
+| the ping's verdict, `spaceRenderer_C::gatherSignal`, and the desk's `process_coords` that calls it | script calls from the desk's graph, the verdict's at `analogDScreenTest.cpp:6677` | not to a ProcessEvent observer; yes to the script-body gate | a client's pre refuses the verdict with its outputs written false and sends it; the host primes its machine from `process_coords`' own pre, so that body rolls it (`coop/interactables/desk_ping_sync`) `[V]` (the ping drill) |
 | the laptop's interaction verbs | `EX_LocalVirtualFunction` | no | poll the power flag; the host authors the content `[V]` |
 | the base alarm's trigger | a virtual call after a key lookup | no | poll the active flag on both peers `[V]` |
 | the timer, delay and tick-interval drivers | `EX_CallMath` | not to the interceptor; yes to the script-body gate | refuse the spawner's tick or entry function at the gate, by a watch on its class and function names (`coop/world/spawn_authority`) `[V]`; the generators' 30 s decay tick, a `K2_SetTimerDelegate` handler, the same way (`coop/world/power_decay`) `[V]` (`power_decay_drill`: a client refused both of its ticks, and with the refusal off ran both) |

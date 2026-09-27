@@ -22,6 +22,7 @@
 #include "coop/interactables/drone_call_intent.h"  // CLIENT->HOST press of the drone console
 #include "coop/interactables/eraser_press_intent.h"  // CLIENT->HOST press of the drive eraser; HOST->CLIENT its show
 #include "coop/creatures/kerfus_intent.h"  // CLIENT->HOST a Kerfus verb (on/off, fix the servers, pat)
+#include "coop/interactables/desk_ping_sync.h"    // a ping's verdict on the main desk, and its answers
 #include "coop/interactables/desk_verb_intent.h"  // a press on the main desk's save family, and its answers
 #include "coop/items/coingun_sync.h"
 #include "coop/items/order_queue_sync.h"  // HOST->CLIENT the delivery order queue
@@ -460,6 +461,19 @@ bool HandleIntentEvent(net::Session& session,
         net::DeskVerbPayload p{};
         std::memcpy(&p, msg.payload, sizeof(p));
         coop::desk_verb_intent::OnMessage(session, p, msg.senderPeerSlot);
+        break;
+    }
+    case net::ReliableKind::DeskPingVerdict: {
+        // CLIENT->HOST the verdict of a ping its gate refused; HOST->that CLIENT a refusal or the find. The
+        // priming, the refusals and the answers live in the module, the format here. coop::desk_ping_sync.
+        if (msg.payloadLen < sizeof(net::DeskPingVerdictPayload)) {
+            UE_LOGW("event_feed: DeskPingVerdict payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::DeskPingVerdictPayload));
+            break;
+        }
+        net::DeskPingVerdictPayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        coop::desk_ping_sync::OnMessage(session, p, msg.senderPeerSlot);
         break;
     }
     case net::ReliableKind::BroomStroke: {
