@@ -2,6 +2,8 @@
 
 #include "ue_wrap/desk/console_desk.h"
 
+#include "ue_wrap/core/object_index.h"
+
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/component_calls.h"
 #include "ue_wrap/core/fname_utils.h"
@@ -259,15 +261,23 @@ void* Instance() {
     if (g_instance && R::IsLiveByIndex(g_instance, g_instanceIdx)) return g_instance;
     g_instance = nullptr;
     if (!g_cls) return nullptr;
-    // A singleton placed actor (the gamemode resolves it the same way, by class). One walk per
-    // loss; cached and liveness-revalidated.
-    for (void* obj : R::FindObjectsByClass(L"analogDScreenTest_C")) {
-        if (obj && R::IsLive(obj)) {
-            g_instance = obj;
-            g_instanceIdx = R::InternalIndexOf(obj);
-            break;
-        }
+    // A singleton placed actor, found in the object index's list of its exact class, which the
+    // engine's create and delete notifications keep current: a miss costs that list, never a walk of
+    // the object array, and every tick's callers miss for as long as no desk exists. Cached and
+    // liveness-revalidated.
+    struct Found { void* obj; int32_t idx; } found{nullptr, -1};
+    if (void* cls = ue_wrap::object_index::ClassByName(L"analogDScreenTest_C")) {
+        ue_wrap::object_index::ForEachInstance(cls, [](void* ctx, void* obj, int32_t index) {
+            auto* f = static_cast<Found*>(ctx);
+            if (f->obj || !obj) return;
+            if (R::SlotFlags(index) & (R::slot_flags::Dying | R::slot_flags::NotYetReadable)) return;
+            if (R::NameStartsWith(R::NameOf(obj), L"Default__")) return;
+            f->obj = obj;
+            f->idx = index;
+        }, &found);
     }
+    g_instance = found.obj;
+    g_instanceIdx = found.idx;
     return g_instance;
 }
 
