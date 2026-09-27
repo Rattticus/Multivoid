@@ -6,7 +6,8 @@
 // with its entry-point argument and its caller. Every refusal has a state observable outside the
 // gate (the break flag, an efficiency sentinel) or, for the two Blueprint-internal routes, the
 // post callback that only a run body reaches. A negative arm shows the same verb running once
-// the watch is gone. A class arm watches the day-night cycle's and the wind's ReceiveTick by class and
+// the watch is gone. The arms that need fix to run are the host's: a client's own fix is its server
+// lane's to refuse. A class arm watches the day-night cycle's and the wind's ReceiveTick by class and
 // name over real ticks, beside an unscoped watch on the same name that sees every class's; an undeclared arm
 // watches a name the cycle's class does not declare, which dies at its resolve and stays dead. The gate's
 // tally is read across the passes alone, since a peer's own lanes refuse bodies of their own. Armed by
@@ -273,54 +274,60 @@ void RunScriptGateDrill() {
         // One game-thread task from here to the tally check: only bodies the drill's calls reach run.
         const unsigned long long cancelledBefore = SG::GetStats().cancelled;
 
-        // Pass 1: the ProcessEvent route, refused per instance. Both boxes broken; fix on A is
-        // refused, fix on B runs; the break flag is the observable.
-        g_cancelFixOnA = true;
-        Check(v, SG::Watch(g_fnFix, kTagFix, &PreFix, &PostFix), "watch fix");
-        SB::ApplyBreak(g_boxA, true);
-        SB::ApplyBreak(g_boxB, true);
-        Check(v, CallVerb(g_boxA, g_fnFix), "pass1: fix(A) dispatched");
-        Check(v, SB::ReadIsBroken(g_boxA), "pass1: A stays broken -- fix(A) was refused (state)");
-        Check(v, g_fix.preA == 1 && g_fix.postA == 0, "pass1: fix(A) pre fired once, post never");
-        Check(v, CallVerb(g_boxB, g_fnFix), "pass1: fix(B) dispatched");
-        Check(v, !SB::ReadIsBroken(g_boxB), "pass1: B repaired -- fix(B) ran (state)");
-        Check(v, g_fix.preB == 1 && g_fix.postB == 1, "pass1: fix(B) pre and post fired once");
-        Check(v, g_fix.fromEngine == 2, "pass1: both fix calls arrived with no caller frame (ProcessEvent)");
-        g_cancelFixOnA = false;
-        Check(v, SG::Unwatch(g_fnFix, kTagFix, &PreFix, &PostFix), "unwatch fix");
+        // A client's own fix is its server lane's to refuse (coop/interactables/serverbox_sync: a repair is the
+        // host's), so the arms that need fix to run -- the first two passes and the negative arm -- are the host's.
+        const bool fixArms = !IsClientRole();
+        if (!fixArms) UE_LOGI("[SCRIPTGATE] the fix arms are the host's: this client's server lane refuses its fix");
+        if (fixArms) {
+            // Pass 1: the ProcessEvent route, refused per instance. Both boxes broken; fix on A is
+            // refused, fix on B runs; the break flag is the observable.
+            g_cancelFixOnA = true;
+            Check(v, SG::Watch(g_fnFix, kTagFix, &PreFix, &PostFix), "watch fix");
+            SB::ApplyBreak(g_boxA, true);
+            SB::ApplyBreak(g_boxB, true);
+            Check(v, CallVerb(g_boxA, g_fnFix), "pass1: fix(A) dispatched");
+            Check(v, SB::ReadIsBroken(g_boxA), "pass1: A stays broken -- fix(A) was refused (state)");
+            Check(v, g_fix.preA == 1 && g_fix.postA == 0, "pass1: fix(A) pre fired once, post never");
+            Check(v, CallVerb(g_boxB, g_fnFix), "pass1: fix(B) dispatched");
+            Check(v, !SB::ReadIsBroken(g_boxB), "pass1: B repaired -- fix(B) ran (state)");
+            Check(v, g_fix.preB == 1 && g_fix.postB == 1, "pass1: fix(B) pre and post fired once");
+            Check(v, g_fix.fromEngine == 2, "pass1: both fix calls arrived with no caller frame (ProcessEvent)");
+            g_cancelFixOnA = false;
+            Check(v, SG::Unwatch(g_fnFix, kTagFix, &PreFix, &PostFix), "unwatch fix");
 
-        // Pass 2: fix runs on both; the check it calls on itself (a local virtual call) is refused
-        // for A by instance and caller, and the gamemode's calcServerEff it calls through a
-        // context switch is refused for A by caller alone. The efficiency sentinel is the
-        // observable for the second; the first is a post callback only a run body reaches.
-        g_cancelCheckOnA = true;
-        g_cancelCalcFromA = true;
-        Check(v, SG::Watch(g_fnCheck, kTagCheck, &PreCheck, &PostCheck), "watch check");
-        Check(v, SG::Watch(g_fnCalc, kTagCalc, &PreCalc, &PostCalc), "watch calcServerEff");
-        SB::ApplyBreak(g_boxA, true);   // each apply calls check() through ProcessEvent
-        SB::ApplyBreak(g_boxB, true);
-        const int checkEngineBefore = g_check.fromEngine;
-        Check(v, checkEngineBefore == 2 && g_check.postA == 1 && g_check.postB == 1,
-              "pass2: the two applies reached check with no caller frame, and ran");
-        SB::Aggregates s = base; s.efficiencyCalc = kSentinel; SB::WriteAggregates(s);
-        Check(v, CallVerb(g_boxA, g_fnFix), "pass2: fix(A) dispatched");
-        Check(v, !SB::ReadIsBroken(g_boxA), "pass2: fix(A) ran (its own body was not refused)");
-        Check(v, g_check.preA == 2 && g_check.postA == 1 && g_check.fromFix == 1,
-              "pass2: check from fix(A) fired pre, was refused, post never (bookkeeping)");
-        Check(v, g_calc.preA == 1 && g_calc.postA == 0 && g_calc.fromFix == 1,
-              "pass2: calcServerEff from fix(A) fired pre with fix as caller, was refused");
-        Check(v, EfficiencyCalc() == kSentinel, "pass2: the efficiency sentinel survived fix(A) (state)");
-        Check(v, CallVerb(g_boxB, g_fnFix), "pass2: fix(B) dispatched");
-        Check(v, g_check.preB == 2 && g_check.postB == 2 && g_check.fromFix == 2,
-              "pass2: check from fix(B) fired pre and post (ran)");
-        Check(v, g_calc.preB == 1 && g_calc.postB == 1 && g_calc.fromFix == 2,
-              "pass2: calcServerEff from fix(B) ran");
-        Check(v, EfficiencyCalc() != kSentinel, "pass2: fix(B) recomputed the efficiency (state)");
-        Check(v, g_check.callerMismatch == 0 && g_calc.callerMismatch == 0, "pass2: every caller frame named fix");
-        g_cancelCheckOnA = false;
-        g_cancelCalcFromA = false;
-        Check(v, SG::Unwatch(g_fnCheck, kTagCheck, &PreCheck, &PostCheck), "unwatch check");
-        Check(v, SG::Unwatch(g_fnCalc, kTagCalc, &PreCalc, &PostCalc), "unwatch calcServerEff");
+            // Pass 2: fix runs on both; the check it calls on itself (a local virtual call) is refused
+            // for A by instance and caller, and the gamemode's calcServerEff it calls through a
+            // context switch is refused for A by caller alone. The efficiency sentinel is the
+            // observable for the second; the first is a post callback only a run body reaches.
+            g_cancelCheckOnA = true;
+            g_cancelCalcFromA = true;
+            Check(v, SG::Watch(g_fnCheck, kTagCheck, &PreCheck, &PostCheck), "watch check");
+            Check(v, SG::Watch(g_fnCalc, kTagCalc, &PreCalc, &PostCalc), "watch calcServerEff");
+            SB::ApplyBreak(g_boxA, true);   // each apply calls check() through ProcessEvent
+            SB::ApplyBreak(g_boxB, true);
+            const int checkEngineBefore = g_check.fromEngine;
+            Check(v, checkEngineBefore == 2 && g_check.postA == 1 && g_check.postB == 1,
+                  "pass2: the two applies reached check with no caller frame, and ran");
+            SB::Aggregates s = base; s.efficiencyCalc = kSentinel; SB::WriteAggregates(s);
+            Check(v, CallVerb(g_boxA, g_fnFix), "pass2: fix(A) dispatched");
+            Check(v, !SB::ReadIsBroken(g_boxA), "pass2: fix(A) ran (its own body was not refused)");
+            Check(v, g_check.preA == 2 && g_check.postA == 1 && g_check.fromFix == 1,
+                  "pass2: check from fix(A) fired pre, was refused, post never (bookkeeping)");
+            Check(v, g_calc.preA == 1 && g_calc.postA == 0 && g_calc.fromFix == 1,
+                  "pass2: calcServerEff from fix(A) fired pre with fix as caller, was refused");
+            Check(v, EfficiencyCalc() == kSentinel, "pass2: the efficiency sentinel survived fix(A) (state)");
+            Check(v, CallVerb(g_boxB, g_fnFix), "pass2: fix(B) dispatched");
+            Check(v, g_check.preB == 2 && g_check.postB == 2 && g_check.fromFix == 2,
+                  "pass2: check from fix(B) fired pre and post (ran)");
+            Check(v, g_calc.preB == 1 && g_calc.postB == 1 && g_calc.fromFix == 2,
+                  "pass2: calcServerEff from fix(B) ran");
+            Check(v, EfficiencyCalc() != kSentinel, "pass2: fix(B) recomputed the efficiency (state)");
+            Check(v, g_check.callerMismatch == 0 && g_calc.callerMismatch == 0, "pass2: every caller frame named fix");
+            g_cancelCheckOnA = false;
+            g_cancelCalcFromA = false;
+            Check(v, SG::Unwatch(g_fnCheck, kTagCheck, &PreCheck, &PostCheck), "unwatch check");
+            Check(v, SG::Unwatch(g_fnCalc, kTagCalc, &PreCalc, &PostCalc), "unwatch calcServerEff");
+        }
 
         // Pass 3: the ubergraph through a local final call from the sendName stub, with its
         // entry-point argument read off the frame; refused for A.
@@ -353,16 +360,20 @@ void RunScriptGateDrill() {
         }
         Check(v, SG::Unwatch(g_fnHealth, kTagHealth, nullptr, &PostHealth), "unwatch countHealth");
 
-        // The negative arm: no watch, the same verb, the same box -- it must run, and the retired
-        // watch must not see it (the count is taken BEFORE the call).
-        SB::ApplyBreak(g_boxA, true);
-        const int fixPreBefore = g_fix.preA;
-        Check(v, CallVerb(g_boxA, g_fnFix), "negative: fix(A) dispatched with no watch");
-        Check(v, !SB::ReadIsBroken(g_boxA), "negative: A repaired -- nothing refused without a watch");
-        Check(v, g_fix.preA == fixPreBefore, "negative: the retired watch did not fire");
+        if (fixArms) {
+            // The negative arm: no watch, the same verb, the same box -- it must run, and the retired
+            // watch must not see it (the count is taken BEFORE the call).
+            SB::ApplyBreak(g_boxA, true);
+            const int fixPreBefore = g_fix.preA;
+            Check(v, CallVerb(g_boxA, g_fnFix), "negative: fix(A) dispatched with no watch");
+            Check(v, !SB::ReadIsBroken(g_boxA), "negative: A repaired -- nothing refused without a watch");
+            Check(v, g_fix.preA == fixPreBefore, "negative: the retired watch did not fire");
+        }
 
         const SG::Stats st = SG::GetStats();
-        Check(v, st.cancelled - cancelledBefore == 4, "the gate's own tally counted the passes' four refusals");
+        // The passes' refusals: fix(A), check and calcServerEff from fix(A), A's ubergraph entry; a client runs the last.
+        const unsigned long long refusals = fixArms ? 4 : 1;
+        Check(v, st.cancelled - cancelledBefore == refusals, "the gate's own tally counted the passes' refusals");
         UE_LOGI("[SCRIPTGATE] other-box traffic through the watched functions: fix=%d check=%d calc=%d "
                 "ubergraph(other entries)=%d -- all ran", g_fix.other, g_check.other, g_calc.other, g_uber.other);
         Check(v, st.offGameThread == 0, "no watched body was reached off the game thread");
