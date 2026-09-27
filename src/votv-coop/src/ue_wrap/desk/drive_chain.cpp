@@ -164,25 +164,46 @@ bool CallDrivePulledOut(void* slotActor) {
     return f.valid() && ue_wrap::Call(slotActor, f);
 }
 
+void* Port(void* slotActor) {
+    if (!slotActor || g_offSlotPort < 0) return nullptr;
+    void* port = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(slotActor) + g_offSlotPort);
+    return (port && R::IsLive(port)) ? port : nullptr;
+}
+
+bool PortOverlaps(void* slotActor, void* actor) {
+    void* port = Port(slotActor);
+    if (!port || !actor || !R::IsLive(actor)) return false;
+    // IsOverlappingActor is UPrimitiveComponent's; the dispatch cache climbs to it.
+    void* const fn = R::FindDispatchFunctionCached(R::ClassOf(port), L"IsOverlappingActor");
+    if (!fn) return false;
+    ue_wrap::ParamFrame f(fn);
+    if (!f.valid()) return false;
+    f.Set<void*>(L"Other", actor);
+    return ue_wrap::Call(port, f) && f.Get<bool>(L"ReturnValue");
+}
+
+bool ReadSlotLatch(void* slotActor, bool& recentlyDetached, int& portCollision) {
+    if (!slotActor || g_offSlotDetached < 0) return false;
+    recentlyDetached = *(reinterpret_cast<uint8_t*>(slotActor) + g_offSlotDetached) != 0;
+    portCollision = -1;
+    if (void* port = Port(slotActor)) {
+        void* const fn = R::FindDispatchFunctionCached(R::ClassOf(port), L"GetCollisionEnabled");
+        ue_wrap::ParamFrame f(fn);
+        if (fn && f.valid() && ue_wrap::Call(port, f)) portCollision = f.Get<uint8_t>(L"ReturnValue");
+    }
+    return true;
+}
+
+bool WriteSlotLatch(void* slotActor, bool recentlyDetached) {
+    if (!slotActor || g_offSlotDetached < 0) return false;
+    *(reinterpret_cast<uint8_t*>(slotActor) + g_offSlotDetached) = recentlyDetached ? 1 : 0;
+    return true;
+}
+
 void CompleteEjectLatch(void* slotActor, void* driveActor) {
     if (!slotActor || g_offSlotDetached < 0 || g_offSlotPort < 0) return;
     // Dead/absent drive -> the organic EndOverlap can never come; complete now.
-    bool overlapping = false;
-    if (driveActor && R::IsLive(driveActor)) {
-        void* port = *reinterpret_cast<void**>(
-            reinterpret_cast<uint8_t*>(slotActor) + g_offSlotPort);
-        // IsOverlappingActor is UPrimitiveComponent's; the dispatch cache climbs to it.
-        void* const fn = (port && R::IsLive(port))
-            ? R::FindDispatchFunctionCached(R::ClassOf(port), L"IsOverlappingActor") : nullptr;
-        if (fn) {
-            ue_wrap::ParamFrame f(fn);
-            if (f.valid()) {
-                f.Set<void*>(L"Other", driveActor);
-                if (ue_wrap::Call(port, f)) overlapping = f.Get<bool>(L"ReturnValue");
-            }
-        }
-    }
-    if (!overlapping)
+    if (!PortOverlaps(slotActor, driveActor))
         *(reinterpret_cast<uint8_t*>(slotActor) + g_offSlotDetached) = 0;
 }
 

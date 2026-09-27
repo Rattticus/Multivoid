@@ -56,6 +56,19 @@ void* SlotDrive(void* slotActor);
 bool CallPutDriveIn(void* slotActor, void* driveActor);
 bool CallDrivePulledOut(void* slotActor);
 
+// The slot's drivePort, the box its overlap takes a drive by, and whether `actor` overlaps it. Null / false when the
+// slot or its port is gone. Game thread (IsOverlappingActor is a reflected call).
+void* Port(void* slotActor);
+bool PortOverlaps(void* slotActor, void* actor);
+
+// [dev] the slot's eject latch (isRecentlyDetached, which only the ejected drive's EndOverlap clears) and its port's
+// collision (GetCollisionEnabled: 0 none, 1 query only, 2 physics only, 3 both; -1 unread). Game thread.
+bool ReadSlotLatch(void* slotActor, bool& recentlyDetached, int& portCollision);
+
+// [dev] a drill's fixture: set or clear the slot's eject latch, which the port's entry reads before it takes a drive.
+// False when the slot or the field is not resolved. Game thread.
+bool WriteSlotLatch(void* slotActor, bool recentlyDetached);
+
 // The deterministic eject-latch completion: if the ejected drive no longer overlaps the slot's
 // drivePort (or is null/dead), complete the EndOverlap transition the FSM is waiting for --
 // isRecentlyDetached = false. No-op when still overlapping (the organic EndOverlap will clear it).
