@@ -242,15 +242,17 @@ void SendDeskState(coop::net::Session* s, const CD::Scalars& sc, uint8_t adopt, 
 // repeated line can over-match the overlap and eat its own duplicate; only the animated bar
 // lines repeat exactly, and those are filtered below. Only complete event lines ride the wire.
 
-// Only the CDOWN family is filtered: it is the one animated family every peer regenerates
-// itself (the cooldown mirrors through DeskInput charge events and the native per-peer decay,
-// and each peer's own coord-log pump rewrites its CDOWN lines), so shipping them would
-// double-write terminals. The other event families are gated on the presser's own inputs or on
-// the ping machine, which never run on a mirror, so they ship as normal producer lines; their
-// volume is bounded by the 1000-char cap at the 1 Hz producer.
-bool IsAnimatedLogLine(const std::wstring& line) {
+// Two families every peer writes itself are filtered, since shipping them would double-write
+// terminals: the animated CDOWN lines (the cooldown mirrors through DeskInput charge events and
+// the native per-peer decay, and each peer's own coord-log pump rewrites them), and the game's
+// reset line, which the host's reset writes there and download_arm_sync's replay of it writes on
+// each client. The other event families are gated on the presser's own inputs or on the ping
+// machine, which never run on a mirror, so they ship as normal producer lines; their volume is
+// bounded by the 1000-char cap at the 1 Hz producer.
+bool IsPeerWrittenLogLine(const std::wstring& line) {
     static const wchar_t* const kPrefixes[] = {
         L"CDOWN: [",
+        L"Signal data deleted",
     };
     for (const wchar_t* p : kPrefixes)
         if (line.compare(0, ::wcslen(p), p) == 0) return true;
@@ -299,7 +301,7 @@ void ProduceLogLines(coop::net::Session* s) {
         if (eol == std::wstring::npos) eol = fresh.size();
         if (eol > pos) {
             const std::wstring line = fresh.substr(pos, eol - pos);
-            if (!IsAnimatedLogLine(line)) {
+            if (!IsPeerWrittenLogLine(line)) {
                 SendLogLine(s, line);
                 UE_LOGI("console_state: desk log event line shipped (%zu chars)", line.size());
             }

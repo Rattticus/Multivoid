@@ -1,8 +1,8 @@
 // ue_wrap/desk/dish.h -- standalone engine access for the satellite dishes
 // (Adish_C, level-placed immortal actors), the gamemode's dishs/activeDishes
 // arrays, and the dish-moving ticker (ticker_disher_C).
-// Principle-7 engine-wrapper layer -- NO network logic; coop/signal_catch_sync
-// and coop/dish_sync (the L4 pose/arm/calibration lanes) drive it through here.
+// Principle-7 engine-wrapper layer -- NO network logic; coop/signal_catch_sync,
+// coop/dish_sync and coop/download_arm_sync (the pose, calibration and arm lanes) drive it.
 //
 // mainGamemode.dishs (TArray<Adish_C*>) is index-sorted by the level-authored
 // dish.Index; the catch chain calls startMovingTo(lookAt) on EVERY dish with ONE
@@ -46,18 +46,6 @@ int32_t ReadAllDishStates(DishState* out, int32_t cap);
 // coord_signalData identity tuple since L4; this stays for the host's pose
 // sweep + settle-tail edge.)
 int32_t MovingCount();
-
-// The exact startMovingTo argument of the in-flight slew, recovered as
-// (dish.lookAt - dish.ActorLocation) from the first live MOVING dish --
-// the BP computes one vector for all dishes, so any moving dish carries it.
-// False if no dish is moving (caller sends slewValid=0).
-bool ReadSlewFromMovingDish(ue_wrap::FVector& out);
-
-// Reflected startMovingTo(lookAt=slew) on every live dish (the catch chain's
-// @9494 fan-out). The BP itself skips already-moving dishes. Returns the
-// number of dishes the call dispatched on. Game thread. HOST-side only since
-// L4 (the client sim is parked; a client never slews from wire).
-int32_t StartMovingAll(const ue_wrap::FVector& slew);
 
 // ---- L4 pose/state surface -------------------------------------------------
 

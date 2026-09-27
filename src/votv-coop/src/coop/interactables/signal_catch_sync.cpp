@@ -9,7 +9,6 @@
 #include "coop/player/players_registry.h"
 
 #include "ue_wrap/desk/console_desk.h"
-#include "ue_wrap/desk/dish.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/desk/space_renderer.h"
@@ -26,7 +25,6 @@ namespace {
 
 namespace CD = ue_wrap::console_desk;
 namespace SR = ue_wrap::space_renderer;
-namespace D = ue_wrap::dish;
 namespace sg = ue_wrap::script_gate;
 
 using Clock = std::chrono::steady_clock;
@@ -58,10 +56,9 @@ Identity g_prevId{};
 std::wstring g_prevSigName;
 bool g_havePrevSig = false;
 // The desk instance the baselines were read from. A mid-session level reload spawns a fresh
-// desk whose runtime-only signal data starts at None; a module-static baseline surviving
-// that would read armed-versus-None as a player pressing the delete button and broadcast a
-// spurious clear (resetting every peer's download). The same instance-tracking shape as the
-// console state's suppression latch.
+// desk whose runtime-only signal data starts at None; a module-static baseline surviving that
+// would hold the old world's signal against the new desk's, so the baselines follow the
+// instance. The same instance-tracking shape as the console state's suppression latch.
 void* g_deskInst = nullptr;
 
 // Recently caught identities (the catcher at send, the host and receivers at apply): filters
@@ -220,61 +217,20 @@ void SendAs(coop::net::Session* s, const coop::net::SkySignalCatchPayload& p, ui
     }
 }
 
-// Send a built payload toward the rest of the session. A client sends to the host (slot 0)
-// for validation; the host sends to every ready client except `exceptSlot` (the origin),
-// stamping the logical sender so receivers see who acted.
-void SendOut(coop::net::Session* s, const coop::net::SkySignalCatchPayload& p,
-             int exceptSlot) {
-    if (s->role() == coop::net::Role::Client) {
-        s->SendReliableToSlot(0, coop::net::ReliableKind::SkySignalCatch, &p, sizeof(p));
-        return;
-    }
-    for (int slot = 1; slot < static_cast<int>(coop::net::kMaxPeers); ++slot) {
-        if (slot == exceptSlot || !s->IsSlotReady(slot)) continue;
-        s->SendReliableToSlot(slot, coop::net::ReliableKind::SkySignalCatch, &p, sizeof(p),
-                              exceptSlot > 0 ? static_cast<uint8_t>(exceptSlot) : 0);
-    }
-}
-
-// The receiver-side replay of the game's consume chain's identity half. The dish theatre is
-// host-only (the host replays the start-moving fan-out and streams poses via the dish sync;
-// a client never slews from the wire) and the arm rides the host-authored dish-arm lane.
-void ApplyReplay(coop::net::Session* s, const coop::net::SkySignalCatchPayload& p) {
-    if (p.kind == 1) {
-        // The game's signal-data-deleted chain: clear the signal, reset the download machine.
-        CD::ClearCoordSignal();
-        CD::ResetDownloadMachine();
-        g_prevId = {};
-        g_prevSigName = L"None";  // prime: the wire apply must not re-fire the edge
-        g_havePrevSig = true;
-        coop::desk_input_sync::PrimeBaselines();
-        UE_LOGI("signal_catch: cleared replay applied (download machine reset)");
-        return;
-    }
+// A client's replay of the game's consume chain's identity half. The dish theatre is the host's
+// (its native slews stream as poses via the dish sync; a client never slews from the wire) and
+// the arm rides the host-authored dish-arm lane.
+void ApplyReplay(const coop::net::SkySignalCatchPayload& p) {
     const CD::CoordSignal sig = CoordSignalFromRow(p.row);
     CD::WriteCoordSignal(sig);
     SR::RemoveSignalByIdentity(sig.x, sig.y, sig.z, sig.frequency);
-    CD::ResetDownloadMachine();
-    // No ping-success beep replay here: the pinging peer's organic ping sound crosses on the desk
-    // sound-effects lane.
-    if (s->role() == coop::net::Role::Host) {
-        if (p.slewValid) {
-            const int32_t n = D::StartMovingAll(
-                ue_wrap::FVector{ p.slewX, p.slewY, p.slewZ });  // the native fan-out
-            UE_LOGI("signal_catch: catch replay applied ('%ls', %d dish(es) slewing)",
-                    sig.objectName.c_str(), n);
-        } else {
-            // Unreachable from a live catch (the coordinate write and the slew fan-out are one
-            // synchronous chain); log the decline.
-            UE_LOGW("signal_catch: host catch replay with slewValid=0 ('%ls') -- "
-                    "no theater started", sig.objectName.c_str());
-        }
-    } else {
-        // A client applies the identity only. Poses arrive on the dish pose stream; the arm arrives
-        // on the dish-arm lane with the host polarity.
-        UE_LOGI("signal_catch: catch identity applied ('%ls') -- host owns the theater",
+    // The ping success's own writes to the download machine, its two literals, and nothing more.
+    if (!CD::WriteCatchReset())
+        UE_LOGW("signal_catch: the catch's writes to the download machine did not resolve here ('%ls')",
                 sig.objectName.c_str());
-    }
+    // No ping-success beep replay here: the pinging peer's organic ping sound crosses on the desk
+    // sound-effects lane. Poses arrive on the dish pose stream; the arm on the dish-arm lane.
+    UE_LOGI("signal_catch: catch identity applied ('%ls') -- host owns the theater", sig.objectName.c_str());
     g_prevId = { sig.x, sig.y, sig.z, sig.frequency };  // prime the FULL tuple
     g_prevSigName = sig.objectName;
     g_havePrevSig = true;
@@ -285,30 +241,19 @@ bool BuildCatchPayload(const CD::CoordSignal& sig, uint8_t kind,
                        coop::net::SkySignalCatchPayload& p) {
     std::memset(&p, 0, sizeof(p));
     p.kind = kind;
-    if (kind == 1) return true;  // cleared: row + slew ignored
     FillRowFromCoordSignal(sig, p.row);
-    ue_wrap::FVector slew{};
-    if (D::ReadSlewFromMovingDish(slew)) {
-        p.slewX = slew.X; p.slewY = slew.Y; p.slewZ = slew.Z;
-        p.slewValid = 1;
-    }
     return true;
 }
 
-// The catch and cleared detector body, shared by the 1 Hz tick and the snapshot-arrival race
+// The catch detector body, shared by the 1 Hz tick and the snapshot-arrival race
 // check. The signature is the signal data's identity (tuple or name) change edge: no sky-row
 // corroboration, no dish edge. The field's writers are the native ping-success chain (a catch,
 // the host's alone), the native "Signal data deleted" chain (a clear), the desk's setData (a
 // save's restore) and our wire appliers; the last two prime the baselines.
 void RunDetectors(coop::net::Session* s, const CD::CoordSignal& sig, bool haveSig) {
     if (s && s->connected() && haveSig && g_havePrevSig) {
-        // Cleared (any peer; unclaimed trust, like the physical button).
-        if (!IsNoneName(g_prevSigName) && IsNoneName(sig.objectName)) {
-            coop::net::SkySignalCatchPayload p{};
-            BuildCatchPayload(sig, 1, p);
-            SendOut(s, p, /*exceptSlot*/ -1);  // client -> host; host -> all clients
-            UE_LOGI("signal_catch: local 'Signal data deleted' relayed");
-        }
+        // A clear (the game's signal-deleted reset) is not this lane's: the host's reset reaches every peer on the
+        // download arm lane, and the coordinate clear is inside the game's own reset there.
         // Catch: the identity change edge to non-None. No claim gate: the successful ping's own
         // completion releases the desk FSM-hold within the same second as the edge, so a
         // claim-gated 1 Hz detector lost the race and the roll-forward below ate the catch
@@ -334,7 +279,7 @@ void RunDetectors(coop::net::Session* s, const CD::CoordSignal& sig, bool haveSi
                         // which a client applies as a catch and announces to nobody, and the host announces none.
                         g_catchAuthor = 0xFF;
                         p.kind = 2;
-                        SendOut(s, p, /*exceptSlot*/ -1);
+                        SendAs(s, p, /*author*/ 0);
                         UE_LOGI("signal_catch: the host's verdict caught '%ls' for a client that left -- relayed "
                                 "unannounced", sig.objectName.c_str());
                     } else if (g_catchAuthor != 0xFF && IdentityEq(id, g_authorId)) {
@@ -349,12 +294,10 @@ void RunDetectors(coop::net::Session* s, const CD::CoordSignal& sig, bool haveSi
                                 static_cast<unsigned>(author));
                         coop::peer_action_feed::Announce(author, L"caught signal '" + sig.objectName + L"'");
                     } else {
-                        SendOut(s, p, /*exceptSlot*/ -1);  // every client
+                        SendAs(s, p, /*author*/ 0);  // the host's own catch, to every client
                         ++g_localCatches;
-                        UE_LOGI("signal_catch: local catch detected ('%ls' at %.0f,%.0f,%.0f; "
-                                "slewValid=%u) -- relayed",
-                                sig.objectName.c_str(), sig.x, sig.y, sig.z,
-                                static_cast<unsigned>(p.slewValid));
+                        UE_LOGI("signal_catch: local catch detected ('%ls' at %.0f,%.0f,%.0f) -- relayed",
+                                sig.objectName.c_str(), sig.x, sig.y, sig.z);
                         // The catcher's own activity-feed line (the same line everyone sees, no "You");
                         // receivers announce at their receive sites.
                         coop::peer_action_feed::Announce(
@@ -375,8 +318,7 @@ void RunDetectors(coop::net::Session* s, const CD::CoordSignal& sig, bool haveSi
 
 bool PayloadFinite(const coop::net::SkySignalCatchPayload& p) {
     const float vals[] = { p.row.x, p.row.y, p.row.z, p.row.strength, p.row.frequency,
-                           p.row.frequencySpread, p.row.polarity, p.row.polaritySpread,
-                           p.slewX, p.slewY, p.slewZ };
+                           p.row.frequencySpread, p.row.polarity, p.row.polaritySpread };
     for (float v : vals)
         if (!std::isfinite(v)) return false;
     return true;
@@ -413,33 +355,23 @@ void Tick() {
 void OnReliable(const coop::net::SkySignalCatchPayload& p, uint8_t senderSlot) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s) return;
-    if (p.kind > 2 || !PayloadFinite(p)) return;
+    if ((p.kind != 0 && p.kind != 2) || !PayloadFinite(p)) return;
     if (!CD::EnsureResolved() || !CD::Instance()) return;
 
     const Identity id{ p.row.x, p.row.y, p.row.z, p.row.frequency };
     if (s->role() == coop::net::Role::Host) {
-        // kind 2 (the connect state seed) is host-authored only; receiving one here is a protocol
-        // violation, never a legitimate edge.
-        // kind 0 too is the host's to author: a client rolls no verdict (desk_ping_sync), so it never catches.
-        if (p.kind == 2 || p.kind == 0) {
-            SayDropped(senderSlot, p.kind);
-            return;
-        }
-        // kind 1 is deliberately not gated: the delete button is a physical desk button, so any
-        // peer can legitimately clear. The replay is idempotent and primes the receivers'
-        // detectors, so repeats are bounded no-ops.
-        ApplyReplay(s, p);
-        SendOut(s, p, /*exceptSlot*/ senderSlot);  // fan out to the other clients
-    } else {
-        // A client is transport-trusted (we only receive from the host; the sender slot carries the
-        // logical catcher via the relay stamp).
-        if (p.kind == 0 || p.kind == 2) RegisterRecent(id);
-        ApplyReplay(s, p);
-        // kind 2 (the connect seed) is state adoption, not a live action: no feed line.
-        if (p.kind == 0)
-            coop::peer_action_feed::Announce(senderSlot,
-                L"caught signal '" + WireName(p.row) + L"'");
+        // Both kinds are the host's to author: kind 2 is its connect seed, and a client rolls no verdict
+        // (desk_ping_sync), so it never catches. A reset rides coop/interactables/download_arm_sync.
+        SayDropped(senderSlot, p.kind);
+        return;
     }
+    // A client is transport-trusted (we only receive from the host; the sender slot carries the
+    // logical catcher via the relay stamp).
+    RegisterRecent(id);
+    ApplyReplay(p);
+    // kind 2 (the connect seed) is state adoption, not a live action: no feed line.
+    if (p.kind == 0)
+        coop::peer_action_feed::Announce(senderSlot, L"caught signal '" + WireName(p.row) + L"'");
 }
 
 void QueueConnectBroadcastForSlot(int peerSlot) {
@@ -453,8 +385,7 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
     // activity feed (a joiner must not see a stale host-attributed "caught signal" line).
     BuildCatchPayload(sig, 2, p);
     s->SendReliableToSlot(peerSlot, coop::net::ReliableKind::SkySignalCatch, &p, sizeof(p));
-    UE_LOGI("signal_catch: connect catch seed (kind=2) -> slot %d ('%ls', slewValid=%u)",
-            peerSlot, sig.objectName.c_str(), static_cast<unsigned>(p.slewValid));
+    UE_LOGI("signal_catch: connect catch seed (kind=2) -> slot %d ('%ls')", peerSlot, sig.objectName.c_str());
 }
 
 void NoteIncomingSnapshot(std::vector<SR::SignalRow>& rows) {

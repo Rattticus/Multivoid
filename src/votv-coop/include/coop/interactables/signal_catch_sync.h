@@ -7,9 +7,10 @@
 // plays, and every gamemode dish slews to the target.
 //
 // This module relays the host's catch as ONE world event and replays its IDENTITY half --
-// the signal data, the sky-row delete, the machine reset -- on every client. The dish
-// THEATER half is the host's: its native slews stream as poses (dish_sync), and a client
-// never slews from the wire. The download arm rides the host-authored DishArm lane.
+// the signal data, the sky-row delete, the catch's own two writes to the download machine --
+// on every client. The dish THEATER half is the host's: its native slews stream as poses
+// (dish_sync), and a client never slews from the wire. The download arm and reset ride the
+// host-authored DishArm lane (coop/interactables/download_arm_sync).
 
 #pragma once
 
@@ -25,7 +26,7 @@ namespace coop::signal_catch_sync {
 
 void Install(coop::net::Session* session);
 
-// 1 Hz: the catch and cleared detectors, plus recent-catch TTL pruning. Cheap when
+// 1 Hz: the catch detector, plus recent-catch TTL pruning. Cheap when
 // idle (one struct read).
 //
 // The catch detector is UNGATED: it fires on a change-edge of the coord_signalData
@@ -47,16 +48,15 @@ void Tick();
 // host; senderSlot is the stamped logical catcher).
 //
 // kind=0 is a catch and lands one activity-feed line per peer, phrased for the
-// catcher or for a watcher from the stamped origin. kind=1 is a CLEAR: the 'Signal
-// data deleted' button, seen as an objectName-to-None edge on ANY peer, unclaimed,
-// matching that physical button's own authority model.
+// catcher or for a watcher from the stamped origin. A clear is not this lane's: the
+// host's signal-deleted reset reaches every peer on coop/interactables/download_arm_sync.
 void OnReliable(const coop::net::SkySignalCatchPayload& p, uint8_t senderSlot);
 
-// HOST: if coord_signalData is armed, send the joiner one kind=2 STATE-SEED
-// for the signal IDENTITY (the poses/arm ride dish_sync's snapshot + DishArm
-// rows on the same ordered lane, queued right after this). kind=2 applies
-// like a catch but never announces to the activity feed; it also carries the
-// catch of a verdict whose client left before the detector found it.
+// HOST: if coord_signalData holds a caught signal, send the joiner one kind=2 STATE-SEED
+// for the signal IDENTITY; a reset since the joiner's capture goes ahead of the desk's
+// whole seed, and the dish snapshot and the download's arm row after this
+// (download_arm_sync). kind=2 applies like a catch but never announces to the activity feed;
+// it also carries the catch of a verdict whose client left before the detector found it.
 void QueueConnectBroadcastForSlot(int peerSlot);
 
 // Called by console_state_sync BEFORE applying an assembled SkySignalState

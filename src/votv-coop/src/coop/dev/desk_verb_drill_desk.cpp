@@ -238,8 +238,8 @@ int PurgeBand() {
 }
 
 // The download is formed once the catch is on the wire: a receiver forms its download from the caught signal's
-// object, so an arm that overtook the catch would form nothing there ("dish_sync: ARM with no local
-// coord_signalData").
+// object, so an arm that overtook the catch would form nothing there ("download_arm: ARM with no caught
+// signal here").
 bool WriteCaught(int leg) {
     CD::CoordSignal sig;
     sig.x = kBandX + static_cast<float>(leg);

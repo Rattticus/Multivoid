@@ -12,6 +12,7 @@
 #include "coop/config/config.h"  // the test-cue flag
 #include "coop/config/config_registry.h"  // [dev] stall_world_stream_at_pct, the stalled-download drill
 #include "coop/interactables/meadow_db_sync.h"  // the join-seed multiset snapshot at the blob instant
+#include "coop/interactables/download_arm_sync.h"  // the armed state at the capture
 #include "coop/interactables/signal_sync.h"  // the seed snapshot capture and cancel
 #include "coop/world/email_sync.h"           // the seed snapshot capture and cancel
 #include "coop/net/session.h"
@@ -420,6 +421,7 @@ void CaptureAndBegin_(int peerSlot, HostStream& hs) {
             // The signal and email seeds capture at the same instant.
             coop::signal_sync::CaptureJoinSnapshot(peerSlot);
             coop::email_sync::CaptureJoinSnapshot(peerSlot);
+            coop::download_arm_sync::CaptureJoinSnapshot(peerSlot);
             return;
         }
         // Only when the read itself failed: the plausibility gate above has already said why.
@@ -583,6 +585,7 @@ void CancelForSlot(int peerSlot) {
     coop::meadow_db_sync::CancelJoinSnapshot(peerSlot);  // drop the seed baseline and the pending masks
     coop::signal_sync::CancelJoinSnapshot(peerSlot);
     coop::email_sync::CancelJoinSnapshot(peerSlot);
+    coop::download_arm_sync::CancelJoinSnapshot(peerSlot);
     coop::join_window_baseline::ClearForSlot(peerSlot);  // the unconsumed baseline and its late flush
 }
 

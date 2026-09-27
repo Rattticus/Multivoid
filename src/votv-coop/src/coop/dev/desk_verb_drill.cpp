@@ -238,9 +238,7 @@ void HostTick(coop::net::Session* s, void* player) {
         return;
     case HStep::ArmDownload:
         // DELETE's fixture is the caught signal alone: its branch deletes the signal and reads no download
-        // (analogDScreenTest.cpp:3048-3064). A download formed again from the same object a second after SAVE's
-        // reset would not reach the client either: the host's arm poll broadcasts a mesh edge, a key change or a
-        // polarity change, and it would see none (dish_sync.cpp, HostArmPoll).
+        // (analogDScreenTest.cpp:3048-3064).
         if (g_hostLeg == kSave || g_hostLeg == kDelete) {
             if (coop::signal_catch_sync::LocalCatchesRelayed() == g_hostCatches) {
                 if (now - g_hostMs > kArmBoundMs) HostAbandon("the caught signal was never relayed");

@@ -87,23 +87,27 @@ state and are re-sent to a joiner from the components' ground truth.
 
 ### Signals, the catch, the dishes
 
-The sky-signal set is rolled on the host only; a client kills its own roller timer, keeps its
-widget lifetimes wire-driven and reconciles its set to the host's snapshot
+The sky-signal set is rolled on the host only; a client kills its own roller timer, keeps its widget
+lifetimes wire-driven and reconciles its set to the host's snapshot
 (`coop/interactables/console_state_sync`, which also carries the desk's live-visible scalars, the
-committed dish-aim coordinates and the nine one-shot log lines). A catch is the host's event,
-its verdict rolled there, whose identity half (the caught data, the sky-row delete, the machine
-reset) is replayed on every client (`coop/interactables/signal_catch_sync`); the host's unprimed
-change edge is the authority, because a claim-gated detector lost a live catch to the hold's own
-release. The dish
-theater is host-only: the client's dish simulation is parked, the host replays the slew and
-streams the poses of all twenty-four dishes, the armed download's polarity is host-authored, and
-so is a dish's precision: the host sends its changed dishes' values and a joiner all of them, and a
-client's copy holds the host's values, whatever moved it off one (a mirrored lightning strike's hit)
-put back at its poll, before the gamemode averages the dishes into the rate
-its desk downloads with, and before a player's verb reads them. A client player's own two verbs are
-the exception, the toolgun's calibration tool and the uncalibrator: they run on its copy and send
-what they changed to the host, which performs what it can and answers with the live dishes named, to
-all once it performed any and to the author alone otherwise (`coop/interactables/dish_calib_sync`).
+committed dish-aim coordinates and the eight one-shot log lines). A catch is the host's event,
+its verdict rolled there, whose identity half (the caught data, the sky-row delete, the catch's own
+two writes to the download machine) is replayed on every client
+(`coop/interactables/signal_catch_sync`); the host's unprimed change edge is the authority, because
+a claim-gated detector lost a live catch to the hold's own release. The dish theater is host-only:
+the client's dish simulation is parked, and the host's dishes slew natively and it streams the poses
+of all twenty-four; the download machine's arm and reset are the host's too: its desk's
+`formDownload` and its gamemode's `deleteActiveSignal` each reach every client, which runs the same
+verb once, whole, with the host's decoded and polarity written into it, and refuses its own
+(`coop/interactables/download_arm_sync`), so the object renderer's `begin` and the signal camera's
+trigger run on each peer as they run on the host; and so is a dish's precision: the host sends its
+changed dishes' values and a joiner all of them, and a client's copy holds the host's values,
+whatever moved it off one (a mirrored lightning strike's hit) put back at its poll, before the
+gamemode averages the dishes into the rate its desk downloads with, and before a player's verb reads
+them. A client player's own two verbs are the exception, the toolgun's calibration tool and the
+uncalibrator: they run on its copy and send what they changed to the host, which performs what it
+can and answers with the live dishes named, to all once it performed any and to the author alone
+otherwise (`coop/interactables/dish_calib_sync`).
 
 ### The deck list, playback, the refiner
 
@@ -207,7 +211,7 @@ not built. The ATV's physical modules are on [vehicles.md](vehicles.md).
 | `DeskSndFx` | the presser, relayed | an audio effect event |
 | `SkySignalState`, `SkySignalCatch`, `DishAimState` | the host; the host; the occupant | the signal set; a catch; committed coordinates |
 | `DeskPingVerdict` | a client to the host; the host to that client | a ping's or a cheat insta-catch's verdict to roll, the view and triangle it rolls from; its refusal, or the pinger's find |
-| `DishArm`, `DishSnapshot`, `DishCalib`, `DishPose` (stream) | the host; the host to a joiner; the host, to all, to an intent's author and to a joiner; the host | the armed download; every dish's pose for a joiner; the changed dishes' precision, the live dishes an intent named (to all once the host performed any of it, to its author alone when it performed none), and every dish's for a joiner; dish poses |
+| `DishArm`, `DishSnapshot`, `DishCalib`, `DishPose` (stream) | the host; the host to a joiner; the host, to all, to an intent's author and to a joiner; the host | the download's arm and reset, with the host's decoded and polarity; every dish's pose for a joiner; the changed dishes' precision, the live dishes an intent named (to all once the host performed any of it, to its author alone when it performed none), and every dish's for a joiner; dish poses |
 | `DishCalibIntent` | a client to the host | the dishes whose precision the client's player just set with the toolgun's calibration tool or the uncalibrator |
 | `SavedSignalAppend`, `SavedSignalDelete`, `MeadowAppend`, `MeadowDelete`, `MeadowOrder` | any peer, relayed; order from the host | list rows by content hash; the database's order |
 | `PlayDeckEvent`, `CompState`, `CompData` | the presser; the simulator | playback edges; the refiner's state and its loaded signal |
@@ -222,25 +226,29 @@ not built. The ATV's physical modules are on [vehicles.md](vehicles.md).
 
 ## Late join
 
-The occupancy table, the sky-signal set, the desk scalars, the simulation vector and the dish
-snapshot with any armed download are sent at the joiner's ready edge, after the desk rows so a
-dependency is never applied before its base; the deck list, the database and the emails are
-seeded as deltas against the blob instant; every drive slot, every drive row that differs from its
-class default (a row that arrives before its drive waits for it through the join), the rack, the module set,
-the reel slots, the laptop's power and content and the crate arrive as canonical rows from the
-host; the desk's two loops are re-sent from component truth. A joiner never sees a running ping's
-stage visuals, only its outcome. A SAT console typist that leaves mid-command while another client
-keeps the session leaves the command running on the host and, back, is bound to its terminal and its
-busy state as its world is ready; the last client's leave ends the session, and every such terminal
-is discarded with it, its command stopping there. An eraser press's show lasts its 3 s and is not replayed;
-its wipe arrives as the drive's row. The upgrade levels arrive with the save and never again.
+The occupancy table, the sky-signal set, the desk scalars, the simulation vector, the dish snapshot
+and an armed download's arm are sent at the joiner's ready edge, after the desk rows so a dependency
+is never applied before its base, and a reset the host made since the joiner's world was captured
+goes ahead of them all, the game's own order of a reset, a catch and an arm; the deck list, the
+database and the emails are seeded as deltas against the blob instant; every drive slot, every drive
+row that differs from its class default (a row that arrives before its drive waits for it through
+the join), the rack, the module set, the reel slots, the laptop's power and content and the crate
+arrive as canonical rows from the host; the desk's two loops are re-sent from component truth. A
+joiner never sees a running ping's stage visuals, only its outcome. A SAT console typist that leaves
+mid-command while another client keeps the session leaves the command running on the host and, back,
+is bound to its terminal and its busy state as its world is ready; the last client's leave ends the
+session, and every such terminal is discarded with it, its command stopping there. An eraser press's
+show lasts its 3 s and is not replayed; its wipe arrives as the drive's row. The upgrade levels
+arrive with the save and never again.
 
 ## Known limits
 
 | Limit | Evidence |
 |---|---|
 | The upgrade levels are not mirrored; a level bought mid-session diverges until the next join | `[V]` no lane exists; `coop/interactables/desk_sim_sync` names the gap |
-| The coordinate log's animated line families are generated per peer from inputs that never mirror, so the host's and a client's logs differ; only the nine one-shot lines ride the wire | `[V]` `coop/interactables/console_state_sync` |
+| The coordinate log's animated line families are generated per peer from inputs that never mirror, so the host's and a client's logs differ; only the eight one-shot lines ride the wire, the reset's line written by each peer's own reset | `[V]` `coop/interactables/console_state_sync` |
+| A signal whose download's `begin` spawns a world prop (lifecrystal's crystal at the ROZ ship) spawns it on each peer, and a client's own is a world birth it does not author: the host's arriving birth adopts it when the arm's row came first, and it stays beside the host's when the birth overtakes the arm on its own lane | `[RD]` `objectRenderer.begin`'s fourth step; the arriving birth's same-class match within 30 cm (`coop/props/remote_prop_spawn`) |
+| The signal camera's trigger runs on each peer, as its arm's `begin` does; the main map's one, the locker looker, watches that peer's own camera and ends that player's game as in single player | `[RD]` `mainGamemode.deleteActiveSignal`, `objectRenderer.begin`, `trigger_lockerLooker`; by design until decided |
 | The desk cursor has degraded to a few frames per second mid-session; two mechanisms were removed, and a warning names an occupancy flap if it recurs | `[?]` `coop/interactables/desk_cursor_sync`; not reproduced since |
 | A refiner completion fires world triggers on the one simulating machine only; other peers mirror the state | `[V]` `coop/interactables/comp_sync`, by design of the single simulator |
 | The red phone's ring is per-peer randomness with no lane | `[V]` no lane exists |
@@ -256,7 +264,7 @@ its wipe arrives as the drive's row. The upgrade levels arrive with the save and
 |---|---|
 | occupancy | `coop/interactables/device_occupancy` |
 | the desk | `coop/interactables/desk_input_sync`, `coop/interactables/desk_sim_sync`, `coop/interactables/desk_ping_sync`, `coop/interactables/desk_cursor_sync`, `coop/interactables/desk_snd_fx`, `coop/interactables/console_state_sync` |
-| signals, the catch, the dishes | `coop/interactables/signal_sync`, `coop/interactables/signal_wire`, `coop/interactables/signal_catch_sync`, `coop/interactables/dish_sync`, `coop/interactables/dish_calib_sync` |
+| signals, the catch, the dishes | `coop/interactables/signal_sync`, `coop/interactables/signal_wire`, `coop/interactables/signal_catch_sync`, `coop/interactables/dish_sync`, `coop/interactables/dish_calib_sync`, `coop/interactables/download_arm_sync` |
 | the deck and the refiner | `coop/interactables/deck_play_sync`, `coop/interactables/comp_sync` |
 | drives, racks, modules, tapes | `coop/interactables/drive_sync`, `coop/interactables/drive_payload_sync`, `coop/interactables/eraser_press_intent`, `coop/interactables/drive_rack_sync`, `coop/interactables/physmods_sync`, `coop/interactables/tape_caddy_sync` |
 | the laptop, the crate, the database, the servers | `coop/interactables/laptop_sync`, `coop/interactables/laptop_buffer_sync`, `coop/interactables/floppybox_sync`, `coop/interactables/meadow_db_sync`, `coop/interactables/serverbox_sync` |

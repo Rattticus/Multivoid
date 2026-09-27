@@ -14,6 +14,8 @@
 #include <cstdint>
 #include <string>
 
+namespace ue_wrap::signal_dynamic { struct Row; }
+
 namespace ue_wrap::console_desk {
 
 // The live-visible scalar set, the DeskState payload's typed twin. The decode scalars are not
@@ -107,6 +109,11 @@ bool CoordLogTailEquals(const std::wstring& expected, size_t maxChars);
 // string handling; engine strings are never written raw.
 bool AppendCoordLog(const std::wstring& suffix);
 
+// The line a running writeToCoordLog_2 call appends, its parameter read through the gate's frame (`function` and
+// `locals` of a script-gate PRE): every write, the game's own and AppendCoordLog's, whatever the cap later trims.
+// Empty when the parameter does not resolve or the frame is null. Game thread.
+std::wstring ReadCoordLogWrite(void* function, const uint8_t* locals);
+
 // The coords-panel cursor state lives in ue_wrap/desk/coords_panel; the two desk-half seams it
 // consumes are below.
 
@@ -147,40 +154,38 @@ bool ReadCoordSignal(CoordSignal& out);
 bool ReadSignalAt(const void* data, CoordSignal& out);
 // Raw member writes, plain data plus a string-to-FName.
 bool WriteCoordSignal(const CoordSignal& in);
-// The native reset values: zero vector, type, strength and frequency, a frequency spread of
-// 0.5, polarity 0, a polarity spread of 0.5, object name None.
-bool ClearCoordSignal();
 
-// The native signal-deleted machine reset, minus the log line (the DeskLogLine lane carries it
-// from the pressing peer): the download data's signal name set to None and its mesh to null
-// (the two load-bearing members: mesh validity gates the per-tick accrual and the play screen;
-// the text and rotator display members are not raw-zeroed, since a raw-zeroed text is a
-// dangling shared reference and nothing reads them once the mesh is invalid), the detection
-// and the frequency and polarity data zeroed, then the reflected download init, which rebuilds
-// the download struct properly with engine-side assignment and repaints. Also the catch
-// replay's screen reset.
-bool ResetDownloadMachine();
+// The ping success's own two writes, and nothing else: the space-object struct to its literal (the text a minted
+// "none", the name None, the meshes and actor null, the rotators and enums as the literal has them) and the dynamic
+// download data to its empty literal (signal_dynamic's live writer). No init and no repaint, as the catch has none.
+bool WriteCatchReset();
 
 // The reflected formDownload(decoded, polarity): rebuilds the download data from the objects
 // table row named by the caught signal's object name, plus the download-init screen state. The
-// native arm on dish stop is formDownload(0, -1); the joiner catch-up passes the host's live
-// progress. A native no-op when the object name is None, since the table lookup fails.
+// native arm on dish stop is formDownload(0, -1). A native no-op when the object name is None,
+// since the table lookup fails.
 bool ArmDownloadFromSignal(float decoded, int32_t polarity);
 
 // The download progress (decoded and polarity) the joiner adopt carries. False if unresolved.
 bool ReadDownloadProgress(float& decoded, int32_t& polarity);
 
-// The download identity's raw FName bits for the host arm poll's change compare. Compare only;
-// never rendered to a string.
+// The download identity's raw FName bits, for a change compare (a drill's); never rendered to a string.
 bool ReadDLSignalKey(uint64_t& out);
 
-// The reflected renderer's deleteSignalActor, the display-actor half of the native un-arm
-// chain; the machine reset alone leaves the rendered signal object alive. The answer is what
-// happened: the renderer or its verb did not resolve, or the call failed; the verb ran with no signal
-// actor to delete, which its own IsValid test leaves alone; it deleted one; or it ran and the field
-// that says which did not resolve.
-enum class SignalActorDelete : uint8_t { Unresolved, NoneToDelete, Deleted, RanUnread };
-SignalActorDelete DeleteSignalActor();
+// A running call's parameters, written through the gate's frame (`function` and `locals` of a script-gate PRE):
+// formDownload's decoded and polarity, and initDownloadSignal's polarity, found by name on the function handed over.
+// False, having written nothing, when a parameter does not resolve or the frame is null. Game thread.
+bool WriteFormDownloadArgs(void* function, uint8_t* locals, float decoded, int32_t polarity);
+bool WriteInitDownloadPolarity(void* function, uint8_t* locals, int32_t polarity);
+
+// The download's dynamic data whole, without its photo: what the download screen shows. False if unresolved.
+bool ReadDownloadRow(ue_wrap::signal_dynamic::Row& out);
+
+// The gamemode's deleteActiveSignal, the game's whole un-arm: the desk's "Signal data deleted" reset (its only
+// caller; its init rolls the polarity unless a gate PRE writes one), the renderer's deleteSignalActor, then, when the
+// renderer's signal camera and its trigger are both valid, the trigger's runTrigger(0) and the camera field cleared
+// (mainGamemode.cpp:9633-9670). False when unresolved or the call failed.
+bool CallDeleteActiveSignal();
 
 // The host-authoritative download-simulation output vector (desk_sim_sync). The download rate
 // formula rolls unseeded random terms per tick and integrates the filter offsets from per-peer

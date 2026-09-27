@@ -6,6 +6,7 @@
 
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/component_calls.h"
+#include "ue_wrap/core/field_io.h"
 #include "ue_wrap/core/fname_utils.h"
 #include "ue_wrap/core/ftext_utils.h"
 #include "ue_wrap/core/log.h"
@@ -130,8 +131,15 @@ int32_t g_offDLPoData = -1;          // desk.DL_poData (needle)
 // user-defined struct.
 int32_t g_offRowSignalName = -1;     // signalName_50_... (FName)
 int32_t g_offRowMesh = -1;           // mesh_9_... (UStaticMesh*)
+// The rest of the space-object struct, for the catch's literal (WriteCatchReset).
+int32_t g_offRowDisplayName = -1;    // displayName_32_... (FText)
+int32_t g_offRowRing = -1;           // ring_11_... (object pointer)
+int32_t g_offRowAsActor = -1;        // asActor_56_... (class pointer)
+int32_t g_offRowRot[4] = {-1, -1, -1, -1};  // rotation_init_, rotation_1_, rotation_2_, rotation_3_ (FRotator)
+int32_t g_offRowType = -1;           // objectType_53_... (enum byte)
+int32_t g_offRowFreq = -1;           // signal_frequency_52_... (enum byte)
+int32_t g_offRowQual = -1;           // signal_qualiy_51_... (enum byte)
 void* g_formDownloadFn = nullptr;        // formDownload(decoded, polarity)
-void* g_initDownloadSignalFn = nullptr;  // initDownloadSignal(signalLocation, decoded, polarity)
 void* g_playPingSoundFn = nullptr;       // playPingSound(NewSound)
 
 // The desk widget to atlas chain, the desk-half seams. The comp-pane texts, cues and sounds
@@ -183,18 +191,22 @@ void ResolvePass() {
     if (g_offDLFrData < 0) g_offDLFrData = R::FindPropertyOffset(g_cls, L"DL_frData");
     if (g_offDLPoData < 0) g_offDLPoData = R::FindPropertyOffset(g_cls, L"DL_poData");
     if (!g_formDownloadFn) g_formDownloadFn = R::FindFunction(g_cls, L"formDownload");
-    if (!g_initDownloadSignalFn)
-        g_initDownloadSignalFn = R::FindFunction(g_cls, L"initDownloadSignal");
     if (!g_playPingSoundFn) g_playPingSoundFn = R::FindFunction(g_cls, L"playPingSound");
-    if (g_offRowSignalName < 0 || g_offRowMesh < 0) {
+    if (g_offRowSignalName < 0 || g_offRowMesh < 0 || g_offRowQual < 0) {
         // The objects table's row type, reached through the property's own struct pointer: a global
         // find by name and class returns null on the live build, while the property chain is
         // deterministic. Members are GUID-mangled, so prefix-resolved.
         if (void* rowStruct = R::PropertyInnerStruct(g_cls, L"DL_signalDownloadData")) {
-            if (g_offRowSignalName < 0)
-                g_offRowSignalName = R::FindPropertyOffsetByPrefix(rowStruct, L"signalName_");
-            if (g_offRowMesh < 0)
-                g_offRowMesh = R::FindPropertyOffsetByPrefix(rowStruct, L"mesh_");
+            struct { int32_t* off; const wchar_t* prefix; } members[] = {
+                {&g_offRowSignalName, L"signalName_"}, {&g_offRowMesh, L"mesh_"},
+                {&g_offRowDisplayName, L"displayName_"}, {&g_offRowRing, L"ring_"},
+                {&g_offRowAsActor, L"asActor_"}, {&g_offRowRot[0], L"rotation_init_"},
+                {&g_offRowRot[1], L"rotation_1_"}, {&g_offRowRot[2], L"rotation_2_"},
+                {&g_offRowRot[3], L"rotation_3_"}, {&g_offRowType, L"objectType_"},
+                {&g_offRowFreq, L"signal_frequency_"}, {&g_offRowQual, L"signal_qualiy_"},
+            };
+            for (auto& m : members)
+                if (*m.off < 0) *m.off = R::FindPropertyOffsetByPrefix(rowStruct, m.prefix);
         }
     }
 
@@ -229,14 +241,13 @@ void ResolvePass() {
         UE_LOGI("console_desk: resolved -- 19/19 fields, %d/9 refresh verbs, "
                 "writeToCoordLog_2=%s, widget=%s, "
                 "catch sig/row/dld=0x%X/0x%X/0x%X rowName/mesh=0x%X/0x%X "
-                "form/init/ping=%s/%s/%s",
+                "form/ping=%s/%s",
                 fns,
                 g_writeToCoordLogFn ? "yes" : "NO",
                 g_offWidget >= 0 ? "yes" : "NO",
                 g_offCoordSignalData, g_offDLRow, g_offDLData,
                 g_offRowSignalName, g_offRowMesh,
-                g_formDownloadFn ? "yes" : "NO", g_initDownloadSignalFn ? "yes" : "NO",
-                g_playPingSoundFn ? "yes" : "NO");
+                g_formDownloadFn ? "yes" : "NO", g_playPingSoundFn ? "yes" : "NO");
     }
 }
 
@@ -490,50 +501,34 @@ bool WriteCoordSignal(const CoordSignal& in) {
     return true;
 }
 
-bool ClearCoordSignal() {
-    // The blueprint's own reset literal: a zero vector, type 0, zero strength and frequency, half
-    // spread, zero polarity, half polarity spread, name None. A zero FName is None (plain data,
-    // no heap).
-    uint8_t* p = CoordSignalPtr();
-    if (!p) return false;
-    SigWrite<float>(p, kSig_coordinates + 0, 0.f);
-    SigWrite<float>(p, kSig_coordinates + 4, 0.f);
-    SigWrite<float>(p, kSig_coordinates + 8, 0.f);
-    SigWrite<int32_t>(p, kSig_type, 0);
-    SigWrite<float>(p, kSig_strength, 0.f);
-    SigWrite<float>(p, kSig_frequency, 0.f);
-    SigWrite<float>(p, kSig_freqSpread, 0.5f);
-    SigWrite<float>(p, kSig_polarity, 0.f);
-    SigWrite<float>(p, kSig_polSpread, 0.5f);
-    SigWrite<R::FName>(p, kSig_objectName, R::FName{0, 0});
-    return true;
-}
-
-bool ResetDownloadMachine() {
+bool WriteCatchReset() {
     void* d = Instance();
-    if (!d || !g_coreResolved) return false;
-    if (g_offDLRow < 0 || g_offRowSignalName < 0 || g_offRowMesh < 0 ||
-        g_offDLFrData < 0 || g_offDLPoData < 0 || !g_initDownloadSignalFn)
+    if (!d || g_offDLRow < 0 || g_offDLData < 0 || g_offRowSignalName < 0 || g_offRowMesh < 0 ||
+        g_offRowDisplayName < 0 || g_offRowRing < 0 || g_offRowAsActor < 0 || g_offRowType < 0 ||
+        g_offRowFreq < 0 || g_offRowQual < 0)
         return false;
+    for (int32_t off : g_offRowRot)
+        if (off < 0) return false;
     auto* row = reinterpret_cast<uint8_t*>(d) + g_offDLRow;
-    // The two load-bearing members (see the header): mesh validity gates the accrual and the
-    // playback screen; the signal name gates the next download-signal rebuild. FName and pointer
-    // writes are plain data.
+    // The text first: the one member a failure can leave unwritten, before any other changes. A raw overwrite: the
+    // reference the old text held is never released (the objects table's own keeps that text alive), and the minted
+    // text's leaks as MintFText says -- one of each per catch.
+    if (!ue_wrap::ftext_utils::MintFText(L"none", row + g_offRowDisplayName)) return false;
     SigWrite<R::FName>(row, g_offRowSignalName, R::FName{0, 0});
     SigWrite<void*>(row, g_offRowMesh, nullptr);
-    *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(d) + g_offDLFrData) = 0.f;
-    *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(d) + g_offDLPoData) = 0.f;
-    *OffPtr<float>(d, g_offDlResDetecPercent) = 0.f;
-    // The download-signal init with a zero location, zero decoded and polarity -1: with the
-    // signal name None this is the native reset path, which rebuilds the dynamic download data
-    // empty (an engine-side struct assignment, no leaked strings) and repaints the download texts.
-    ue_wrap::ParamFrame f(g_initDownloadSignalFn);
-    if (!f.valid()) return false;
-    struct { float X, Y; } loc{ 0.f, 0.f };
-    if (!f.SetRaw(L"signalLocation", &loc, sizeof(loc))) return false;
-    f.Set<float>(L"decoded", 0.f);
-    f.Set<int32_t>(L"polarity", -1);
-    return ue_wrap::Call(d, f);
+    SigWrite<void*>(row, g_offRowRing, nullptr);
+    SigWrite<void*>(row, g_offRowAsActor, nullptr);
+    // The literal's rotators (pitch, yaw, roll): the second one is (0, 10, 0).
+    for (int i = 0; i < 4; ++i) {
+        SigWrite<float>(row, g_offRowRot[i] + 0, 0.f);
+        SigWrite<float>(row, g_offRowRot[i] + 4, i == 1 ? 10.f : 0.f);
+        SigWrite<float>(row, g_offRowRot[i] + 8, 0.f);
+    }
+    SigWrite<uint8_t>(row, g_offRowType, 0);
+    SigWrite<uint8_t>(row, g_offRowFreq, 0);
+    SigWrite<uint8_t>(row, g_offRowQual, 0);
+    return ue_wrap::signal_dynamic::WriteStructLive(reinterpret_cast<uint8_t*>(d) + g_offDLData,
+                                                    ue_wrap::signal_dynamic::Row{});
 }
 
 bool ArmDownloadFromSignal(float decoded, int32_t polarity) {
@@ -556,33 +551,72 @@ bool ReadDownloadProgress(float& decoded, int32_t& polarity) {
     return true;
 }
 
-SignalActorDelete DeleteSignalActor() {
-    // The object renderer is the running world's one, and its verb is looked up on its live class
-    // through the memoised lookup, which holds its answer by slot and serial.
-    void* const renderer = ue_wrap::world_singleton::Find(L"objectRenderer_C");
-    if (!renderer) return SignalActorDelete::Unresolved;
-    void* const cls = R::ClassOf(renderer);
-    void* const fn = R::FindDispatchFunctionCached(cls, L"deleteSignalActor");
-    if (!fn) return SignalActorDelete::Unresolved;
-    // The verb destroys signalObjectActor only if it is valid, and clears the field; it runs whether or
-    // not the field resolves here, which only informs the answer: the field read before the call says
-    // whether there was one.
-    const int32_t off = R::FindPropertyOffset(cls, L"signalObjectActor");
-    void* const actor =
-        off >= 0 ? *reinterpret_cast<void* const*>(static_cast<const uint8_t*>(renderer) + off) : nullptr;
-    const bool had = off >= 0 && actor && R::IsLive(actor);
-    ue_wrap::ParamFrame f(fn);
-    if (!f.valid() || !ue_wrap::Call(renderer, f)) return SignalActorDelete::Unresolved;
-    if (off < 0) return SignalActorDelete::RanUnread;
-    return had ? SignalActorDelete::Deleted : SignalActorDelete::NoneToDelete;
-}
-
 bool ReadDLSignalKey(uint64_t& out) {
     void* d = Instance();
     if (!d || g_offDLData < 0) return false;
     auto* dld = reinterpret_cast<uint8_t*>(d) + g_offDLData;
     out = SigRead<uint64_t>(dld, ue_wrap::signal_dynamic::kOff_signal);
     return true;
+}
+
+namespace {
+
+// One function's parameter offsets, looked up once per function pointer the gate hands over.
+struct ParamSlots {
+    void*   fn = nullptr;
+    int32_t a = -1, b = -1;
+};
+
+bool WriteAt(uint8_t* locals, int32_t off, const void* v) {
+    if (!locals || off < 0) return false;
+    std::memcpy(locals + off, v, 4);
+    return true;
+}
+
+}  // namespace
+
+bool WriteFormDownloadArgs(void* function, uint8_t* locals, float decoded, int32_t polarity) {
+    static ParamSlots s;
+    if (function != s.fn) {
+        s.fn = function;
+        s.a = function ? R::FindParamOffset(function, L"decoded") : -1;
+        s.b = function ? R::FindParamOffset(function, L"polarity") : -1;
+    }
+    if (!locals || s.a < 0 || s.b < 0) return false;
+    return WriteAt(locals, s.a, &decoded) && WriteAt(locals, s.b, &polarity);
+}
+
+bool WriteInitDownloadPolarity(void* function, uint8_t* locals, int32_t polarity) {
+    static ParamSlots s;
+    if (function != s.fn) {
+        s.fn = function;
+        s.a = function ? R::FindParamOffset(function, L"polarity") : -1;
+    }
+    return WriteAt(locals, s.a, &polarity);
+}
+
+std::wstring ReadCoordLogWrite(void* function, const uint8_t* locals) {
+    static ParamSlots s;
+    if (function != s.fn) {
+        s.fn = function;
+        s.a = function ? R::FindParamOffset(function, L"B") : -1;
+    }
+    if (!locals || s.a < 0) return std::wstring();
+    return ue_wrap::field_io::ReadFStringAt(locals, s.a);
+}
+
+bool ReadDownloadRow(ue_wrap::signal_dynamic::Row& out) {
+    void* d = Instance();
+    if (!d || g_offDLData < 0) return false;
+    return ue_wrap::signal_dynamic::ReadStruct(reinterpret_cast<uint8_t*>(d) + g_offDLData, out);
+}
+
+bool CallDeleteActiveSignal() {
+    void* const gm = ue_wrap::world_singleton::Gamemode();
+    void* const fn = gm ? R::FindDispatchFunctionCached(R::ClassOf(gm), L"deleteActiveSignal") : nullptr;
+    if (!fn) return false;
+    ue_wrap::ParamFrame f(fn);
+    return f.valid() && ue_wrap::Call(gm, f);
 }
 
 bool DownloadMeshValid() {

@@ -236,53 +236,6 @@ int32_t ReadAllDishStates(DishState* out, int32_t cap) {
     return n;
 }
 
-bool ReadSlewFromMovingDish(ue_wrap::FVector& out) {
-    TArrayView* a = Dishs();
-    if (!a || !g_coreResolved) return false;
-    if (a->num < 0 || a->num > 64) return false;
-    // Moving dish preferred; else the FIRST live dish. The catch chain writes lookAt ABSOLUTE to
-    // ALL dishes at the catch moment, so within the detector's <=1 s poll window even a fully
-    // SETTLED array still holds the fresh target. Without that fallback a near-aim catch shipped
-    // slewValid=0 and the host never armed: no theater, so no dishesStop and no formDownload.
-    void* pick = nullptr;
-    for (int32_t i = 0; i < a->num; ++i) {
-        void* d = DishAt(a, i);
-        if (!d) continue;
-        if (!pick) pick = d;
-        if (*(reinterpret_cast<uint8_t*>(d) + g_offIsMoving)) { pick = d; break; }
-    }
-    if (!pick) return false;
-    // lookAt was rewritten absolute at startMovingTo (the param plus the actor's location), so
-    // subtracting the dish's own location recovers the shared relative vector the catch chain
-    // passed to every dish.
-    const auto* la = reinterpret_cast<const float*>(
-        reinterpret_cast<uint8_t*>(pick) + g_offLookAt);
-    ue_wrap::FVector loc{};
-    if (!ue_wrap::engine::TryGetActorLocation(pick, loc)) return false;
-    out.X = la[0] - loc.X;
-    out.Y = la[1] - loc.Y;
-    out.Z = la[2] - loc.Z;
-    return true;
-}
-
-int32_t StartMovingAll(const ue_wrap::FVector& slew) {
-    TArrayView* a = Dishs();
-    if (!a || !g_coreResolved) return 0;
-    if (a->num < 0 || a->num > 64) return 0;
-    int32_t dispatched = 0;
-    for (int32_t i = 0; i < a->num; ++i) {
-        void* d = DishAt(a, i);
-        void* fn = d ? R::FindDispatchFunctionCached(R::ClassOf(d), L"startMovingTo") : nullptr;
-        if (!fn) continue;
-        ue_wrap::ParamFrame f(fn);
-        if (!f.valid()) return dispatched;
-        struct { float X, Y, Z; } v{ slew.X, slew.Y, slew.Z };
-        if (!f.SetRaw(L"lookAt", &v, sizeof(v))) return dispatched;
-        if (ue_wrap::Call(d, f)) ++dispatched;
-    }
-    return dispatched;
-}
-
 int32_t ReadAllRows(DishRow* out, int32_t cap) {
     TArrayView* a = Dishs();
     if (!a || !g_l4Resolved || !out || cap <= 0) return 0;

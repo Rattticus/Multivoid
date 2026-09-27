@@ -15,6 +15,7 @@
 #include "coop/interactables/dish_calib_sync.h"
 #include "coop/interactables/dish_hashcode_sync.h"
 #include "coop/interactables/dish_sync.h"
+#include "coop/interactables/download_arm_sync.h"
 #include "coop/interactables/laptop_sync.h"      // LaptopState, LaptopBlob
 #include "coop/interactables/laptop_buffer_sync.h"  // LaptopQuad
 #include "coop/interactables/floppy_slot_sync.h"
@@ -327,7 +328,7 @@ bool HandleSignalEvent(net::Session& /*session*/,
         break;
     }
     case net::ReliableKind::DishArm: {
-        // The download-ARM state edge (host-authored; host polarity).
+        // The download's arm or reset, the host's (its decoded and polarity), replayed through the game's verb.
         if (msg.payloadLen < sizeof(net::DishArmPayload)) {
             UE_LOGW("event_feed: DishArm payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::DishArmPayload));
@@ -339,7 +340,7 @@ bool HandleSignalEvent(net::Session& /*session*/,
             (msg.senderPeerSlot >= 0 && msg.senderPeerSlot < net::kMaxPeers)
                 ? static_cast<uint8_t>(msg.senderPeerSlot)
                 : static_cast<uint8_t>(0xFF);
-        coop::dish_sync::OnDishArm(ap, aslot);
+        coop::download_arm_sync::OnDishArm(ap, aslot);
         break;
     }
     case net::ReliableKind::DishSnapshot: {

@@ -46,7 +46,7 @@ bool ProbeLog() {
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 
-constexpr auto kPoseInterval = std::chrono::milliseconds(250);   // 4 Hz host sweep + arm poll
+constexpr auto kPoseInterval = std::chrono::milliseconds(250);   // 4 Hz host sweep
 constexpr auto kSlowInterval = std::chrono::milliseconds(1000);  // 1 Hz calib poll + park latch
 constexpr int32_t kSettleSweeps = 3;  // full-24 sweeps after MovingCount hits 0
 
@@ -69,14 +69,6 @@ bool g_prevMovingHost[coop::net::kMaxDishes] = {};
 bool g_havePrevMovingHost = false;
 int32_t g_settleLeft = 0;              // pending settle-tail sweeps
 Clock::time_point g_nextSettle{};
-// The arm poll baselines.
-bool g_havePrevArm = false;
-bool g_prevMeshValid = false;
-uint64_t g_prevSignalKey = 0;
-int32_t g_prevPolarity = -1;
-// Log once for the disarm suppression inside the re-init window (see the arm poll; a state
-// predicate, re-armed per episode).
-bool g_reinitWindowLogged = false;
 
 // The client state. The wire shadow: what our mirror last wrote (never engine-read). On a
 // parked client the moving flag has one writer, our raw mirror write, which starts no
@@ -106,11 +98,6 @@ DishInterp g_dishInterp[coop::net::kMaxDishes] = {};
 void ResetModuleState() {
     g_havePrevMovingHost = false;
     g_settleLeft = 0;
-    g_havePrevArm = false;
-    g_prevMeshValid = false;
-    g_prevSignalKey = 0;
-    g_prevPolarity = -1;
-    g_reinitWindowLogged = false;
     std::memset(g_shadowMoving, 0, sizeof(g_shadowMoving));
     g_cueWatch = 0;
     g_parkedDisher = nullptr;
@@ -278,58 +265,6 @@ void HostPoseSweep(coop::net::Session* s) {
     }
 }
 
-// The host arm poll (all raw reads).
-void HostArmPoll(coop::net::Session* s) {
-    const bool mesh = CD::DownloadMeshValid();
-    uint64_t key = 0;
-    float decoded = 0.f;
-    int32_t polarity = -1;
-    const bool haveKey = CD::ReadDLSignalKey(key);
-    const bool haveProg = CD::ReadDownloadProgress(decoded, polarity);
-    if (!g_havePrevArm) {
-        g_havePrevArm = true;
-        g_prevMeshValid = mesh;
-        g_prevSignalKey = key;
-        g_prevPolarity = polarity;
-        return;
-    }
-    // A machine re-init (the signal catch's replay resets the download machine and the display
-    // respawns through a latent) makes the mesh transiently invalid while the new signal data
-    // is already written. A real disarm always deletes the signal data first (the native chain,
-    // and the disc replay's clear-then-reset order), so a mesh gone with a signal key present is
-    // the respawn window, not a disarm; a false disarm a second after a client's successful
-    // catch reset every peer's machine and deleted the catcher's signal actor. Hold the previous
-    // mesh-valid flag true through the window: the eventual respawn then fires the real arm edge
-    // (or, if the mesh returns within one poll, the key change broadcasts arm-over-arm).
-    const bool reinitWindow = !mesh && g_prevMeshValid && haveKey && key != 0;
-    if (reinitWindow) {
-        if (!g_reinitWindowLogged) {
-            g_reinitWindowLogged = true;
-            UE_LOGI("dish_sync: mesh down with live signalData (key=%llu) -- machine "
-                    "re-init window, DISARM suppressed until the display respawns",
-                    static_cast<unsigned long long>(key));
-        }
-        return;  // keep ALL baselines; the window resolves to an ARM edge
-    }
-    g_reinitWindowLogged = false;
-    const bool meshEdge = mesh != g_prevMeshValid;
-    const bool keyChange = mesh && haveKey && key != g_prevSignalKey;
-    const bool polChange = mesh && haveProg && polarity != g_prevPolarity;
-    if (meshEdge || keyChange || polChange) {
-        coop::net::DishArmPayload p{};
-        p.armed = mesh ? 1 : 0;
-        p.decoded = decoded;
-        p.polarity = polarity;
-        s->SendReliable(coop::net::ReliableKind::DishArm, &p, sizeof(p));
-        UE_LOGI("dish_sync: host %s broadcast (decoded=%.1f polarity=%d%s)",
-                mesh ? "ARM" : "DISARM", decoded, polarity,
-                (!meshEdge && (keyChange || polChange)) ? ", arm-over-arm" : "");
-    }
-    g_prevMeshValid = mesh;
-    g_prevSignalKey = key;
-    g_prevPolarity = polarity;
-}
-
 // The client: the park latch and the cue reconciler.
 void ClientParkLatch() {
     if (void* disher = D::DisherInstance()) {
@@ -384,10 +319,7 @@ void Tick() {
 
     if (now >= g_nextPose) {
         g_nextPose = now + kPoseInterval;
-        if (host && s->connected()) {
-            HostPoseSweep(s);
-            HostArmPoll(s);
-        }
+        if (host && s->connected()) HostPoseSweep(s);
     }
 
     if (!host && s->connected()) {
@@ -432,48 +364,20 @@ void Tick() {
     }
 }
 
-void OnDishArm(const coop::net::DishArmPayload& p, uint8_t senderSlot) {
-    (void)senderSlot;  // host-originated; clients trust the transport
-    auto* s = g_session.load(std::memory_order_acquire);
-    if (!s || s->role() == coop::net::Role::Host) return;
-    if (!D::EnsureResolved() || !CD::EnsureResolved() || !CD::Instance()) {
-        UE_LOGW("dish_sync: DishArm dropped -- dish/desk surface not yet resolved "
-                "(join-window ordering)");
-        return;
-    }
-    if (!p.armed) {
-        // Disarm: the native un-arm parity (the reset and the display-actor delete).
-        CD::ResetDownloadMachine();
-        switch (CD::DeleteSignalActor()) {
-        case CD::SignalActorDelete::Deleted:
-            UE_LOGI("dish_sync: DISARM applied (machine reset + signal actor deleted)");
-            break;
-        case CD::SignalActorDelete::NoneToDelete:
-            UE_LOGI("dish_sync: DISARM applied (machine reset; no signal actor to delete)");
-            break;
-        case CD::SignalActorDelete::RanUnread:
-            UE_LOGI("dish_sync: DISARM applied (machine reset + deleteSignalActor ran; its field was not "
-                    "read, so whether it deleted one is unknown)");
-            break;
-        case CD::SignalActorDelete::Unresolved:
-            UE_LOGW("dish_sync: DISARM reset the machine, but the renderer's deleteSignalActor did not "
-                    "resolve or run -- a rendered signal object may stay");
-            break;
-        }
-        return;
-    }
-    // The arm. First, pre-clear all mirrored moving state: the host arm proves its dishes
-    // settled (the contains gate guards every download path), so a warning here means a
-    // gate-bypass arm (defence in depth).
+void SettleForArm() {
+    if (!D::EnsureResolved()) return;
+    // The host arms only once its dishes stopped. A mirrored mover still moving here is a gate-bypass arm (defence in
+    // depth): its flags, its cues and its interpolation window settle, and a warning says so.
     int32_t cleared = 0;
     for (int32_t i = 0; i < coop::net::kMaxDishes; ++i) {
         if (g_shadowMoving[i]) {
             g_shadowMoving[i] = false;
             D::WriteIsMoving(i, false);
-            D::WriteActiveDish(i, false);
             D::DeactivateCues(i);
             ++cleared;
         }
+        // Every dish inactive, as on the host: checkFordDishes' gate returns while any dish is active.
+        D::WriteActiveDish(i, false);
         auto& d = g_dishInterp[i];
         if (d.primed && d.window.IsOpen()) {
             d.curYaw = d.targetYaw;
@@ -485,22 +389,7 @@ void OnDishArm(const coop::net::DishArmPayload& p, uint8_t senderSlot) {
         }
     }
     if (cleared > 0)
-        UE_LOGW("dish_sync: ARM pre-clear wiped %d mirrored mover(s) -- gate-bypass arm?",
-                cleared);
-    // Second, the native display tail: the camera aim, the renderer begin and the signal-found
-    // chain. Its inner dish stop rolls a transient local polarity that the third step overwrites
-    // in this same game-thread task.
-    CD::CoordSignal sig;
-    if (!CD::ReadCoordSignal(sig) || sig.objectName.empty() || sig.objectName == L"None") {
-        UE_LOGW("dish_sync: ARM with no local coord_signalData -- identity row not yet "
-                "applied? arming without the display tail");
-    } else if (!D::CallCheckFordDishes()) {
-        UE_LOGW("dish_sync: checkFordDishes reflected call failed -- arming without the "
-                "display tail");
-    }
-    // Third, the host polarity is the polarity (per-peer RNG at arm).
-    CD::ArmDownloadFromSignal(p.decoded, p.polarity);
-    UE_LOGI("dish_sync: ARM applied (decoded=%.1f polarity=%d)", p.decoded, p.polarity);
+        UE_LOGW("dish_sync: the arm settled %d mirrored mover(s) still moving -- a gate-bypass arm?", cleared);
 }
 
 void OnDishSnapshot(const coop::net::DishSnapshotPayload& p, uint8_t senderSlot) {
@@ -555,15 +444,6 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
             UE_LOGI("dish_sync: connect snapshot -> slot %d (%u dishes)", peerSlot,
                     static_cast<unsigned>(p.count));
         }
-    }
-    // The joiner's arm delivery, ordered after the desk rows and the catch row on the same lane.
-    if (CD::EnsureResolved() && CD::Instance() && CD::DownloadMeshValid()) {
-        coop::net::DishArmPayload a{};
-        a.armed = 1;
-        CD::ReadDownloadProgress(a.decoded, a.polarity);
-        s->SendReliableToSlot(peerSlot, coop::net::ReliableKind::DishArm, &a, sizeof(a));
-        UE_LOGI("dish_sync: connect ARM row -> slot %d (decoded=%.1f polarity=%d)",
-                peerSlot, a.decoded, a.polarity);
     }
 }
 

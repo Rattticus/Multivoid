@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 204;
+inline constexpr uint16_t kProtocolVersion = 205;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -334,9 +334,9 @@ enum class ReliableKind : uint8_t {
     // client kills its own roller and mirrors the set. SkySignalStatePayload.
     SkySignalState = 52,
 
-    // The signal-catch consume replay: kind 0 a catch (from the catcher, validated and rebroadcast
-    // by the host), 1 a clear, 2 a connect seed. Carries the caught row and the dish slew vector;
-    // receivers run the native consume chain. SkySignalCatchPayload.
+    // The signal-catch replay, host to clients: kind 0 the host's catch (its own ping's, or a
+    // client's verdict it rolled), 2 a connect seed or a catch whose pinger left. Carries the caught
+    // row; a client replays the catch's identity half. SkySignalCatchPayload.
     SkySignalCatch = 53,
 
     // Host to one client at the connect edge only: the desk's scalar snapshot with adopt set. Live
@@ -526,8 +526,8 @@ enum class ReliableKind : uint8_t {
     // From the presser, relayed: the quick scan fired; mirrors replay its visual. DeskScanEventPayload.
     DeskScanEvent = 98,
 
-    // Host to all: the download arm edge with the host-rolled polarity; also a joiner's arm delivery.
-    // DishArmPayload.
+    // Host to all: the download's arm or reset, with the host's decoded and polarity; a joiner's reset
+    // and arm at its world-ready. DishArmPayload.
     DishArm = 99,
 
     // Host to one joiner: every dish's pose and the active mask. DishSnapshotPayload.
@@ -1652,17 +1652,14 @@ static_assert(sizeof(SkySignalStatePayload) == 200, "SkySignalStatePayload must 
 static_assert(sizeof(SkySignalStatePayload) <= 256 - 20 - 8,
               "SkySignalStatePayload must fit in one reliable datagram");
 
-// The signal-catch replay (SkySignalCatch): the caught row from the catcher's own desk struct, the
-// exact dish slew vector (relative, so every receiver's dishes replay it) and kind: 0 a catch, 1
-// cleared (row and slew ignored), 2 a connect seed (applied like 0, never announced).
+// The signal-catch replay (SkySignalCatch): the caught row from the host's desk struct and kind: 0 a
+// catch, 2 a connect seed (applied like 0, never announced); the download's reset rides DishArm.
 struct SkySignalCatchPayload {
     WireSkySignal row;          // 64 -- the caught signal's full row content
-    float   slewX, slewY, slewZ;// 12 -- the startMovingTo relative vector
-    uint8_t kind;               // 1  -- 0 = catch, 1 = cleared, 2 = connect seed
-    uint8_t slewValid;          // 1  -- 0 = no dish was moving; arm directly
-    uint8_t _pad[2];            // 2
+    uint8_t kind;               // 1  -- 0 = catch, 2 = connect seed
+    uint8_t _pad[3];            // 3
 };
-static_assert(sizeof(SkySignalCatchPayload) == 80, "SkySignalCatchPayload must be 80 bytes");
+static_assert(sizeof(SkySignalCatchPayload) == 68, "SkySignalCatchPayload must be 68 bytes");
 
 // The laptop's edges (LaptopState). op: 0 power, 1 insert (slot scalars plus the thrown disc's eid,
 // 0 when held), 2 eject, 3 connect state, 6 the portable PC's lid. Content rides LaptopBlob.
@@ -3019,8 +3016,8 @@ struct DishPosePacket {
 };
 static_assert(sizeof(DishPosePacket) == 168, "DishPosePacket must be 168 bytes");
 
-// The download arm edge (DishArm), host-authored: armed 1 carries the decoded value and the
-// host-rolled polarity; 0 disarms.
+// The download's arm or reset (DishArm), host-authored: armed 1, the arm, with the decoded value and
+// the host's polarity; 0, the reset (the gamemode's deleteActiveSignal), with the polarity its init rolled.
 struct DishArmPayload {
     uint8_t armed;      // 1
     uint8_t _pad[3];    // 3
