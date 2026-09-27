@@ -11,13 +11,18 @@
 
 namespace ue_wrap::engine {
 
+// A live UPrimitiveComponent, the only thing the calls below dispatch on: a UPrimitiveComponent function run on
+// anything else runs on the wrong layout.
+bool IsPrimitiveComponent(void* component);
+
 // UPrimitiveComponent::SetSimulatePhysics. A no-op on anything but a live primitive component, as each call here is.
-void SetComponentSimulatePhysics(void* component, bool simulate);
+// True when the call ran: a live primitive component, the UFunction resolved, the dispatch made.
+bool SetComponentSimulatePhysics(void* component, bool simulate);
 
 // SetPhysicsLinearVelocity (cm/s) and SetPhysicsAngularVelocityInDegrees, replacing the body's own
-// (bAddToCurrent false). A kinematic body ignores both: switch its simulation on first.
-void SetComponentLinearVelocity(void* component, float vx, float vy, float vz);
-void SetComponentAngularVelocity(void* component, float wx, float wy, float wz);
+// (bAddToCurrent false). A kinematic body ignores both: switch its simulation on first. True when the call ran.
+bool SetComponentLinearVelocity(void* component, float vx, float vy, float vz);
+bool SetComponentAngularVelocity(void* component, float wx, float wy, float wz);
 
 // IsSimulatingPhysics: USceneComponent's UFunction, which UPrimitiveComponent overrides natively.
 // False for anything but a live primitive component, or when it did not resolve.

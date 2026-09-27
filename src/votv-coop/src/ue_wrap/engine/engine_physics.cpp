@@ -94,10 +94,20 @@ const std::vector<int32_t>& ComponentMembers(void* cls) {
     return m.offs;
 }
 
-// These are UPrimitiveComponent functions: dispatched on anything else they run on the wrong layout, which the
-// ProcessEvent firewall absorbs as a fault (a walk over an actor's ActorComponents did). Anything else
-// is refused here, the answer the caller gets for an unread body.
-bool IsPrimitive(void* component) {
+bool SetVelocity(Thunk& t, void* component, float x, float y, float z) {
+    if (!IsPrimitiveComponent(component) || !Resolve(t)) return false;
+    unsigned char frame[kFrameBytes] = {};
+    *reinterpret_cast<FVector*>(frame + t.off0) = FVector{x, y, z};
+    *reinterpret_cast<R::FName*>(frame + t.off1) = R::FName{0, 0};  // None: the whole body
+    return R::CallFunction(component, t.fn, frame);
+}
+
+}  // namespace
+
+// Every call here checks it first. Dispatched on anything else, a UPrimitiveComponent function ran on the wrong
+// layout and the ProcessEvent firewall absorbed the fault (a walk over an actor's ActorComponents did); anything
+// else now gets the answer an unread body gets.
+bool IsPrimitiveComponent(void* component) {
     if (!component || !R::IsLive(component)) return false;
     if (!g_primitiveClass.Alive()) g_primitiveClass.Set(R::FindClass(P::name::PrimitiveComponentClass));
     void* prim = g_primitiveClass.Raw();
@@ -105,33 +115,23 @@ bool IsPrimitive(void* component) {
     return prim && cls && R::IsDescendantOfAny(cls, &prim, 1);
 }
 
-void SetVelocity(Thunk& t, void* component, float x, float y, float z) {
-    if (!IsPrimitive(component) || !Resolve(t)) return;
-    unsigned char frame[kFrameBytes] = {};
-    *reinterpret_cast<FVector*>(frame + t.off0) = FVector{x, y, z};
-    *reinterpret_cast<R::FName*>(frame + t.off1) = R::FName{0, 0};  // None: the whole body
-    R::CallFunction(component, t.fn, frame);
-}
-
-}  // namespace
-
-void SetComponentSimulatePhysics(void* component, bool simulate) {
-    if (!IsPrimitive(component) || !Resolve(g_setSimulate)) return;
+bool SetComponentSimulatePhysics(void* component, bool simulate) {
+    if (!IsPrimitiveComponent(component) || !Resolve(g_setSimulate)) return false;
     unsigned char frame[kFrameBytes] = {};
     *reinterpret_cast<bool*>(frame + g_setSimulate.off0) = simulate;
-    R::CallFunction(component, g_setSimulate.fn, frame);
+    return R::CallFunction(component, g_setSimulate.fn, frame);
 }
 
-void SetComponentLinearVelocity(void* component, float vx, float vy, float vz) {
-    SetVelocity(g_setLinVel, component, vx, vy, vz);
+bool SetComponentLinearVelocity(void* component, float vx, float vy, float vz) {
+    return SetVelocity(g_setLinVel, component, vx, vy, vz);
 }
 
-void SetComponentAngularVelocity(void* component, float wx, float wy, float wz) {
-    SetVelocity(g_setAngVel, component, wx, wy, wz);
+bool SetComponentAngularVelocity(void* component, float wx, float wy, float wz) {
+    return SetVelocity(g_setAngVel, component, wx, wy, wz);
 }
 
 bool IsComponentSimulatingPhysics(void* component) {
-    if (!IsPrimitive(component) || !Resolve(g_isSimulating)) return false;
+    if (!IsPrimitiveComponent(component) || !Resolve(g_isSimulating)) return false;
     unsigned char frame[kFrameBytes] = {};
     *reinterpret_cast<R::FName*>(frame + g_isSimulating.off0) = R::FName{0, 0};  // None: the whole body
     R::CallFunction(component, g_isSimulating.fn, frame);
@@ -139,7 +139,7 @@ bool IsComponentSimulatingPhysics(void* component) {
 }
 
 bool GetComponentCenterOfMass(void* component, FVector& out) {
-    if (!IsPrimitive(component) || !Resolve(g_getCenterOfMass)) return false;
+    if (!IsPrimitiveComponent(component) || !Resolve(g_getCenterOfMass)) return false;
     unsigned char frame[kFrameBytes] = {};
     *reinterpret_cast<R::FName*>(frame + g_getCenterOfMass.off0) = R::FName{0, 0};  // None: the whole body
     R::CallFunction(component, g_getCenterOfMass.fn, frame);

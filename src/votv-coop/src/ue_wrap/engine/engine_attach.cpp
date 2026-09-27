@@ -10,6 +10,7 @@
 // release: the mannequin model for the non-keyable clump.
 
 #include "ue_wrap/engine/engine.h"
+#include "ue_wrap/engine/engine_physics.h"  // IsPrimitiveComponent, the simulate and velocity setters
 
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/fname_utils.h"
@@ -28,19 +29,14 @@ namespace R = reflection;
 // Cached UFunctions (resolve once; re-resolve if the owning class is freed). Plain
 // void* caches, game-thread only.
 void* g_getRootFn = nullptr;  // Actor::K2_GetRootComponent
-void* g_setSimFn  = nullptr;  // PrimitiveComponent::SetSimulatePhysics
 void* g_getLinFn  = nullptr;  // PrimitiveComponent::GetPhysicsLinearVelocity
 void* g_getAngFn  = nullptr;  // PrimitiveComponent::GetPhysicsAngularVelocityInDegrees
-void* g_setLinFn  = nullptr;  // PrimitiveComponent::SetPhysicsLinearVelocity
-void* g_setAngFn  = nullptr;  // PrimitiveComponent::SetPhysicsAngularVelocityInDegrees
 void* g_setCollFn = nullptr;  // PrimitiveComponent::SetCollisionEnabled
 void* g_setNotifyHitFn = nullptr;  // PrimitiveComponent::SetNotifyRigidBodyCollision
 void* g_isAwakeFn = nullptr;  // PrimitiveComponent::IsAnyRigidBodyAwake
-void* g_putSleepFn = nullptr;  // PrimitiveComponent::PutRigidBodyToSleep
 void* g_getMatFn  = nullptr;  // PrimitiveComponent::GetMaterial
 void* g_getMassFn = nullptr;  // PrimitiveComponent::GetMass
 void* g_getPhysMatFn = nullptr;  // MaterialInterface::GetPhysicalMaterial
-void* g_primCompClass = nullptr;  // the PrimitiveComponent UClass (root-type gate)
 void* g_attachCompFn = nullptr;  // Actor::K2_AttachToComponent
 void* g_detachFn     = nullptr;  // Actor::K2_DetachFromActor
 
@@ -72,6 +68,12 @@ void* RootComponentOf(void* actor) {
     return (root && R::IsLive(root)) ? root : nullptr;
 }
 
+// The root when it is a primitive component, the only layout the body calls dispatch on; null otherwise.
+void* PrimitiveRootOf(void* actor) {
+    void* root = RootComponentOf(actor);
+    return IsPrimitiveComponent(root) ? root : nullptr;
+}
+
 void* ReadPtrAt(const void* obj, size_t off) {
     return *reinterpret_cast<void* const*>(static_cast<const uint8_t*>(obj) + off);
 }
@@ -79,13 +81,8 @@ void* ReadPtrAt(const void* obj, size_t off) {
 }  // namespace
 
 bool SetActorSimulatePhysics(void* actor, bool simulate) {
-    void* root = RootComponentOf(actor);
-    if (!root) return false;
-    void* fn = PrimFn(&g_setSimFn, L"SetSimulatePhysics");
-    if (!fn) { UE_LOGW("engine: SetSimulatePhysics unresolved"); return false; }
-    ParamFrame f(fn);
-    f.Set<bool>(L"bSimulate", simulate);
-    return Call(root, f);
+    void* root = PrimitiveRootOf(actor);
+    return root && SetComponentSimulatePhysics(root, simulate);
 }
 
 bool SetActorRootMovable(void* actor) {
@@ -101,7 +98,7 @@ bool SetActorRootMovable(void* actor) {
 
 bool GetActorRootPhysicsVelocity(void* actor, FVector& outLin, FVector& outAng) {
     outLin = FVector{}; outAng = FVector{};
-    void* root = RootComponentOf(actor);
+    void* root = PrimitiveRootOf(actor);
     if (!root) return false;
     void* getLin = PrimFn(&g_getLinFn, L"GetPhysicsLinearVelocity");
     void* getAng = PrimFn(&g_getAngFn, L"GetPhysicsAngularVelocityInDegrees");
@@ -116,7 +113,7 @@ bool SetActorRootCollisionEnabled(void* actor, uint8_t collisionType) {
     // collisionType: 0=NoCollision 1=QueryOnly 2=PhysicsOnly 3=QueryAndPhysics.
     // The thrown clump mirror needs 3 so it collides with the world + lands (the
     // bare-spawned mirror otherwise sinks through the floor on release).
-    void* root = RootComponentOf(actor);
+    void* root = PrimitiveRootOf(actor);
     if (!root) return false;
     void* fn = PrimFn(&g_setCollFn, L"SetCollisionEnabled");
     if (!fn) { UE_LOGW("engine: SetCollisionEnabled unresolved"); return false; }
@@ -132,7 +129,7 @@ bool SetActorRootNotifyRigidBodyCollision(void* actor, bool notify) {
     // otherwise BeginDeferredActorSpawnFromClass(pile) on landing -> a DUPLICATE pile on top
     // of the host's authoritative one). The clump's StaticMesh is its root (the same body the
     // root-based collision/velocity setters drive on release), so this targets it. Game thread.
-    void* root = RootComponentOf(actor);
+    void* root = PrimitiveRootOf(actor);
     if (!root) return false;
     void* fn = PrimFn(&g_setNotifyHitFn, L"SetNotifyRigidBodyCollision");
     if (!fn) { UE_LOGW("engine: SetNotifyRigidBodyCollision unresolved"); return false; }
@@ -147,7 +144,7 @@ bool IsActorRootBodyAtRest(void* actor) {
     // Returns false on ANY resolution failure: the host uses this to decide whether
     // to stamp kAtRest, and we must NEVER claim a rest we couldn't verify (a false
     // kAtRest would tell the client to sleep a body the host actually has moving).
-    void* root = RootComponentOf(actor);
+    void* root = PrimitiveRootOf(actor);
     if (!root) return false;
     void* fn = PrimFn(&g_isAwakeFn, L"IsAnyRigidBodyAwake");
     if (!fn) return false;
@@ -157,20 +154,11 @@ bool IsActorRootBodyAtRest(void* actor) {
 }
 
 bool SetActorRootPhysicsVelocity(void* actor, const FVector& lin, const FVector& ang) {
-    void* root = RootComponentOf(actor);
+    void* root = PrimitiveRootOf(actor);
     if (!root) return false;
-    void* setLin = PrimFn(&g_setLinFn, L"SetPhysicsLinearVelocity");
-    void* setAng = PrimFn(&g_setAngFn, L"SetPhysicsAngularVelocityInDegrees");
-    if (!setLin || !setAng) return false;
-    { ParamFrame f(setLin);
-      f.Set<FVector>(L"NewVel", lin);
-      f.Set<bool>(L"bAddToCurrent", false);
-      Call(root, f); }
-    { ParamFrame f(setAng);
-      f.Set<FVector>(L"NewAngVel", ang);
-      f.Set<bool>(L"bAddToCurrent", false);
-      Call(root, f); }
-    return true;
+    const bool linRan = SetComponentLinearVelocity(root, lin.X, lin.Y, lin.Z);
+    const bool angRan = SetComponentAngularVelocity(root, ang.X, ang.Y, ang.Z);
+    return linRan && angRan;
 }
 
 // Angular WITHOUT touching linear: assigning a linear velocity to a settled constraint rig
@@ -178,18 +166,12 @@ bool SetActorRootPhysicsVelocity(void* actor, const FVector& lin, const FVector&
 // while parked without being pushed. Two quantities, two gates -- a single call that writes
 // both forces the caller to use one rule for both.
 bool SetActorRootPhysicsAngularVelocity(void* actor, const FVector& ang) {
-    void* root = RootComponentOf(actor);
-    if (!root) return false;
-    void* setAng = PrimFn(&g_setAngFn, L"SetPhysicsAngularVelocityInDegrees");
-    if (!setAng) return false;
-    ParamFrame f(setAng);
-    f.Set<FVector>(L"NewAngVel", ang);
-    f.Set<bool>(L"bAddToCurrent", false);
-    return Call(root, f);
+    void* root = PrimitiveRootOf(actor);
+    return root && SetComponentAngularVelocity(root, ang.X, ang.Y, ang.Z);
 }
 
 float GetActorRootMass(void* actor) {
-    void* root = RootComponentOf(actor);
+    void* root = PrimitiveRootOf(actor);
     if (!root) return 0.f;
     void* getMass = PrimFn(&g_getMassFn, L"GetMass");
     if (!getMass) return 0.f;
@@ -203,19 +185,8 @@ void* GetActorRootPhysicalMaterial(void* actor) {
     // hit.PhysMat does on the hit face. Feeds lib_C::physSound for actors that are
     // NOT prop_C descendants (the trash clump derives from plain Actor -- it has no
     // physicsImpact component to read a cached PhysMat from).
-    void* root = RootComponentOf(actor);
+    void* root = PrimitiveRootOf(actor);
     if (!root) return nullptr;
-    // Type-gate: GetMaterial is a PrimitiveComponent UFunction; PE-dispatching it
-    // on a plain SceneComponent root would thunk into a bad P_THIS cast. (The
-    // physics setters above skip this gate because their targets are exclusively
-    // our own clump mirrors; this one receives arbitrary wire-grabbed actors.)
-    // Cache safety: PrimitiveComponent is a NATIVE ENGINE UClass (RF_Native |
-    // RF_Standalone) -- never GC'd, so the latched pointer cannot dangle. Do NOT
-    // copy this latch shape for a BLUEPRINT class (those reload on level travel;
-    // they need the reflection.cpp stale-detect approach instead).
-    if (!g_primCompClass) g_primCompClass = R::FindClass(L"PrimitiveComponent");
-    if (!g_primCompClass ||
-        !R::IsDescendantOfAny(R::ClassOf(root), &g_primCompClass, 1)) return nullptr;
     void* getMat = PrimFn(&g_getMatFn, L"GetMaterial");
     if (!getMat) return nullptr;
     void* mat = nullptr;

@@ -31,8 +31,9 @@ struct AttachedCharacter {
 int AttachedCharactersOf(void* actor, AttachedCharacter* out, int max);
 
 // ---- Generic actor root-physics substrate ----
-// Root-component primitives through K2_GetRootComponent, never the Aprop_C mesh offset, so they
-// work on the non-Aprop_C trash clump. Game thread; each IsLive-gates its arguments.
+// The root component through K2_GetRootComponent, never the Aprop_C mesh offset, so they work on the
+// non-Aprop_C trash clump. Each body call answers only a live primitive root and refuses any other (false,
+// zero, null), as engine_physics does; SetActorRootMovable takes any root. Game thread.
 
 // SetSimulatePhysics on the root primitive: freeze a held mirror, thaw it on release.
 bool SetActorSimulatePhysics(void* actor, bool simulate);
