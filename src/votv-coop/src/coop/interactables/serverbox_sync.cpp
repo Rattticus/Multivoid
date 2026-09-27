@@ -322,6 +322,10 @@ void OnReliable(const coop::net::ServerStatePayload& payload, int senderPeerSlot
 }
 
 void OnRepair(const coop::net::ServerRepairPayload& payload, int senderPeerSlot) {
+    if (!GT::IsGameThread()) {
+        UE_LOGW("serverbox_sync: OnRepair off-game-thread -- dropping");
+        return;
+    }
     auto* s = HostSession();
     if (!s || senderPeerSlot < 1 || senderPeerSlot >= static_cast<int>(coop::players::kMaxPeers)) return;
     if (!SB::EnsureBreakResolved() || !SB::EnsureRepairResolved()) return;
@@ -335,7 +339,9 @@ void OnRepair(const coop::net::ServerRepairPayload& payload, int senderPeerSlot)
     else {
         const auto token = coop::element::IntentTarget::ForClientIntent(*s, slot, kRepairReachUU);
         if (!token.HasBody()) why = "the host has no body for that player";
-        else if (token.Authorize(box).outcome != coop::element::IntentOutcome::Ok) why = "the box is out of its reach";
+        else if (const auto outcome = token.Authorize(box).outcome; outcome != coop::element::IntentOutcome::Ok)
+            why = outcome == coop::element::IntentOutcome::NoTarget ? "the box's place did not read"
+                                                                      : "the box is out of its reach";
         else if (!SB::CallFix(box)) why = "the box's fix did not run";
     }
     if (why) {

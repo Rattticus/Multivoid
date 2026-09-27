@@ -9,6 +9,7 @@
 #include "coop/session/net_pump.h"  // HasAnnouncedWorldReady (client send gate)
 
 #include "ue_wrap/devices/laptop.h"
+#include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 
 #include <windows.h>
@@ -23,6 +24,7 @@ namespace coop::laptop_buffer_sync {
 namespace {
 
 namespace L = ue_wrap::laptop;
+namespace GT = ue_wrap::game_thread;
 using Clock = std::chrono::steady_clock;
 
 std::atomic<coop::net::Session*> g_session{nullptr};
@@ -444,6 +446,7 @@ void Install(coop::net::Session* session) {
 }
 
 void Tick() {
+    if (!GT::IsGameThread()) return;
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->running()) return;
     const uint64_t now = NowMs();
@@ -490,6 +493,10 @@ void Tick() {
 }
 
 void OnQuadChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) {
+    if (!GT::IsGameThread()) {
+        UE_LOGW("laptop_buffer: OnQuadChunk off-game-thread -- dropping");
+        return;
+    }
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s) return;
     std::vector<uint8_t> blob;

@@ -78,8 +78,8 @@ bool HandleSignalEvent(net::Session& /*session*/,
         break;
     }
     case net::ReliableKind::LaptopState: {
-        // The stationary PC power/floppy lane. HOST applies and re-fans (origin excluded);
-        // the gates live in laptop_sync::OnLaptopState.
+        // The stationary PC's power and the portable PC's lid (op 6); its disc slot is FloppySlotState's.
+        // HOST applies and re-fans (origin excluded); the gates live in laptop_sync::OnLaptopState.
         if (msg.payloadLen < sizeof(net::LaptopStatePayload)) {
             UE_LOGW("event_feed: LaptopState payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::LaptopStatePayload));
