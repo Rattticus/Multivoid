@@ -54,20 +54,26 @@ constexpr uint64_t kAckBoundMs    = 15000;
 constexpr uint64_t kRowBoundMs    = 30000;
 constexpr uint64_t kLockBoundMs   = 90000;   // the desk virus's lockout lasts 60 s on the host
 constexpr uint64_t kSolveBoundMs  = 60000;   // a solve is some ninety inputs, a click's move 0.1-0.2 s
+// The flood: more than one burst of the host's rate for inputs, fewer than a burst and a full queue, so every input
+// is taken, some at the rate.
+constexpr int      kFloodInputs   = 40;
 
-enum class Arm : uint8_t { Off, Run, Red, Join, Lockout, LockJoin, Puzzle, PuzzleRed, PuzzleSolve, Upgrade };
+enum class Arm : uint8_t { Off, Run, Red, Join, Lockout, LockJoin, Puzzle, PuzzleRed, PuzzleSolve, PuzzleFlood,
+                          Upgrade };
 Arm Mode() {
     static const Arm a = [] {
         const std::string v = coop::config::ResolveString(::coop::config_registry::rows::grid_drill);
         return v == "run" ? Arm::Run : v == "red" ? Arm::Red : v == "join" ? Arm::Join : v == "lockout" ? Arm::Lockout
              : v == "lockjoin" ? Arm::LockJoin : v == "puzzle" ? Arm::Puzzle : v == "puzzlered" ? Arm::PuzzleRed
-             : v == "puzzlesolve" ? Arm::PuzzleSolve : (v == "upgrade" || v == "upgradered") ? Arm::Upgrade
+             : v == "puzzlesolve" ? Arm::PuzzleSolve : v == "puzzleflood" ? Arm::PuzzleFlood
+             : (v == "upgrade" || v == "upgradered") ? Arm::Upgrade
              : Arm::Off;
     }();
     return a;
 }
 bool LockArm() { return Mode() == Arm::Lockout || Mode() == Arm::LockJoin; }
 bool PuzzleArm() { return Mode() == Arm::Puzzle || Mode() == Arm::PuzzleRed; }
+bool BesideArm() { return Mode() == Arm::PuzzleSolve || Mode() == Arm::PuzzleFlood; }
 
 uint64_t NowMs() {
     return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -79,7 +85,7 @@ uint64_t NowMs() {
 enum class Step : uint8_t {
     Arm, WalkPanel, Press, Ack, WaitBreak, Repair, RepairAck, HostRepair, LockStart, LockEnd,
     PuzzleMatch, PuzzleHost, PuzzleOwn, PuzzleOwnAck, SolveArm, SolveEnter, SolveClaim, SolveWork, SolveSync,
-    SolvePress, SolveAck, Done
+    SolvePress, SolveAck, FloodProbe, FloodProbeAck, Flood, FloodAck, Done
 };
 Step     g_step = Step::Arm;
 uint64_t g_stepMs = 0;
@@ -89,6 +95,7 @@ uint8_t  g_maskBefore = 0;   // the breakers as the last press went
 bool     g_repairFar = false;  // the repair was pressed beyond the Activate button's reach
 coop::net::PowerGridPuzzle g_puzzleSeen{};  // the host's puzzle as the last puzzle leg read it
 bool     g_switchLsb = false;  // the solve's reading of the switch target: least significant bit first
+uint8_t  g_probeFrom = 0;      // the offset knob before the flood's probe input
 std::shared_ptr<coop::director::BackgroundWalk> g_walk;  // the director blocks, so the walk runs on a worker
 
 // A walk by the director to `to`, polled: 0 while it walks, 1 once there, 2 when it failed.
@@ -200,7 +207,7 @@ void ClientTick(void* player) {
         }
         Say("client", "armed");
         SayCensus(player, panel);
-        Go(Mode() == Arm::PuzzleSolve ? Step::SolveArm : Step::WalkPanel);
+        Go(BesideArm() ? Step::SolveArm : Step::WalkPanel);
         return;
     }
     case Step::LockStart:
@@ -375,7 +382,56 @@ void ClientTick(void* player) {
         }
         UE_LOGI("[GRID-DRILL] client: inside the panel, holding its claim %ls", key.c_str());
         g_switchLsb = false;
-        Go(Step::SolveWork);
+        Go(Mode() == Arm::PuzzleFlood ? Step::FloodProbe : Step::SolveWork);
+        return;
+    }
+    case Step::FloodProbe: {
+        // One input first, which the host must take before the flood goes: it takes a client's inputs once it has the
+        // client's body and its claim on the panel, and an input waiting for either would hold the flood behind it.
+        GP::Puzzle p{};
+        if (!GP::Read(GP::PanelOf(DrillGen()), p)) { Abandon("the drill's generator's panel is unread"); return; }
+        g_probeFrom = p.sine[0];
+        coop::power_puzzle::DevFlood(GEN::IndexOf(DrillGen()), 1);
+        Go(Step::FloodProbeAck);
+        return;
+    }
+    case Step::FloodProbeAck: {
+        std::string why;
+        coop::net::PowerGridPuzzle canon{};
+        if (coop::power_puzzle::UntakenInputs() != 0 || !PuzzleMatches(why, canon)) {
+            if (now - g_stepMs > kAckBoundMs) Abandon("the host never answered the probe input");
+            return;
+        }
+        GP::Puzzle p{};
+        if (!GP::Read(GP::PanelOf(DrillGen()), p) || p.sine[0] == g_probeFrom) {
+            Abandon("the host refused the probe input (its log says why)");
+            return;
+        }
+        Go(Step::Flood);
+        return;
+    }
+    case Step::Flood: {
+        // What a modified client sends: a burst of inputs at once, past its own send rate. The host must take them
+        // within its rate for inputs and broadcast the rows coalesced; its own lines judge both.
+        const uint64_t sent0 = coop::power_puzzle::InputsSent();
+        coop::power_puzzle::DevFlood(GEN::IndexOf(DrillGen()), kFloodInputs);
+        if (coop::power_puzzle::InputsSent() != sent0 + kFloodInputs) { Abandon("the flood did not go"); return; }
+        UE_LOGI("[GRID-DRILL] client: sent %d inputs at once", kFloodInputs);
+        Go(Step::FloodAck);
+        return;
+    }
+    case Step::FloodAck: {
+        std::string why;
+        coop::net::PowerGridPuzzle canon{};
+        if (coop::power_puzzle::UntakenInputs() != 0 || !PuzzleMatches(why, canon)) {
+            if (now - g_stepMs > kSolveBoundMs) {
+                const std::string what = "the host never answered the flood: " + why;
+                Fail(what.c_str());
+            }
+            return;
+        }
+        if (Say("client", "the host answered every input of the flood")) SayDone();
+        g_step = Step::Done;
         return;
     }
     case Step::SolveWork: {
@@ -541,6 +597,51 @@ uint64_t g_hostSeen = 0;
 uint64_t g_hostOpsSeen = 0;
 bool     g_hostSaidArm = false;
 bool     g_hostActed = false;  // the join arms' break, the lockout arms' lockout
+uint64_t g_floodMs = 0, g_floodInputs0 = 0, g_floodRows0 = 0;  // the flood's first taken input, and the counts before
+uint64_t g_floodRefused0 = 0;
+bool     g_floodDone = false;
+
+// The flood's bounds, checked every tick from its first taken input: the inputs taken within the host's rate for
+// them, and the rows broadcast at most once a coalescing window however fast the inputs come.
+void HostFloodCheck() {
+    const uint64_t taken = coop::power_grid::HostInputsTaken();
+    const uint64_t rows = coop::power_grid::HostRowsBroadcast();
+    const uint64_t now = NowMs();
+    if (g_floodDone) return;
+    if (coop::power_grid::HostOpsRefused() != g_floodRefused0) {
+        UE_LOGW("[GRID-DRILL] FAIL on the host: an input of the probe or the flood was refused (the log above says why)");
+        g_floodDone = true;
+        return;
+    }
+    if (g_floodMs == 0) {
+        if (taken == g_floodInputs0) {
+            g_floodRows0 = rows;
+            return;
+        }
+        g_floodMs = now;
+    }
+    const uint64_t ms = now - g_floodMs;
+    const uint64_t inputs = taken - g_floodInputs0, sends = rows - g_floodRows0;
+    const auto inputsAllowed = static_cast<uint64_t>(coop::power_grid::kInputBurst +
+                                                     coop::power_grid::kInputPerSecond * static_cast<float>(ms) / 1000.f) + 1;
+    const uint64_t sendsAllowed = 2 + ms / coop::power_grid::kPuzzleRowsEveryMs;
+    char buf[160];
+    if (inputs > inputsAllowed || sends > sendsAllowed) {
+        std::snprintf(buf, sizeof(buf), "the flood's %llu inputs taken and %llu rows broadcast in %llu ms, past %llu and %llu",
+                      static_cast<unsigned long long>(inputs), static_cast<unsigned long long>(sends),
+                      static_cast<unsigned long long>(ms), static_cast<unsigned long long>(inputsAllowed),
+                      static_cast<unsigned long long>(sendsAllowed));
+        UE_LOGW("[GRID-DRILL] FAIL on the host: %s", buf);
+        g_floodDone = true;
+        return;
+    }
+    if (inputs < static_cast<uint64_t>(kFloodInputs) + 1) return;  // the probe and the flood
+    g_floodDone = true;
+    std::snprintf(buf, sizeof(buf), "took the probe and the flood, %llu inputs in %llu ms, its rows broadcast %llu times",
+                  static_cast<unsigned long long>(inputs), static_cast<unsigned long long>(ms),
+                  static_cast<unsigned long long>(sends));
+    Say("host", buf);
+}
 
 void HostTick(coop::net::Session* s) {
     void* panel = PC::Panel();
@@ -554,7 +655,7 @@ void HostTick(coop::net::Session* s) {
             Say("host", "broke the drill's generator before the join");
             return;
         }
-        if (Mode() == Arm::PuzzleSolve && s->IsSlotWorldReady(1)) {
+        if (BesideArm() && s->IsSlotWorldReady(1)) {
             // The generator the client stands beside, broken for it to repair.
             void* gen = DrillGen();
             if (!gen) return;
@@ -577,9 +678,15 @@ void HostTick(coop::net::Session* s) {
     if (!s->IsSlotWorldReady(1)) return;
     if (!g_hostSaidArm) {
         g_hostSaidArm = true;
+        g_floodInputs0 = coop::power_grid::HostInputsTaken();
+        g_floodRefused0 = coop::power_grid::HostOpsRefused();
         Say("host", "armed");
     }
     if (LockArm()) return;
+    if (Mode() == Arm::PuzzleFlood) {
+        HostFloodCheck();
+        return;
+    }
     const uint64_t ops = coop::power_grid::HostOpsTaken();
     if (ops != g_hostOpsSeen) {
         g_hostOpsSeen = ops;
@@ -655,6 +762,8 @@ void OnDisconnect() {
     g_hostOpsSeen = 0;
     g_hostSaidArm = false;
     g_hostActed = false;
+    g_floodMs = g_floodInputs0 = g_floodRows0 = g_floodRefused0 = 0;
+    g_floodDone = false;
 }
 
 }  // namespace coop::dev::grid_drill

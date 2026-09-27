@@ -59,4 +59,8 @@ bool Canonical(int32_t index, coop::net::PowerGridPuzzle& out);
 uint64_t InputsSent();
 size_t UntakenInputs();
 
+// [dev] what a modified client sends: `n` inputs on generator `index`'s offset knob at once, past this client's own
+// send rate, alternating between its value and the next, so each one taken changes the panel. Game thread.
+void DevFlood(int32_t index, int n);
+
 }  // namespace coop::power_puzzle

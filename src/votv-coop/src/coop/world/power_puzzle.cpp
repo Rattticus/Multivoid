@@ -382,4 +382,23 @@ size_t UntakenInputs() {
     return n;
 }
 
+void DevFlood(int32_t index, int n) {
+    auto* s = Connected();
+    GP::Puzzle model;
+    if (!IsClient(s) || index < 0 || index >= kPowerGridGenerators || !Model(index, model)) return;
+    const uint8_t from = FieldOf(model, 0);
+    for (int i = 0; i < n; ++i) {
+        PowerGridPayload p{};
+        p.op = coop::net::kPowerGridOpPuzzle;
+        p.index = static_cast<uint8_t>(index);
+        p.field = 0;
+        p.value = static_cast<uint8_t>(i % 2 == 0 ? (from + 1) % 16 : from);
+        p.seq = coop::power_grid::NextSeq();
+        s->SendReliableToSlot(0, coop::net::ReliableKind::PowerGridState, &p, sizeof(p));
+        g_untaken.push_back({p.seq, p.index, p.field, p.value});
+        ++g_inputsSent;
+    }
+    UE_LOGI("power_puzzle: [dev] sent %d inputs on generator %d at once", n, index);
+}
+
 }  // namespace coop::power_puzzle

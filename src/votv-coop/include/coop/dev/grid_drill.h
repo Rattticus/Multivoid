@@ -7,7 +7,7 @@
 //   puzzle -- as run up to the break; the client's panel must hold the host's puzzle, the host's own inputs after the
 //           second press must reach it, and the client's own input from out of reach must roll back.
 //   puzzlesolve -- the client stands beside the drill's generator (its stored pose); the host breaks it, and the
-//           client enters its panel, solves it input by input and presses Activate, which the host judges and takes.
+//           client solves its panel and presses Activate. puzzleflood: from there, a burst of inputs, taken at a rate.
 //   upgrade, upgradered -- from the same pose, the installs the host hands the client (grid_drill_upgrade.h).
 //   join -- the host breaks the drill's generator as it hosts; the joiner must find the blackout and its puzzle.
 //   lockout, lockjoin -- the desk virus's lockout, from the client's world-ready or during its join, 60 s long.
