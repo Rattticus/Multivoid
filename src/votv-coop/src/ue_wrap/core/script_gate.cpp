@@ -49,9 +49,9 @@ std::atomic<bool> g_countOn{false};
 // unresolved placeholder holds a second slot). What fills a table is its KEYED slots, retired
 // ones included, so the cap counts those: at most 3/8 of a table, the load at which a miss
 // probes under two slots. A name watch, class-scoped or not, holds two keyed slots, so the name table
-// takes 192 name watches: each peer of a two-peer smoke held 24, the dev probes add up to 22, and the
-// POLL->GATE arc moves about seventy polled rows onto watches.
-constexpr int kSlotBits = 10;
+// takes 384 name watches: each peer of a two-peer smoke held 163-166, eighteen of them one lane's
+// device entries, and every polled state moved onto a watch adds its own.
+constexpr int kSlotBits = 11;
 constexpr int kSlots = 1 << kSlotBits;
 constexpr int kMaxKeyed = kSlots * 3 / 8;
 
