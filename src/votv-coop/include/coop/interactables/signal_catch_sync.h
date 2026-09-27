@@ -32,10 +32,11 @@ void Install(coop::net::Session* session);
 //
 // The catch detector is UNGATED: it fires on a change-edge of the coord_signalData
 // identity tuple (x, y, z, frequency, objectName) to a non-None state, with no
-// claim check in front of it. That is sound because the field has exactly two
-// native writers -- ping-success, which assigns the row, and the delete chain,
-// which assigns None -- and our own wire appliers prime these baselines, so an
-// unprimed local change IS a catch. It is also necessary: a claim-anchored gate
+// claim check in front of it. That is sound because the field has three native
+// writers -- ping-success, which assigns the row, the delete chain, which assigns
+// None, and the desk's setData, a save's restore on every world load -- and the
+// restore and our own wire appliers prime these baselines, so an unprimed local
+// change IS a catch. It is also necessary: a claim-anchored gate
 // loses by construction, because the ping's own completion releases the desk hold
 // within the same second as the edge, and the baseline then rolls forward over the
 // catch permanently.

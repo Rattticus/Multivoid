@@ -12,6 +12,7 @@
 #include "ue_wrap/desk/console_desk.h"
 #include "ue_wrap/desk/dish.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/desk/space_renderer.h"
 
 #include <atomic>
@@ -27,6 +28,7 @@ namespace {
 namespace CD = ue_wrap::console_desk;
 namespace SR = ue_wrap::space_renderer;
 namespace D = ue_wrap::dish;
+namespace sg = ue_wrap::script_gate;
 
 using Clock = std::chrono::steady_clock;
 
@@ -91,6 +93,45 @@ bool CheckDeskInstance() {
     g_deskInst = inst;
     PrimeBaselinesFromDesk();
     return true;
+}
+
+// The desk's setData is a save's restore, which the gamemode's load runs on every world load, a joiner's included.
+// It writes the signal data the save holds, which is no one's catch, so the detector takes it as its baseline, as it
+// takes our wire appliers' writes. Unprimed, a joiner's restore of the host's caught signal reads as the joiner's own
+// catch, and the host's replay of that catch resets the host's download and slews every dish.
+constexpr const wchar_t* kDeskClass = L"analogDScreenTest_C";
+constexpr const wchar_t* kRestoreName = L"setData";  // one pointer: the gate knows a watch by its literals
+constexpr int kTagRestore = 0x53435230;  // 'SCR0'
+bool g_restoreWatched = false;
+bool g_restoreLive = false;
+bool g_restoreRefused = false;  // refused or settled dead: said once, and the attempts end
+
+void OnRestorePost(const sg::Call&) {
+    PrimeBaselinesFromDesk();
+    UE_LOGI("signal_catch: the desk's signal data restored from a save ('%ls') -- the baseline, not a catch",
+            g_havePrevSig ? g_prevSigName.c_str() : L"unread");
+}
+
+void WatchRestore() {
+    if (g_restoreLive || g_restoreRefused) return;
+    if (!g_restoreWatched) {
+        g_restoreWatched = sg::WatchClassName(kDeskClass, kRestoreName, kTagRestore, nullptr, &OnRestorePost);
+        if (!g_restoreWatched) {
+            g_restoreRefused = true;
+            UE_LOGE("signal_catch: the gate took no watch on the desk's setData -- a joiner's restore reads as its "
+                    "own catch");
+            return;
+        }
+    }
+    sg::ResolvePendingNames();
+    if (sg::ClassNameWatchLive(kDeskClass, kRestoreName, kTagRestore)) {
+        g_restoreLive = true;
+        UE_LOGI("signal_catch: the desk's restore from a save is watched");
+    } else if (sg::ClassNameWatchSettled(kDeskClass, kRestoreName, kTagRestore)) {
+        g_restoreRefused = true;
+        UE_LOGE("signal_catch: the watch on the desk's setData settled dead -- a joiner's restore reads as its own "
+                "catch");
+    }
 }
 
 bool IsNoneName(const std::wstring& n) { return n.empty() || n == L"None"; }
@@ -227,8 +268,9 @@ bool BuildCatchPayload(const CD::CoordSignal& sig, uint8_t kind,
 
 // The catch and cleared detector body, shared by the 1 Hz tick and the snapshot-arrival race
 // check. The signature is the signal data's identity (tuple or name) change edge: no sky-row
-// corroboration, no dish edge (the field has exactly two writers, the native ping-success
-// chain and our wire appliers, and the wire appliers prime the baselines).
+// corroboration, no dish edge. The field's writers are the native ping-success chain (a catch),
+// the native "Signal data deleted" chain (a clear), the desk's setData (a save's restore) and our
+// wire appliers; the last two prime the baselines.
 void RunDetectors(coop::net::Session* s, const CD::CoordSignal& sig, bool haveSig) {
     if (s && s->connected() && haveSig && g_havePrevSig) {
         // Cleared (any peer; unclaimed trust, like the physical button).
@@ -241,9 +283,8 @@ void RunDetectors(coop::net::Session* s, const CD::CoordSignal& sig, bool haveSi
         // Catch: the identity change edge to non-None. No claim gate: the successful ping's own
         // completion releases the desk FSM-hold within the same second as the edge, so a
         // claim-gated 1 Hz detector lost the race and the roll-forward below ate the catch
-        // permanently. The unprimed change edge itself proves local authorship, since the only
-        // writers of the field are the native ping-success chain and our wire appliers, and every
-        // wire applier primes these baselines.
+        // permanently. The unprimed change edge itself proves local authorship: every writer of
+        // the field that is not a local player's primes these baselines.
         if (!IsNoneName(sig.objectName)) {
             const Identity id{ sig.x, sig.y, sig.z, sig.frequency };
             const bool changed = !IdentityEq(id, g_prevId) ||
@@ -296,6 +337,7 @@ void Install(coop::net::Session* session) {
 }
 
 void Tick() {
+    WatchRestore();
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->running()) return;
     const auto now = Clock::now();
