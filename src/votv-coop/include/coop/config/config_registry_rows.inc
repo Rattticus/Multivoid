@@ -612,20 +612,15 @@ CFG_STRING(desk_verb_drill, "desk_verb_drill", "dev", "", "VOTVCOOP_DESK_VERB_DR
     "client joins, and the client finds it with its photo. Lines tagged [DESK-VERB-DRILL]; 'client DONE PASS|FAIL' "
     "ends it; ABANDONED is a step that could not run.")
 CFG_STRING(grid_drill, "grid_drill", "dev", "", "VOTVCOOP_GRID_DRILL", false,
-    "Drill (BOTH peers): the power grid. run: the client walks to the panel and presses its light lever twice, "
-    "the host breaks the drill's generator (the one nearest the panel) after the first, then the client repairs "
-    "it at its Activate button from where it stands, which the host takes within reach and refuses beyond it, "
-    "then repairs at its own Activate button, with the turn-on the client must run too. puzzle: as run up to the "
-    "break, then the client's panel must hold the host's puzzle, the host's own inputs after the second press must "
-    "reach it, and the client's own input from out of reach must roll back. puzzlesolve: the client stands beside "
-    "the drill's generator (its stored pose), the host breaks it at the client's world-ready, and the client enters "
-    "its panel, solves it input by input, leaves, and presses Activate, which the host must judge on its own copy "
-    "and take. "
-    "join: the host breaks the drill's generator as it hosts and the joining client finds the blackout and its "
-    "puzzle. lockout, lockjoin: the host runs the desk virus's lockout once the client's world is ready, or as it "
-    "joins, and the client's panel locks with the canonical and unlocks 60 s later on the host's clock. red: a "
-    "client applies the host's canonical and rows raw; puzzlered: a client never writes the host's puzzle; the "
-    "negative controls. Lines tagged [GRID-DRILL]; the client's DONE line ends it.")
+    "Drill (BOTH peers): the power grid, arm by arm. run: the client presses the panel's light lever, the host "
+    "breaks the drill's generator (the one nearest the panel), the client's Activate press from where it stands is "
+    "refused beyond reach, and the host's own repair reaches the client. puzzle: the host's puzzle and inputs reach "
+    "the client, whose own input from out of reach rolls back. puzzlesolve: the client, posed beside the generator, "
+    "solves its puzzle and presses Activate, which the host takes. upgrade: from that pose an install op with no "
+    "insert behind it is refused, nothing refunded, the client's install is taken, and a refused one is refunded. "
+    "join, lockout, lockjoin: the blackout at a join, the desk virus's lockout. red, puzzlered, upgradered: the "
+    "controls (the rows applied raw, no puzzle written, installs judged unpaired). Lines tagged [GRID-DRILL]; the "
+    "client's DONE line ends it.")
 CFG_STRING(toggle_drill, "toggle_drill", "dev", "", "VOTVCOOP_TOGGLE_DRILL", false,
     "Drill (BOTH peers), by kind: garage, tap (a faucet or a sink), locker or lid. The device of that kind "
     "with the lowest key in its lane, toggled through its own verb by the client and toggled back by "

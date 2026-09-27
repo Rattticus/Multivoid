@@ -3,6 +3,7 @@
 #include "coop/dev/grid_drill.h"
 
 #include "grid_drill_checks.h"  // co-located private header (src tree, not include/)
+#include "grid_drill_upgrade.h"  // the upgrade arms' own legs
 
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
@@ -54,13 +55,14 @@ constexpr uint64_t kRowBoundMs    = 30000;
 constexpr uint64_t kLockBoundMs   = 90000;   // the desk virus's lockout lasts 60 s on the host
 constexpr uint64_t kSolveBoundMs  = 60000;   // a solve is some ninety inputs, a click's move 0.1-0.2 s
 
-enum class Arm : uint8_t { Off, Run, Red, Join, Lockout, LockJoin, Puzzle, PuzzleRed, PuzzleSolve };
+enum class Arm : uint8_t { Off, Run, Red, Join, Lockout, LockJoin, Puzzle, PuzzleRed, PuzzleSolve, Upgrade };
 Arm Mode() {
     static const Arm a = [] {
         const std::string v = coop::config::ResolveString(::coop::config_registry::rows::grid_drill);
         return v == "run" ? Arm::Run : v == "red" ? Arm::Red : v == "join" ? Arm::Join : v == "lockout" ? Arm::Lockout
              : v == "lockjoin" ? Arm::LockJoin : v == "puzzle" ? Arm::Puzzle : v == "puzzlered" ? Arm::PuzzleRed
-             : v == "puzzlesolve" ? Arm::PuzzleSolve : Arm::Off;
+             : v == "puzzlesolve" ? Arm::PuzzleSolve : (v == "upgrade" || v == "upgradered") ? Arm::Upgrade
+             : Arm::Off;
     }();
     return a;
 }
@@ -628,6 +630,10 @@ void HostTick(coop::net::Session* s) {
 void Tick(coop::net::Session* session) {
     if (Mode() == Arm::Off || !session || !session->connected()) return;
     if (!PC::EnsureResolved() || !GEN::EnsureResolved()) return;
+    if (Mode() == Arm::Upgrade) {
+        UpgradeTick(session);
+        return;
+    }
     if (session->role() == coop::net::Role::Host) {
         HostTick(session);
         return;
@@ -639,6 +645,7 @@ void Tick(coop::net::Session* session) {
 
 void OnDisconnect() {
     ForgetDrillGen();
+    UpgradeOnDisconnect();
     g_step = Step::Arm;
     g_stepMs = 0;
     g_nextLockReadMs = 0;

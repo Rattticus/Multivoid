@@ -76,6 +76,15 @@ void* SpawnUpgrade(const FVector& at);
 // Game thread.
 bool PressActivate(void* gen, void* player);
 
+// [dev] the grid drill's install as a player makes it: the look that marks an upgrade button as the one under the
+// trace (getActionOptions writes lookAtUpgrade), then playerUsedOn(player, a hit on the button, the button,
+// `upgrade`), whose insert spends the upgrade it is handed. Game thread.
+bool InsertUpgrade(void* gen, void* player, void* upgrade);
+
+// [dev] the upgrades within `radius` of `at`, live and not dying, and the nearest of them (null when none): where
+// the grid drill finds the upgrade handed to its player, and its refund. Game thread.
+int UpgradesNear(const FVector& at, float radius, void** nearest);
+
 // [dev] the grid drill's shortcut through the repair puzzle: the generator's panel reads all three pages solved,
 // as a player's solving leaves them. Game thread.
 bool WritePuzzleSolved(void* gen);

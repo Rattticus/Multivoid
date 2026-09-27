@@ -17,6 +17,7 @@
 #include "ue_wrap/world/world_singleton.h"
 
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <string>
 
@@ -41,6 +42,9 @@ int32_t  g_offTrigger = -1;       // triggerWhenCompleted
 int32_t  g_offUpgradeRoot = -1;   // upgradeRoot
 int32_t  g_offLookButton = -1;    // lookAtButton, the drill's press
 uint8_t  g_maskLookButton = 0;
+int32_t  g_offLookUpgrade = -1;   // lookAtUpgrade, the drill's install
+uint8_t  g_maskLookUpgrade = 0;
+int32_t  g_offUpgradeButtons = -1;  // upgradeButtons, the drill's install
 ue_wrap::CachedObjRef g_upgradeCls;  // prop_transformerUpgrade_C
 int32_t  g_offPanelObj = -1;      // panelObj, the drill's puzzle shortcut
 int32_t  g_offTurnOn = -1;        // turnon, the drill's read of the last cue
@@ -122,6 +126,8 @@ bool EnsureResolved() {
         if (!R::FindDispatchFunctionCached(cls, verb)) return refuse(verb);
     // The drill's reads only: a miss leaves its press, its shortcut or its cue unavailable, not the lane.
     R::FindBoolProperty(cls, L"lookAtButton", g_offLookButton, g_maskLookButton);
+    R::FindBoolProperty(cls, L"lookAtUpgrade", g_offLookUpgrade, g_maskLookUpgrade);
+    g_offUpgradeButtons = R::FindPropertyOffset(cls, L"upgradeButtons");
     g_offPanelObj = R::FindPropertyOffset(cls, L"panelObj");
     g_offTurnOn = R::FindPropertyOffset(cls, L"turnon");
 
@@ -242,6 +248,45 @@ bool PressActivate(void* gen, void* player) {
     ParamFrame f(fn);
     return f.valid() && f.Set<void*>(L"player", player) && hit_result::Write(f, L"hit", gen, button, at) &&
            f.Set<uint8_t>(L"action", 4) && f.Set<void*>(L"lookAtComponent", button) && Call(gen, f);
+}
+
+bool InsertUpgrade(void* gen, void* player, void* upgrade) {
+    void* fn = gen ? R::FindDispatchFunctionCached(R::ClassOf(gen), L"playerUsedOn") : nullptr;
+    if (!fn || !player || !upgrade || g_offLookUpgrade < 0 || g_offUpgradeButtons < 0) return false;
+    const auto* buttons =
+        reinterpret_cast<const field_io::TArrayView*>(reinterpret_cast<const uint8_t*>(gen) + g_offUpgradeButtons);
+    void* button = (buttons->data && buttons->num > 0) ? *reinterpret_cast<void* const*>(buttons->data) : nullptr;
+    if (!button || !R::IsLive(button)) return false;
+    WriteBit(gen, g_offLookUpgrade, g_maskLookUpgrade, true);  // what getActionOptions writes for an upgrade button
+    const FVector at = engine::GetComponentLocation(button);
+    ParamFrame f(fn);
+    return f.valid() && f.Set<void*>(L"player", player) && hit_result::Write(f, L"hit", gen, button, at) &&
+           f.Set<void*>(L"lookAtComponent", button) && f.Set<void*>(L"holdObject", upgrade) && Call(gen, f);
+}
+
+int UpgradesNear(const FVector& at, float radius, void** nearest) {
+    struct Near { FVector at; float radius; int count; float best; void* nearest; } n{at, radius, 0, radius, nullptr};
+    if (nearest) *nearest = nullptr;
+    void* cls = object_index::ClassByName(L"prop_transformerUpgrade_C");
+    if (!cls) return 0;
+    object_index::ForEachInstance(cls, [](void* c, void* obj, int32_t index) {
+        // An index member may still be loading, under construction or dying; the slot's flags say so.
+        if (!obj || (R::SlotFlags(index) & (R::slot_flags::Dying | R::slot_flags::NotYetReadable))) return;
+        if (!R::IsLive(obj) || R::NameStartsWith(R::NameOf(obj), L"Default__")) return;
+        auto* x = static_cast<Near*>(c);
+        FVector p{};
+        if (!engine::TryGetActorLocation(obj, p)) return;
+        const float d = std::sqrt((p.X - x->at.X) * (p.X - x->at.X) + (p.Y - x->at.Y) * (p.Y - x->at.Y) +
+                                  (p.Z - x->at.Z) * (p.Z - x->at.Z));
+        if (d > x->radius) return;
+        ++x->count;
+        if (d <= x->best) {
+            x->best = d;
+            x->nearest = obj;
+        }
+    }, &n);
+    if (nearest) *nearest = n.nearest;
+    return n.count;
 }
 
 bool WritePuzzleSolved(void* gen) {

@@ -8,11 +8,11 @@
 //           second press must reach it, and the client's own input from out of reach must roll back.
 //   puzzlesolve -- the client stands beside the drill's generator (its stored pose); the host breaks it, and the
 //           client enters its panel, solves it input by input and presses Activate, which the host judges and takes.
+//   upgrade, upgradered -- from the same pose, the installs the host hands the client (grid_drill_upgrade.h).
 //   join -- the host breaks the drill's generator as it hosts; the joiner must find the blackout and its puzzle.
 //   lockout, lockjoin -- the desk virus's lockout, from the client's world-ready or during its join, 60 s long.
 //   red, puzzlered -- a client applies the host's canonical and rows raw, or never writes a puzzle: the controls.
-// Each peer says its grid on "[GRID-DRILL]" lines; the client's DONE line, after this copy reads equal to the
-// host's last canonical, rows and puzzles, ends the run (grid_drill_checks.h).
+// Each peer says its grid on "[GRID-DRILL]" lines; the client's DONE line, its copy equal to the host's, ends it.
 
 #pragma once
 
