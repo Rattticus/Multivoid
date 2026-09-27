@@ -94,7 +94,7 @@ void SerSave(std::vector<uint8_t>& b, const SaveRecord& r) {
     // signals: reuse signal_wire::Serialize per row, each length-prefixed.
     AppU32(b, static_cast<uint32_t>(r.signals.size()));
     for (const auto& row : r.signals) {
-        const std::vector<uint8_t> sub = coop::signal_wire::Serialize(row, /*adopt=*/false);
+        const std::vector<uint8_t> sub = coop::signal_wire::Serialize(row);
         AppU32(b, static_cast<uint32_t>(sub.size()));
         b.insert(b.end(), sub.begin(), sub.end());
     }
@@ -121,8 +121,8 @@ bool DeSave(const std::vector<uint8_t>& b, size_t& o, SaveRecord& r) {
         std::vector<uint8_t> sub(b.begin() + static_cast<std::ptrdiff_t>(o),
                                  b.begin() + static_cast<std::ptrdiff_t>(o + subLen));
         o += subLen;
-        ue_wrap::signal_dynamic::Row row; bool adopt = false;
-        if (!coop::signal_wire::Deserialize(sub, row, adopt)) return false;
+        ue_wrap::signal_dynamic::Row row;
+        if (!coop::signal_wire::Deserialize(sub, row)) return false;
         r.signals.push_back(std::move(row));
     }
     return true;

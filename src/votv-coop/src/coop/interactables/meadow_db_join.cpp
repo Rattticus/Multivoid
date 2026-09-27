@@ -145,7 +145,7 @@ void SeedSlot(int peerSlot, size_t forwardUpTo) {
             if (idx < 0) continue;  // raced away; the store moved -- fine
             SD::Row r;
             if (!MS::ReadRow(idx, r)) continue;
-            const std::vector<uint8_t> blob = coop::signal_wire::Serialize(r, false);
+            const std::vector<uint8_t> blob = coop::signal_wire::Serialize(r);
             for (int32_t k = 0; k < d; ++k) {
                 if (coop::blob_chunks::SendBlobToSlot(
                         s, peerSlot, coop::net::ReliableKind::MeadowAppend,

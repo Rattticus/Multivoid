@@ -113,7 +113,7 @@ std::vector<uint8_t> RackCanonicalBlob(uint32_t rackEid, const DC::RackRow rows[
     std::memcpy(out.data(), &h, sizeof(h));
     for (int i = 0; i < DC::kRackSlots; ++i) {
         out.push_back(rows[i].has ? 1 : 0);
-        std::vector<uint8_t> rb = coop::signal_wire::Serialize(rows[i].row, false);
+        std::vector<uint8_t> rb = coop::signal_wire::Serialize(rows[i].row);
         const uint16_t len = static_cast<uint16_t>(rb.size());
         out.push_back(static_cast<uint8_t>(len & 0xFF));
         out.push_back(static_cast<uint8_t>(len >> 8));
@@ -131,8 +131,7 @@ bool ParseRackCanonical(const std::vector<uint8_t>& blob, DC::RackRow out[DC::kR
         off += 3;
         if (off + len > blob.size()) return false;
         std::vector<uint8_t> rb(blob.begin() + off, blob.begin() + off + len);
-        bool adopt = false;
-        if (!coop::signal_wire::Deserialize(rb, out[i].row, adopt)) return false;
+        if (!coop::signal_wire::Deserialize(rb, out[i].row)) return false;
         off += len;
     }
     return true;
@@ -177,7 +176,7 @@ void ClientSendRackOp(uint32_t rackEid, uint8_t op, uint8_t idx, const SD::Row* 
     std::vector<uint8_t> blob(sizeof(h));
     std::memcpy(blob.data(), &h, sizeof(h));
     if (row) {
-        std::vector<uint8_t> rb = coop::signal_wire::Serialize(*row, false);
+        std::vector<uint8_t> rb = coop::signal_wire::Serialize(*row);
         blob.insert(blob.end(), rb.begin(), rb.end());
     }
     coop::blob_chunks::SendBlobToSlot(s, 0, coop::net::ReliableKind::RackState, g_nextSeq++, blob);
@@ -212,7 +211,7 @@ void SweepRacks(bool announce) {
                 for (int i = 0; i < DC::kRackSlots; ++i) {
                     if (prev[i].has && !rows[i].has) {
                         g_takenRing[g_takenNext] = {eid, static_cast<uint8_t>(i),
-                            coop::blob_chunks::Fnv64(coop::signal_wire::Serialize(prev[i].row, false)),
+                            coop::blob_chunks::Fnv64(coop::signal_wire::Serialize(prev[i].row)),
                             Clock::now()};
                         g_takenNext = (g_takenNext + 1) % 8;
                     }
@@ -234,14 +233,14 @@ void SweepRacks(bool announce) {
                 if (was && !rows[i].has) {
                     // Remember the removed row's hash (the deny content match).
                     g_takenRing[g_takenNext] = {eid, static_cast<uint8_t>(i),
-                        coop::blob_chunks::Fnv64(coop::signal_wire::Serialize(prev[i].row, false)),
+                        coop::blob_chunks::Fnv64(coop::signal_wire::Serialize(prev[i].row)),
                         Clock::now()};
                     g_takenNext = (g_takenNext + 1) % 8;
                     ClientSendRackOp(eid, 1, static_cast<uint8_t>(i), nullptr);
                     UE_LOGI("drive_rack: rack eid=%u take idx=%d -> host", eid, i);
                 } else if (rows[i].has && (!was ||
-                           coop::blob_chunks::Fnv64(coop::signal_wire::Serialize(prev[i].row, false)) !=
-                           coop::blob_chunks::Fnv64(coop::signal_wire::Serialize(rows[i].row, false)))) {
+                           coop::blob_chunks::Fnv64(coop::signal_wire::Serialize(prev[i].row)) !=
+                           coop::blob_chunks::Fnv64(coop::signal_wire::Serialize(rows[i].row)))) {
                     ClientSendRackOp(eid, 0, static_cast<uint8_t>(i), &rows[i].row);
                     UE_LOGI("drive_rack: rack eid=%u set idx=%d -> host", eid, i);
                 }
@@ -278,9 +277,8 @@ void HostApplyRackOp(const coop::net::RackStateHead& h, const std::vector<uint8_
 
     if (h.op == 0) {  // set{idx, row}
         SD::Row row;
-        bool adopt = false;
         std::vector<uint8_t> rb(blob.begin() + sizeof(h), blob.end());
-        if (!coop::signal_wire::Deserialize(rb, row, adopt)) return;
+        if (!coop::signal_wire::Deserialize(rb, row)) return;
         if (rows[h.idx].has) {
             // Raced: the slot filled first. Deny + REFUND: the presser's drive
             // actor is already destroyed on its side; the host rematerializes
@@ -332,7 +330,7 @@ void HostApplyRackOp(const coop::net::RackStateHead& h, const std::vector<uint8_
         }
         // Record the removed row's hash BEFORE clearing (the deny correlation).
         g_takenRing[g_takenNext] = {h.rackEid, h.idx,
-            coop::blob_chunks::Fnv64(coop::signal_wire::Serialize(rows[h.idx].row, false)),
+            coop::blob_chunks::Fnv64(coop::signal_wire::Serialize(rows[h.idx].row)),
             Clock::now()};
         g_takenNext = (g_takenNext + 1) % 8;
         DC::RackRow in;  // has=false, empty row
@@ -369,7 +367,7 @@ void ClientApplyRackBlob(const coop::net::RackStateHead& h, const std::vector<ui
                     coop::element::kInvalidId) continue;
                 SD::Row grow;
                 if (!DC::ReadDriveRow(obj, grow)) continue;
-                if (coop::blob_chunks::Fnv64(coop::signal_wire::Serialize(grow, false)) != wantHash)
+                if (coop::blob_chunks::Fnv64(coop::signal_wire::Serialize(grow)) != wantHash)
                     continue;
                 coop::prop_lifecycle::DestroyLocalProp(obj, /*deferred*/true);
                 ++destroyed;

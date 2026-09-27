@@ -95,7 +95,7 @@ struct Seen {
 
 // A row's cross-peer identity, 0 for a row with no data (size 0, the empty drive's and refiner's).
 uint64_t HashOf(const SD::Row& r) {
-    return r.size > 0 ? coop::signal_wire::ContentHash(coop::signal_wire::Serialize(r, false)) : 0;
+    return r.size > 0 ? coop::signal_wire::ContentHash(coop::signal_wire::Serialize(r)) : 0;
 }
 
 // The decode a start or stop acts on: the refiner's row less what a completion rewrites, its level, id and isCopy

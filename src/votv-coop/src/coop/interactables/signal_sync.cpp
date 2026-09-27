@@ -84,12 +84,12 @@ bool CanSend() {
 }
 
 uint64_t HashRow(const SD::Row& r) {
-    const std::vector<uint8_t> blob = coop::signal_wire::Serialize(r, /*adopt=*/false);
+    const std::vector<uint8_t> blob = coop::signal_wire::Serialize(r);
     return coop::signal_wire::ContentHash(blob);
 }
 
 bool SendRowBlob(coop::net::Session* s, const SD::Row& r) {
-    const std::vector<uint8_t> blob = coop::signal_wire::Serialize(r, /*adopt=*/false);
+    const std::vector<uint8_t> blob = coop::signal_wire::Serialize(r);
     const uint32_t seq = g_nextSeq++;
     if (!coop::blob_chunks::SendBlob(s, coop::net::ReliableKind::SavedSignalAppend, seq, blob))
         return false;
@@ -132,16 +132,8 @@ ApplyVerdict ApplyRowBlob(const std::vector<uint8_t>& blob, uint8_t senderSlot) 
         return ApplyVerdict::Terminal;
     }
     SD::Row row;
-    bool adopt = false;
-    if (!coop::signal_wire::Deserialize(blob, row, adopt)) {
+    if (!coop::signal_wire::Deserialize(blob, row)) {
         UE_LOGW("signal_sync: malformed row blob from slot %u -- dropped",
-                static_cast<unsigned>(senderSlot));
-        return ApplyVerdict::Terminal;
-    }
-    if (adopt && senderSlot != 0) {
-        // Adopt is host-only. No signal adopt path exists today, so this is a latent trust gate,
-        // matching comp_sync::ApplyData's.
-        UE_LOGW("signal_sync: adopt from non-host slot %u -- dropped",
                 static_cast<unsigned>(senderSlot));
         return ApplyVerdict::Terminal;
     }
@@ -230,7 +222,7 @@ int SeedSendAppendToSlot(coop::net::Session* s, int peerSlot, uint64_t hash, int
         if (!UE::ReadRow(i, r)) continue;
         if (HashRow(r) != hash) continue;
         if (!UE::ReadRow(i, r, /*withImage=*/true)) continue;  // the photo for the row that is sent, not each scanned
-        const std::vector<uint8_t> blob = coop::signal_wire::Serialize(r, /*adopt=*/false);
+        const std::vector<uint8_t> blob = coop::signal_wire::Serialize(r);
         int sent = 0;
         for (int32_t k = 0; k < count; ++k) {
             if (coop::blob_chunks::SendBlobToSlot(

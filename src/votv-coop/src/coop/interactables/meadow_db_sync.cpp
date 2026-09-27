@@ -341,7 +341,7 @@ void Reconcile(coop::net::Session* s) {
             UE_LOGW("meadow_db: row %zu unreadable after a writer -- its append goes with the next one", i);
             continue;
         }
-        AuthorLine(s, seq[i], /*isDelete=*/false, coop::signal_wire::Serialize(r, /*adopt=*/false));
+        AuthorLine(s, seq[i], /*isDelete=*/false, coop::signal_wire::Serialize(r));
         if (--it->second == 0) want.erase(it);
     }
     // A persistent mismatch after the reconcile is a real bug; every exit is instrumented.
@@ -450,8 +450,7 @@ void RetryPending(coop::net::Session* s) {
 void ApplyAppendBlob(const std::vector<uint8_t>& blob, uint8_t senderSlot) {
     const uint64_t hash = coop::signal_wire::ContentHash(blob);
     SD::Row row;
-    bool adopt = false;
-    if (!coop::signal_wire::Deserialize(blob, row, adopt)) {
+    if (!coop::signal_wire::Deserialize(blob, row)) {
         UE_LOGW("meadow_db: malformed row blob from slot %u -- dropped",
                 static_cast<unsigned>(senderSlot));
         return;

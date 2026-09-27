@@ -64,7 +64,7 @@ void OnCensusPost(const sg::Call& c) {
 
 bool InBand(const SD::Row& r) { return r.locY == kBandY && r.locX >= kBandX && r.locX < kBandX + kBandWidth; }
 
-uint64_t HashOf(const SD::Row& r) { return coop::signal_wire::ContentHash(coop::signal_wire::Serialize(r, false)); }
+uint64_t HashOf(const SD::Row& r) { return coop::signal_wire::ContentHash(coop::signal_wire::Serialize(r)); }
 
 bool DeskBool(R::InstanceOffset& member) {
     void* desk = CD::Instance();

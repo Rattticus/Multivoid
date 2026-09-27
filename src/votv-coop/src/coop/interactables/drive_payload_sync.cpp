@@ -107,7 +107,7 @@ struct ApplyScope {
 
 bool IsHost(coop::net::Session* s) { return s && s->role() == coop::net::Role::Host; }
 
-std::vector<uint8_t> Bytes(const SD::Row& row) { return coop::signal_wire::Serialize(row, /*adopt*/false); }
+std::vector<uint8_t> Bytes(const SD::Row& row) { return coop::signal_wire::Serialize(row); }
 uint64_t Hash(const SD::Row& row) { return coop::blob_chunks::Fnv64(Bytes(row)); }
 
 // The row a drive of this class materialises with on a peer that ran no writer on it; false while unreadable.
@@ -332,9 +332,8 @@ void ApplyBlob(const std::vector<uint8_t>& blob, uint8_t senderSlot, bool fromPa
     }
     g_parked.erase(eid);
     SD::Row row;
-    bool adopt = false;
     const std::vector<uint8_t> rb(blob.begin() + 4, blob.end());
-    if (!coop::signal_wire::Deserialize(rb, row, adopt)) {
+    if (!coop::signal_wire::Deserialize(rb, row)) {
         if (host) SayRefusal(senderSlot, eid, "a malformed row");
         else UE_LOGW("drive_payload_sync: the host's row for eid=%u is malformed -- dropped", eid);
         return;

@@ -72,7 +72,7 @@ bool RackDigest(uint64_t& outDigest, int& outFilled) {
     for (int i = 0; i < DC::kRackSlots; ++i) {
         acc.push_back(rows[i].has ? 1 : 0);
         if (rows[i].has) ++outFilled;
-        std::vector<uint8_t> rb = coop::signal_wire::Serialize(rows[i].row, false);
+        std::vector<uint8_t> rb = coop::signal_wire::Serialize(rows[i].row);
         acc.insert(acc.end(), rb.begin(), rb.end());
     }
     outDigest = coop::blob_chunks::Fnv64(acc);

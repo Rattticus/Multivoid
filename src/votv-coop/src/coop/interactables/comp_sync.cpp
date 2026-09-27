@@ -131,7 +131,7 @@ bool SendData(coop::net::Session* s, int toSlot = -1) {
     if (!base) return false;
     SD::Row row;
     if (!SD::ReadStruct(base, row)) return false;
-    const std::vector<uint8_t> blob = coop::signal_wire::Serialize(row, /*adopt=*/false);
+    const std::vector<uint8_t> blob = coop::signal_wire::Serialize(row);
     return toSlot < 0
                ? coop::blob_chunks::SendBlob(s, coop::net::ReliableKind::CompData, g_nextSeq++, blob)
                : coop::blob_chunks::SendBlobToSlot(s, toSlot, coop::net::ReliableKind::CompData, g_nextSeq++, blob);
@@ -139,8 +139,7 @@ bool SendData(coop::net::Session* s, int toSlot = -1) {
 
 void ApplyData(const std::vector<uint8_t>& blob) {
     SD::Row row;
-    bool adopt = false;
-    if (!coop::signal_wire::Deserialize(blob, row, adopt)) {
+    if (!coop::signal_wire::Deserialize(blob, row)) {
         UE_LOGW("comp_sync: malformed comp_data blob from the host -- dropped");
         return;
     }

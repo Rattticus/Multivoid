@@ -14,7 +14,7 @@ namespace MS = ue_wrap::meadow_store;
 namespace SD = ue_wrap::signal_dynamic;
 
 uint64_t HashRow(const SD::Row& r, std::vector<uint8_t>& scratch) {
-    scratch = coop::signal_wire::Serialize(r, /*adopt=*/false);
+    scratch = coop::signal_wire::Serialize(r);
     return coop::signal_wire::ContentHash(scratch);
 }
 

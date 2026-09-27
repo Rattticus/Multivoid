@@ -13,7 +13,6 @@ namespace coop::signal_wire {
 namespace {
 
 constexpr size_t kHeadSize = 12 + 8 + 20 + 8;  // flags/lens/pad + ints + floats + date
-constexpr uint8_t kFlagAdopt = 0x04;
 constexpr uint8_t kFlagImage = 0x08;
 
 // Where the strings end: the photo-free part a row's identity covers.
@@ -77,7 +76,7 @@ bool ReadPod(const std::vector<uint8_t>& b, size_t& off, T& v) {
 
 }  // namespace
 
-std::vector<uint8_t> Serialize(const ue_wrap::signal_dynamic::Row& r, bool adopt) {
+std::vector<uint8_t> Serialize(const ue_wrap::signal_dynamic::Row& r) {
     const size_t nc = r.name.size() > kNameCap ? kNameCap : r.name.size();
     const size_t ic = r.id.size() > kIdCap ? kIdCap : r.id.size();
     const size_t oc = r.object.size() > kObjectCap ? kObjectCap : r.object.size();
@@ -104,7 +103,6 @@ std::vector<uint8_t> Serialize(const ue_wrap::signal_dynamic::Row& r, bool adopt
     uint8_t flags = 0;
     if (r.hasData) flags |= 0x01;
     if (r.isCopy) flags |= 0x02;
-    if (adopt) flags |= kFlagAdopt;
     if (image) flags |= kFlagImage;
     b.push_back(flags);
     b.push_back(r.frequency);
@@ -134,13 +132,11 @@ std::vector<uint8_t> Serialize(const ue_wrap::signal_dynamic::Row& r, bool adopt
     return b;
 }
 
-bool Deserialize(const std::vector<uint8_t>& b, ue_wrap::signal_dynamic::Row& out,
-                 bool& outAdopt) {
+bool Deserialize(const std::vector<uint8_t>& b, ue_wrap::signal_dynamic::Row& out) {
     if (b.size() < kHeadSize || b[0] != 1) return false;
     const uint8_t flags = b[1];
     out.hasData = (flags & 0x01) != 0;
     out.isCopy  = (flags & 0x02) != 0;
-    outAdopt    = (flags & kFlagAdopt) != 0;
     out.frequency  = b[2];
     out.quality    = b[3];
     out.objectType = b[4];
@@ -174,10 +170,9 @@ bool Deserialize(const std::vector<uint8_t>& b, ue_wrap::signal_dynamic::Row& ou
 
 uint64_t ContentHash(const std::vector<uint8_t>& blob) {
     if (blob.size() < 2) return 0;
-    // The strings' end, the adopt and image bits zeroed: a connect snapshot and a live append of
-    // the same row hash identically, and so do a row with its photo and without it.
+    // The strings' end, the image bit zeroed: a row with its photo and without it hash identically.
     std::vector<uint8_t> copy(blob.begin(), blob.begin() + static_cast<ptrdiff_t>(PrefixSize(blob)));
-    copy[1] = static_cast<uint8_t>(copy[1] & ~(kFlagAdopt | kFlagImage));
+    copy[1] = static_cast<uint8_t>(copy[1] & ~kFlagImage);
     return coop::blob_chunks::Fnv64(copy);
 }
 
