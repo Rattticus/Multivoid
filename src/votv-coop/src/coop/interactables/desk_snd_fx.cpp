@@ -68,7 +68,7 @@ bool g_selfTestDone = false;
 Clock::time_point g_selfTestDue{};
 
 bool IsLoopComp(uint8_t comp) { return comp >= coop::net::kDeskSndFirstLoop &&
-                                       comp < static_cast<uint8_t>(DeskSndComp::Count); }
+                                       comp < coop::net::kDeskSndFirstLoop + coop::net::kDeskSndLoops; }
 
 void RingPush(uint8_t op, uint8_t comp, const char* cue) {
     if (g_ringN >= kRingCap) {
@@ -113,7 +113,7 @@ void OnAudioPlay(void* context, void* /*sourceObject*/, void* /*result*/) {
 void OnCompSetActiveLike(void* context) {
     if (g_wireApplyDepth > 0 || !g_armed.load(std::memory_order_relaxed)) return;
     const int idx = DA::IndexOfComp(context);
-    if (idx < coop::net::kDeskSndFirstLoop) return;  // loops only (one-shots ride Play)
+    if (!IsLoopComp(static_cast<uint8_t>(idx < 0 ? 0 : idx))) return;  // loops only (one-shots ride Play)
     g_deskHits.fetch_add(1, std::memory_order_relaxed);
     bool active = false;
     if (!DA::ReadLoopActive(idx, active)) return;  // post-state = the truth (bReset unreadable POST)
@@ -128,6 +128,13 @@ void OnCompSetActive(void* context, void* /*sourceObject*/, void* /*result*/) {
 
 void OnCompActivate(void* context, void* /*sourceObject*/, void* /*result*/) {
     g_firesActivate.fetch_add(1, std::memory_order_relaxed);
+    // The refiner's deny is a one-shot its Activate fires; every other Activate here is a loop's.
+    if (g_wireApplyDepth == 0 && g_armed.load(std::memory_order_relaxed) &&
+        DA::IndexOfComp(context) == static_cast<int>(DeskSndComp::Deny)) {
+        g_deskHits.fetch_add(1, std::memory_order_relaxed);
+        RingPush(static_cast<uint8_t>(DeskSndOp::Pulse), static_cast<uint8_t>(DeskSndComp::Deny), nullptr);
+        return;
+    }
     OnCompSetActiveLike(context);
 }
 
@@ -157,6 +164,8 @@ bool ApplyFx(uint8_t op, uint8_t comp, const char* cue) {
     switch (static_cast<DeskSndOp>(op)) {
     case DeskSndOp::Play:
         return DA::ReplayPlay(comp, cue);
+    case DeskSndOp::Pulse:
+        return DA::ReplayActivate(comp);
     case DeskSndOp::LoopOn:
     case DeskSndOp::LoopOff: {
         const bool on = (static_cast<DeskSndOp>(op) == DeskSndOp::LoopOn);
@@ -264,7 +273,12 @@ void OnDeskSndFx(const DeskSndFxPayload& p, uint8_t senderSlot) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s) return;
     if (p.comp >= static_cast<uint8_t>(DeskSndComp::Count)) return;
-    if (p.op > static_cast<uint8_t>(DeskSndOp::LoopOff)) return;
+    if (p.op > static_cast<uint8_t>(DeskSndOp::Pulse)) return;
+    // A loop takes its on and off, the deny its pulse, every other one-shot its play.
+    const bool loopOp = p.op == static_cast<uint8_t>(DeskSndOp::LoopOn) ||
+                        p.op == static_cast<uint8_t>(DeskSndOp::LoopOff);
+    const bool pulseOp = p.op == static_cast<uint8_t>(DeskSndOp::Pulse);
+    if (loopOp != IsLoopComp(p.comp) || pulseOp != (p.comp == static_cast<uint8_t>(DeskSndComp::Deny))) return;
     if (p.cueLen >= sizeof(p.cue)) return;
     char cue[coop::net::kDeskSndCueCap];
     std::memcpy(cue, p.cue, p.cueLen);

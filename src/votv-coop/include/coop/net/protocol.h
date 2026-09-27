@@ -2930,14 +2930,18 @@ enum class DeskSndComp : uint8_t {
     PingSound   = 3,  // audio_coord_pingSound  -- one-shot channel (playPingSound: SetSound+Play)
     CorrdsLoop  = 4,  // corrds_loop            -- LOOP: cursor movement (spaceRenderer edge-guard)
     PingLoop    = 5,  // audio_coord_pingLoop   -- LOOP: the ping FSM loop
-    Count       = 6,
+    Deny        = 6,  // deny                   -- one-shot its Activate fires: the refiner refusing a start,
+                      //                           a stop or an upload
+    Count       = 7,
 };
-inline constexpr int kDeskSndFirstLoop = 4;  // comps >= this are loops (state, join-re-asserted)
+inline constexpr int kDeskSndFirstLoop = 4;  // comps 4 and 5 are the loops (state, join-re-asserted)
+inline constexpr int kDeskSndLoops = 2;
 
 enum class DeskSndOp : uint8_t {
     Play    = 0,  // one-shot: mirror replays SetSound(cue)+Play(0) on the comp
     LoopOn  = 1,  // mirror replays SetActive(true, true)  (all native ON sites reset)
     LoopOff = 2,  // mirror replays SetActive(false, false) (bReset ignored on deactivate)
+    Pulse   = 3,  // one-shot: mirror replays Activate(true), the component's own sound
 };
 
 inline constexpr int kDeskSndCueCap = 40;  // longest measured cue name = 35 chars

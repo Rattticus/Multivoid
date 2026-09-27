@@ -1,18 +1,16 @@
-// ue_wrap/desk/desk_audio.h -- standalone engine access for the desk's unit-1 AUDIO components.
-// Principle-7 engine-wrapper layer: no network logic; coop::desk_snd_fx drives the forward and the
-// replay through here.
+// ue_wrap/desk/desk_audio.h -- engine access for the desk's unit-1 AUDIO components and the refiner's deny.
+// Principle-7 engine-wrapper layer: no network logic; coop::desk_snd_fx drives the forward and the replay through here.
 //
-// The desk plays every unit-1 click, beep and loop through SIX audio components on
-// AanalogDScreenTest_C: audio_coordKeyPress and audio_coordFail (one-shots with preset cues),
-// audio_coordButtonSound and audio_coord_pingSound (SetSound+Play channels behind the
-// playButtonSound / playPingSound helpers), and corrds_loop and audio_coord_pingLoop (loops driven
-// by SetActive / Activate). Every call site dispatches EX_VirtualFunction on a NATIVE target, so
-// the dispatch funnels through UFunction->Func and is catchable by the Func-patch
-// (docs/coop-dispatch-visibility.md; the K2_DestroyActor precedent), NEVER by the ProcessEvent
-// detour.
+// The desk plays every unit-1 click, beep and loop through SIX audio components on AanalogDScreenTest_C:
+// audio_coordKeyPress and audio_coordFail (one-shots with preset cues), audio_coordButtonSound and
+// audio_coord_pingSound (SetSound+Play channels behind the playButtonSound / playPingSound helpers), and corrds_loop
+// and audio_coord_pingLoop (loops driven by SetActive / Activate); a seventh, deny, is the refiner's refusal, a
+// one-shot its Activate fires (analogDScreenTest.cpp :9766, :9836, :9897). Every call site dispatches
+// EX_VirtualFunction on a NATIVE target, so the dispatch funnels through UFunction->Func and is catchable by the
+// Func-patch (docs/coop-dispatch-visibility.md; the K2_DestroyActor precedent), NEVER by the ProcessEvent detour.
 //
-// The component INDEX (0..5) is a wire contract (protocol.h DeskSndComp); kCompNames in the .cpp is
-// frozen in that order on both peers.
+// The component INDEX (0..6) is a wire contract (protocol.h DeskSndComp); kCompNames in the .cpp is frozen in that
+// order on both peers.
 
 #pragma once
 
@@ -20,8 +18,8 @@
 
 namespace ue_wrap::desk_audio {
 
-inline constexpr int kCompCount = 6;
-inline constexpr int kFirstLoop = 4;  // indices 4/5 are the two loops
+inline constexpr int kCompCount = 7;
+inline constexpr int kFirstLoop = 4;  // indices 4/5 are the two loops; 6 is the refiner's deny
 
 // Resolve the 6 component ObjectProperty offsets on the desk class, the
 // AudioComponent Sound property, ActorComponent bIsActive, and the replay /
@@ -72,6 +70,8 @@ bool ReadLoopActive(int compIdx, bool& outActive);
 // measured native ON sites use reset semantics), OFF -> SetActive(false,false).
 bool ReplayPlay(int compIdx, const char* cueName);
 bool ReplaySetActive(int compIdx, bool on);
+// A one-shot fired as the native site fires it: Activate(bReset=true), the component's own sound.
+bool ReplayActivate(int compIdx);
 
 // Session-end / level-change cleanup of the instance-pointer cache (class
 // offsets and UFunctions persist -- they are engine/class-level).

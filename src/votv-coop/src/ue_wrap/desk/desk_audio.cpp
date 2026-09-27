@@ -27,6 +27,7 @@ const wchar_t* const kCompNames[kCompCount] = {
     L"audio_coord_pingSound",   // 3
     L"corrds_loop",             // 4 (loop)
     L"audio_coord_pingLoop",    // 5 (loop)
+    L"deny",                    // 6 (the refiner's refusal, fired by Activate)
 };
 
 // ---- class-level resolves (persist across level reloads) ----
@@ -139,9 +140,9 @@ bool EnsureResolved() {
             return false;
         }
         g_offsetsResolved = true;
-        UE_LOGI("desk_audio: class-level resolve complete (6 comp offsets + signalSound@0x%X + "
+        UE_LOGI("desk_audio: class-level resolve complete (%d comp offsets + signalSound@0x%X + "
                 "Sound@0x%X + bIsActive@0x%X/%02X + 5 UFunctions)",
-                g_sigOff, g_soundOff, g_activeByteOff, g_activeMask);
+                kCompCount, g_sigOff, g_soundOff, g_activeByteOff, g_activeMask);
     }
 
     RefreshInstanceCache();
@@ -263,6 +264,15 @@ bool ReplaySetActive(int compIdx, bool on) {
     // static and costs no wire bit.
     f.Set<bool>(L"bNewActive", on);
     f.Set<bool>(L"bReset", on);
+    return ue_wrap::Call(g_comps[compIdx], f);
+}
+
+bool ReplayActivate(int compIdx) {
+    if (compIdx < 0 || compIdx >= kCompCount || !g_compsValid || !g_activateFn) return false;
+    if (!R::IsLiveByIndex(g_desk, g_deskIdx)) { g_compsValid = false; return false; }
+    ue_wrap::ParamFrame f(g_activateFn);
+    if (!f.valid()) return false;
+    f.Set<bool>(L"bReset", true);
     return ue_wrap::Call(g_comps[compIdx], f);
 }
 
