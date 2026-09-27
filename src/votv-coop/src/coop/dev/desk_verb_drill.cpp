@@ -596,14 +596,18 @@ void ClientTick(void* player) {
     }
 }
 
-// A ready world gives this client its desk, its saved signals and its player. A world that never does ends the
-// drill on the start's bound; a moment without them only pauses it.
-void ClientUnresolved() {
-    if (!coop::net_pump::HasAnnouncedWorldReady()) return;
+// A ready world gives a peer its desk, its saved signals and its player. A world that never does ends the drill on
+// the start's bound, counted from the client's readiness on either peer; a moment without them only pauses it.
+void Unresolved(coop::net::Session* s, bool host) {
+    if (host ? !s->AnyWorldReadyPeer() : !coop::net_pump::HasAnnouncedWorldReady()) return;
     const uint64_t now = ::GetTickCount64();
-    if (!g_unresolvedSinceMs) g_unresolvedSinceMs = now;
-    else if (now - g_unresolvedSinceMs > kStartBoundMs)
-        Abandon("the desk, the saved signals or this client's player did not resolve");
+    if (!g_unresolvedSinceMs) {
+        g_unresolvedSinceMs = now;
+        return;
+    }
+    if (now - g_unresolvedSinceMs <= kStartBoundMs) return;
+    if (host) HostAbandon("the desk, the saved signals or the host's player did not resolve");
+    else Abandon("the desk, the saved signals or this client's player did not resolve");
 }
 
 }  // namespace
@@ -614,7 +618,7 @@ void Tick(coop::net::Session* session) {
     if (host ? g_host == HStep::Done : g_client == CStep::Done) return;
     void* player = coop::players::Registry::Get().Local();
     if (!SS::EnsureResolved() || !CD::Instance() || !player) {
-        if (!host) ClientUnresolved();
+        Unresolved(session, host);
         return;
     }
     g_unresolvedSinceMs = 0;
