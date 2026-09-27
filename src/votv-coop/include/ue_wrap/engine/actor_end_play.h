@@ -45,9 +45,10 @@ bool HasBegunPlay(const void* actor);
 // not found exactly once or the detour does not install.
 bool Patch();
 
-// Arm the patched function once Actor's vtable, read from its class default object, names it.
-// Idempotent; false (logged) when nothing was patched, Default__Actor is not found, or the vtable names
-// another function. Boot, after the health checks.
+// Arm the patched function once Actor's vtable, read from its class default object, names it. The engine
+// builds that object while it initializes, which the boot thread can reach first, so Install waits for it.
+// Idempotent; false (logged) when nothing was patched, Default__Actor never appears, or the vtable names
+// another function. The boot thread, after the health checks: it may wait.
 bool Install();
 bool IsInstalled();
 

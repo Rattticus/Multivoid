@@ -134,20 +134,34 @@ bool Install() {
     }
     // Where the engine finds it: RouteEndPlay calls EndPlay through the vtable, and Actor's own, read
     // from its class default object, names the function every actor reaches through Super. It must be
-    // the patched one.
-    void* const cdo = ue_wrap::reflection::FindClassDefaultObject(L"Actor");
-    if (!cdo) {
-        UE_LOGE("actor_end_play: Default__Actor is not in the object array -- NOT armed, no actor's end of play is "
-                "seen");
-        return false;
-    }
+    // the patched one. The engine builds that object while it initializes, and the boot thread can get
+    // here first: arming then found none and left EndPlay unseen for the whole process. So the arm waits
+    // until the object is in the array and its constructor has set Actor's vtable, polling; the bound is
+    // only for a build that never gets there.
+    constexpr int kCdoWaitMs = 30000;
+    constexpr int kCdoPollMs = 50;  // a poll walks the whole object array by name
     uintptr_t image = 0;
     size_t imageSize = 0;
     ue_wrap::MainModuleRange(image, imageSize);
     const auto inImage = [&](uintptr_t p) { return p >= image && p < image + imageSize; };
-    const auto* const vtbl = *static_cast<const uintptr_t* const*>(cdo);
-    const uintptr_t addr = inImage(reinterpret_cast<uintptr_t>(vtbl))
-                               ? vtbl[prof::kActor_EndPlay_VtblOff / sizeof(uintptr_t)] : 0;
+    void* cdo = nullptr;
+    uintptr_t addr = 0;
+    int waitedMs = 0;
+    for (;;) {
+        cdo = ue_wrap::reflection::FindClassDefaultObject(L"Actor");
+        const auto* const vtbl = cdo ? *static_cast<const uintptr_t* const*>(cdo) : nullptr;
+        addr = inImage(reinterpret_cast<uintptr_t>(vtbl)) ? vtbl[prof::kActor_EndPlay_VtblOff / sizeof(uintptr_t)]
+                                                          : 0;
+        if (addr == g_target || waitedMs >= kCdoWaitMs) break;
+        ::Sleep(kCdoPollMs);
+        waitedMs += kCdoPollMs;
+    }
+    if (!cdo) {
+        UE_LOGE("actor_end_play: Default__Actor did not appear in the object array in %d ms -- NOT armed, no "
+                "actor's end of play is seen", waitedMs);
+        return false;
+    }
+    if (waitedMs > 0) UE_LOGI("actor_end_play: Actor's class default object was ready after %d ms", waitedMs);
     if (addr != g_target) {
         UE_LOGE("actor_end_play: Actor's vtable at +0x%zX names %p, not the patched %p (sdk_profile.h "
                 "kActor_EndPlay_VtblOff) -- NOT armed, no actor's end of play is seen",
