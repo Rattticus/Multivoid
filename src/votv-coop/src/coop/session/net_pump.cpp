@@ -294,10 +294,13 @@ void Tick(coop::net::Session& session) {
         explicit TickSessionScope(coop::net::Session& s) { g_tickSession = &s; }
         ~TickSessionScope() { g_tickSession = nullptr; }
     } _tickSessionScope{session};
-    // The session's hold on the script gate, from its first tick (coop/session/subsystems.h). Here,
-    // since both loops that drive a session tick come through: the play loop, and a menu-mode join's
-    // transfer wait, which blocks the play loop until the world load.
-    if (session.running()) coop::subsystems::HoldSessionGate();
+    // The session's hold on the script gate, and the lanes that watch inside a world load, from its first
+    // tick (coop/session/subsystems.h). Here, since both loops that drive a session tick come through: the
+    // play loop, and a menu-mode join's transfer wait, which blocks the play loop until the world load.
+    if (session.running()) {
+        coop::subsystems::HoldSessionGate();
+        coop::subsystems::InstallLoadWatchers(session);
+    }
 
     // ---- Hitch and source probe (diagnostic, always on, near free) ----
     // [HITCH] times the gap between consecutive game-thread Ticks (the whole frame); [HITCH-SRC],

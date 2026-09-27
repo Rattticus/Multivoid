@@ -116,9 +116,16 @@ second under the append-at-tail invariant, and mirrored as appends and content-k
 (`coop/interactables/signal_sync`, `coop/interactables/signal_wire`). Playback is a
 presser-authored edge at the audio seam: the only activate site in the desk is the play verb and
 the only deactivate is stop, so an organic activate is "someone started playback" and any peer may
-stop (`coop/interactables/deck_play_sync`). The refiner has exactly one simulator, the peer whose
-decode latched natively, which streams its state while decoding; every other peer is a passive
-mirror that paints what nothing native repaints (`coop/interactables/comp_sync`).
+stop (`coop/interactables/deck_play_sync`). A client's press on the desk's save family -- SAVE and
+DELETE, the deck's drive button and send, the refiner's upload, start and stop -- is refused on its
+machine and sent to the host, which replays it with the presser's puppet when what the button acts
+on matches its own desk; the glossary entry, profile stat and sounds it makes go back to the presser
+(`coop/interactables/desk_verb_intent`, `coop/interactables/desk_verb_effects`). The refiner has one
+simulator, the host's machine: a client's own `comp_start`, its join's restore of a saved decode
+included, is refused, and a decode a client's start began is that client's, its completion gloss and
+processed signal sent to it. The host streams the refiner's state while decoding, on its edges and on
+each completion; a client is a passive mirror that paints what nothing native repaints
+(`coop/interactables/comp_sync`).
 
 ### Drives, racks, modules, tapes, the laptop, the database
 
@@ -193,7 +200,8 @@ not built. The ATV's physical modules are on [vehicles.md](vehicles.md).
 | the sky-signal set, the catch, the dishes | the host | roller, the host's event, parked client sim |
 | the deck list, the database | every peer's shadow | content-hashed appends and deletes; the host's order |
 | playback | the presser; anyone may stop | edge events |
-| the refiner | the one machine whose decode latched | a state stream |
+| the desk's save family: save, delete, the deck's drive and send, the refiner's upload, start and stop | the host | a client's press as an intent the host replays; its gloss, stat and sounds back to the presser |
+| the refiner | the host; a completion's gloss and processed signal, the one whose start began it | the host's state stream |
 | drives, racks, modules, the crate, the file buffer | the host, canonical | any peer's operations, the host's array back |
 | a drive's recorded row | the host | sent at the drive's own `upd`; a client's new drive's first row, from the client that brought it |
 | the eraser's delete | the host | a client's press as an intent; the host's press and wipe shown on every client's eraser |
@@ -215,7 +223,8 @@ not built. The ATV's physical modules are on [vehicles.md](vehicles.md).
 | `DishArm`, `DishSnapshot`, `DishCalib`, `DishPose` (stream) | the host; the host to a joiner; the host, to all, to an intent's author and to a joiner; the host | the download's arm and reset, with the host's decoded and polarity; every dish's pose for a joiner; the changed dishes' precision, the live dishes an intent named (to all once the host performed any of it, to its author alone when it performed none), and every dish's for a joiner; dish poses |
 | `DishCalibIntent` | a client to the host | the dishes whose precision the client's player just set with the toolgun's calibration tool or the uncalibrator |
 | `SavedSignalAppend`, `SavedSignalDelete`, `MeadowAppend`, `MeadowDelete`, `MeadowOrder` | any peer, relayed; order from the host | list rows by content hash; the database's order |
-| `PlayDeckEvent`, `CompState`, `CompData` | the presser; the simulator | playback edges; the refiner's state and its loaded signal |
+| `DeskVerb` | a client to the host; the host to that client | a desk press with what its button acts on as the client saw it; the verdict, the gloss and sounds the press makes, and the gloss and profile stat of a decode its start began |
+| `PlayDeckEvent`, `CompState`, `CompData` | the presser; the host | playback edges; the refiner's state, its completions and its loaded signal |
 | `DriveSlotState` | any peer to the host; the host to every other client, a line it accepted; the host to the source, answering a line it refused | a slot's occupant, inserted or ejected |
 | `RackState`, `PhysModsState`, `FloppyBoxState` | any peer to the host; the host canonical | rack operations and arrays; the module set; the crate stack |
 | `DrivePayload` | the host to all and to a joiner; a client to the host; the host to that client | a drive's row; a client's own new drive's row; the host's own row, answering a client row it refused |
@@ -234,8 +243,10 @@ goes ahead of them all, the game's own order of a reset, a catch and an arm; the
 database and the emails are seeded as deltas against the blob instant; every drive slot, every drive
 row that differs from its class default (a row that arrives before its drive waits for it through
 the join), the rack, the module set, the reel slots, the laptop's power, its slot (before its file buffer) and the crate
-arrive as canonical rows from the host; the desk's two loops are re-sent from component truth. A
-joiner never sees a running ping's stage visuals, only its outcome. A SAT console typist that leaves
+arrive as canonical rows from the host, and so do the refiner's state and loaded signal, while the
+joiner's own restore of a saved decode is refused; the desk's two loops are re-sent from component
+truth.
+A joiner never sees a running ping's stage visuals, only its outcome. A SAT console typist that leaves
 mid-command while another client keeps the session leaves the command running on the host and, back,
 is bound to its terminal and its busy state as its world is ready; the last client's leave ends the
 session, and every such terminal is discarded with it, its command stopping there. An eraser press's
@@ -251,7 +262,7 @@ arrive with the save and never again.
 | A signal whose download's `begin` spawns a world prop (lifecrystal's crystal at the ROZ ship) spawns it on each peer, and a client's own is a world birth it does not author: the host's arriving birth adopts it when the arm's row came first, and it stays beside the host's when the birth overtakes the arm on its own lane | `[RD]` `objectRenderer.begin`'s fourth step; the arriving birth's same-class match within 30 cm (`coop/props/remote_prop_spawn`) |
 | The signal camera's trigger runs on each peer, as its arm's `begin` does; the main map's one, the locker looker, watches that peer's own camera and ends that player's game as in single player | `[RD]` `mainGamemode.deleteActiveSignal`, `objectRenderer.begin`, `trigger_lockerLooker`; by design until decided |
 | The desk cursor has degraded to a few frames per second mid-session; two mechanisms were removed, and a warning names an occupancy flap if it recurs | `[?]` `coop/interactables/desk_cursor_sync`; not reproduced since |
-| A refiner completion fires world triggers on the one simulating machine only; other peers mirror the state | `[V]` `coop/interactables/comp_sync`, by design of the single simulator |
+| A level-3 refiner completion's world trigger (the evil's spawn, the rozship's, the deer's) runs on the host alone; a client sees what that object's own lane carries | `[V]` `coop/interactables/comp_sync`: the host is the one simulator; `[?]` each object's lane |
 | The red phone's ring is per-peer randomness with no lane | `[V]` no lane exists |
 | A client's own write to a drive whose row is still its class default is neither put back nor sent; no client-side writer of such a drive exists in the game (every writer is a verb the host runs, or a drive the client brings in) | `[RD]` the writer census of `prop_drive_C.data_0`; `coop/interactables/drive_payload_sync` |
 | A SAT console command that spawns or destroys a class no lane carries (the rufus, the thiccfus, the llama's soul, the madness, the centipede, the murder kerfur) acts in the host's world only; its typist does not see it | `[V]` no lane exists for those classes |

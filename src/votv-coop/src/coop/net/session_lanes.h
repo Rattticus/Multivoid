@@ -209,21 +209,19 @@ inline Lane LaneForKind(ReliableKind k) {
     case ReliableKind::ClientWorldReady:  return Lane::Normal;
     case ReliableKind::DishCalib:         return Lane::Normal;
     case ReliableKind::DishCalibIntent:   return Lane::Normal;
-    // A desk press names what it acts on by content, and its answers go to the presser alone: ordered
-    // against nothing. The default, by decision.
+    // A desk press names what it acts on by content; its answers go to the presser alone. The default, by decision.
     case ReliableKind::DeskVerb:          return Lane::Normal;
     case ReliableKind::DeskPingVerdict:   return Lane::Normal;
     default:                           return Lane::Normal;
     }
 }
 
-// The host relay: the reliable kinds the host forwards from one client to the others,
-// peer-originated gameplay only. A client's equipment toggle must show on its puppet
-// everywhere; a client's drop, destroy or throw must replicate; a symmetric interactable's edge
-// must reach the other clients. Not relayed: the host-authoritative kinds (weather, entity
-// spawns and destroys, the dev keys, damage) originate on the host and go direct, and the
-// router trust-gates them on the host slot; the handshake kinds are point-to-point or
-// host-originated. PropPose rides the unreliable relay.
+// The host relay: the reliable kinds the host forwards from one client to the others, peer-originated
+// gameplay only. A client's equipment toggle must show on its puppet everywhere; a client's drop, destroy
+// or throw must replicate; a symmetric interactable's edge must reach the other clients. Not relayed: the
+// host-authoritative kinds (weather, entity spawns and destroys, the dev keys, damage, the refiner's decode)
+// originate on the host and go direct, and the router trust-gates them on the host slot; the handshake kinds
+// are point-to-point or host-originated. PropPose rides the unreliable relay.
 inline bool IsClientRelayableReliableKind(ReliableKind k) {
     switch (k) {
     case ReliableKind::ItemActivate:
@@ -277,8 +275,6 @@ inline bool IsClientRelayableReliableKind(ReliableKind k) {
     case ReliableKind::EmailDelete:       // player-symmetric
     case ReliableKind::SavedSignalAppend: // producer-symmetric
     case ReliableKind::SavedSignalDelete: // player-symmetric
-    case ReliableKind::CompState:         // simulator-authoritative
-    case ReliableKind::CompData:          // from the claim owner or the simulator
     case ReliableKind::VoiceState:        // player-symmetric
     case ReliableKind::DeskLogLine:       // producer-symmetric
     case ReliableKind::ReelSlot:          // presser-authored

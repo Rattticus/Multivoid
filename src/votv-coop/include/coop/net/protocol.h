@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 207;
+inline constexpr uint16_t kProtocolVersion = 208;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -363,12 +363,13 @@ enum class ReliableKind : uint8_t {
     // Any peer, relayed: a saved signal deleted by content hash. ContentHashPayload.
     SavedSignalDelete = 59,
 
-    // From the peer whose refiner decode is running, about once a second, and from the host as a
-    // connect snapshot: the decode pane's scalars. Mirrors render and never latch the decode
-    // themselves. CompStatePayload.
+    // From the host, whose machine alone runs the refiner's decode: the decode pane's scalars about once
+    // a second while it decodes, on its edges and on a completion, and as a joiner's seed. Clients render
+    // and never latch the decode themselves. CompStatePayload.
     CompState = 60,
 
-    // The refiner's loaded signal as a chunked blob, on change edges and at connect. BlobChunkPayload.
+    // From the host: the refiner's loaded signal as a chunked blob, on change edges and as a joiner's
+    // seed. BlobChunkPayload.
     CompData = 61,
 
     // Any peer, relayed: mic muted and voice disabled, display only. VoiceStatePayload.
@@ -894,12 +895,13 @@ enum class ReliableKind : uint8_t {
     PowerGridState = 159,
 
     // A press on the main desk's save family: SAVE and DELETE, the deck's drive button and send, the
-    // refiner's upload. Client to host: a press the client's gate refused, with what the button acts on as
-    // the client saw it; the host finds each on its own desk, within the sender's reach, and replays the
-    // press with the sender's puppet as the player, its writes reaching every peer on their own lanes.
-    // Host to that client alone: the verdict, and while the host runs the press, the glossary entry and
-    // the sounds it makes for the presser's machine to make. Never relayed; a sender's presses run at a
-    // bounded rate from a bounded queue. Late join: nothing to replay. DeskVerbPayload.
+    // refiner's upload, start and stop. Client to host: a press the client's gate refused, with what the
+    // button acts on as the client saw it; the host finds each on its own desk, within the sender's reach,
+    // and replays the press with the sender's puppet as the player, its writes reaching every peer on their
+    // own lanes. Host to that client alone: the verdict; the glossary entry and the sounds the press makes,
+    // for the presser's machine to make; the glossary entry and the profile stat of a decode its start began.
+    // Never relayed; a sender's presses run at a bounded rate from a bounded queue. Late join: nothing to
+    // replay. DeskVerbPayload.
     DeskVerb = 160,
 
     // Client to host: my player pressed the drive eraser's delete button with this drive seated; the host
@@ -1351,7 +1353,9 @@ inline constexpr uint8_t kOpPress = 0;    // client to host: a press
 inline constexpr uint8_t kOpVerdict = 1;  // host to the presser: what became of it
 inline constexpr uint8_t kOpGloss = 2;    // host to the presser: lib_C::addGloss(text, level) for its own profile
 inline constexpr uint8_t kOpSound = 3;    // host to the presser: PlaySound2D of the sound SoundName names
-inline constexpr uint8_t kSave = 0, kDelete = 1, kDeckDrive = 2, kDeckSend = 3, kUpload = 4, kButtons = 5;
+inline constexpr uint8_t kOpStat = 4;     // host to the presser: add `level` to its own profile's stat named `text`
+inline constexpr uint8_t kSave = 0, kDelete = 1, kDeckDrive = 2, kDeckSend = 3, kUpload = 4;
+inline constexpr uint8_t kCompStart = 5, kCompStop = 6, kButtons = 7;  // the refiner's start and stop
 inline constexpr uint8_t kRan = 0;          // the host ran the press
 inline constexpr uint8_t kFar = 1;          // the presser's puppet is out of the desk's reach
 inline constexpr uint8_t kMissed = 2;       // what the button acts on differs on the host's desk
@@ -1364,15 +1368,16 @@ inline constexpr size_t  kTextCap = 120;
 // saw it, and each answer echoes the press's seq.
 struct DeskVerbPayload {
     uint8_t  op;             // desk_verb::kOp*
-    uint8_t  button;         // desk_verb::kSave..kUpload
+    uint8_t  button;         // desk_verb::kSave..kCompStop
     uint8_t  verdict;        // op 1: desk_verb::kRan..kUnavailable
-    uint8_t  textLen;        // ops 2-3: chars in text
-    uint32_t seq;            // op 0: the presser's press count; echoed by ops 1-3
-    uint32_t driveEid;       // op 0, deck drive and upload: the slot's drive, 0 for none
-    int32_t  level;          // op 2: addGloss's level
+    uint8_t  textLen;        // ops 2-4: chars in text
+    uint32_t seq;            // op 0: the presser's press count; echoed by ops 1-4
+    uint32_t driveEid;       // op 0, deck drive, upload and refiner start: the slot's drive, 0 for none
+    int32_t  level;          // op 2: addGloss's level; op 4: the stat's delta
     uint64_t driveRow;       // op 0, deck drive and upload: the drive's row hash
     uint64_t selectedRow;    // op 0, deck drive and send: the deck's selected row hash
-    uint64_t compRow;        // op 0, upload: the refiner's row hash
+    uint64_t compRow;        // op 0, upload: the refiner's row hash; start and stop: its decode's (the row less its
+                             //   level, id and isCopy, which a completion rewrites)
     float    signal[4];      // op 0, save and delete: the caught signal's x, y, z and frequency
     float    volume;         // op 3
     float    pitch;          // op 3
@@ -1380,7 +1385,7 @@ struct DeskVerbPayload {
     uint8_t  signalArmed;    // op 0, save and delete: a signal is caught (its object name is not None)
     uint8_t  uiSound;        // op 3: bIsUISound
     uint8_t  _pad[2];        // zeroed
-    char     text[desk_verb::kTextCap];  // ops 2-3: the gloss name, or the sound's SoundName; ASCII
+    char     text[desk_verb::kTextCap];  // ops 2-4: the gloss name, the sound's SoundName or the stat's name; ASCII
 };
 static_assert(sizeof(DeskVerbPayload) == 192, "DeskVerbPayload must be 192 bytes");
 static_assert(sizeof(DeskVerbPayload) <= 228, "DeskVerbPayload must fit the inline reliable buffer");
@@ -1912,9 +1917,10 @@ static_assert(sizeof(ContentHashPayload) == 8, "ContentHashPayload must be 8 byt
 // written to its own latch, since a latched mirror would simulate the decode itself.
 struct CompStatePayload {
     uint8_t decodeActive;  // 1
-    uint8_t adopt;         // 1 -- host connect snapshot (trust-gated to slot 0)
-    uint8_t isFinalLevel;  // 1 -- stamped by the simulator at the falling edge; the mirror's done-versus-progress
-                           //      beep uses this, since its own level lags the chunked data
+    uint8_t completed;     // 1 -- a completion ran since the last state: the mirror plays its beep, which a
+                           //      completion the continue restarted within the second leaves no edge for
+    uint8_t isFinalLevel;  // 1 -- with completed: it reached the cap (the done beep, else the progress beep),
+                           //      the host's reading, since the mirror's own level lags the chunked data
     uint8_t _pad;          // 1
     float   progress;      // 4 -- comp_progress (0..100)
     float   downloading;   // 4 -- comp_downloading (this tick's increment; the B\s readout)

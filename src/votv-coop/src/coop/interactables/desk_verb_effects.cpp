@@ -12,10 +12,12 @@
 #include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/core/ufunction_hook.h"
 #include "ue_wrap/engine/engine.h"
+#include "ue_wrap/world/profile.h"
 #include "ue_wrap/world/votv_lib.h"
 
 #include <atomic>
 #include <string>
+#include <string_view>
 
 namespace coop::desk_verb_effects {
 namespace {
@@ -52,10 +54,15 @@ bool     g_open = false;
 uint8_t  g_slot = 0;
 uint32_t g_seq = 0;
 
+// A body whose glosses are a client's while it runs (ForwardGlossesInBody): the refiner's decode a client began.
+void*    g_bodyFn = nullptr;
+uint8_t  g_bodySlot = 0xFF;
+uint32_t g_bodySeq = 0;
+
 Counts g_counts;
 
 // `text` into the payload, ASCII; false for a name the wire cannot carry.
-bool PutText(DeskVerbPayload& p, const std::wstring& text) {
+bool PutText(DeskVerbPayload& p, std::wstring_view text) {
     if (text.empty() || text.size() > DV::kTextCap) return false;
     for (size_t i = 0; i < text.size(); ++i) {
         if (text[i] < 0x20 || text[i] > 0x7E) return false;
@@ -70,17 +77,26 @@ std::wstring TextOf(const DeskVerbPayload& p) {
     return std::wstring(p.text, p.text + n);
 }
 
-void SendToPresser(DeskVerbPayload& p) {
+void SendTo(uint8_t slot, uint32_t seq, DeskVerbPayload& p) {
     auto* s = g_session.load(std::memory_order_acquire);
-    p.seq = g_seq;
+    p.seq = seq;
     if (!s || !s->connected() ||
-        !s->SendReliableToSlot(g_slot, coop::net::ReliableKind::DeskVerb, &p, static_cast<int>(sizeof(p))))
+        !s->SendReliableToSlot(slot, coop::net::ReliableKind::DeskVerb, &p, static_cast<int>(sizeof(p))))
         ++g_counts.lost;
 }
 
-// The gloss a replayed SAVE adds is the presser's: refused here, sent there.
+void SendToPresser(DeskVerbPayload& p) { SendTo(g_slot, g_seq, p); }
+
+// The gloss a replayed SAVE adds, or a client's decode finishing, is that client's: refused here, sent there.
 sg::Verdict OnGlossPre(const sg::Call& c) {
-    if (!g_open) return sg::Verdict::Run;
+    uint8_t slot = g_slot;
+    uint32_t seq = g_seq;
+    if (!g_open) {
+        if (!g_bodyFn || g_bodySlot == 0xFF || !sg::IsBodyActive(g_bodyFn)) return sg::Verdict::Run;
+        slot = g_bodySlot;
+        seq = g_bodySeq;
+    }
+    if (g_offGlossName < 0 || g_offGlossLevel < 0) return sg::Verdict::Run;  // unread: the gloss stays here
     DeskVerbPayload p{};
     p.op = DV::kOpGloss;
     p.level = *reinterpret_cast<const int32_t*>(c.locals + g_offGlossLevel);
@@ -88,13 +104,14 @@ sg::Verdict OnGlossPre(const sg::Call& c) {
     if (!PutText(p, name)) {
         ++g_counts.lost;
         UE_LOGW("desk_verb: slot %u's gloss '%ls' cannot cross the wire -- refused here, not sent",
-                static_cast<unsigned>(g_slot), name.c_str());
+                static_cast<unsigned>(slot), name.c_str());
         return sg::Verdict::Cancel;
     }
-    SendToPresser(p);
+    SendTo(slot, seq, p);
     if (++g_counts.glossesSent <= 3)
-        UE_LOGI("desk_verb: HOST refused the replayed press's gloss '%ls' (level %d) and sent it to slot %u (#%u)",
-                name.c_str(), p.level, static_cast<unsigned>(g_slot), g_seq);
+        UE_LOGI("desk_verb: HOST refused the %s gloss '%ls' (level %d) and sent it to slot %u (#%u)",
+                g_open ? "replayed press's" : "client's decode's", name.c_str(), p.level,
+                static_cast<unsigned>(slot), seq);
     return sg::Verdict::Cancel;
 }
 
@@ -200,10 +217,50 @@ Replay::~Replay() {
     if (g_soundHooked && !g_open) UH::SetArmed(g_soundFn, &OnSound2DPre, false);
 }
 
+uint8_t ReplaySlot() { return g_open ? g_slot : 0xFF; }
+
+uint32_t ReplaySeq() { return g_open ? g_seq : 0; }
+
+void ForwardGlossesInBody(void* bodyFn, uint8_t slot, uint32_t seq) {
+    g_bodyFn = slot == 0xFF ? nullptr : bodyFn;
+    g_bodySlot = slot;
+    g_bodySeq = seq;
+}
+
+void SendStat(uint8_t slot, uint32_t seq, const wchar_t* stat, int32_t delta) {
+    DeskVerbPayload p{};
+    p.op = DV::kOpStat;
+    p.level = delta;
+    if (!stat || !PutText(p, stat)) {
+        ++g_counts.lost;
+        return;
+    }
+    SendTo(slot, seq, p);
+    ++g_counts.statsSent;
+    UE_LOGI("desk_verb: HOST sent slot %u its %ls %+d (#%u)", static_cast<unsigned>(slot), stat, delta, seq);
+}
+
 void OnEffect(const DeskVerbPayload& p) {
-    void* local = coop::players::Registry::Get().Local();
-    if (!local) return;
     const std::wstring text = TextOf(p);
+    if (p.op == DV::kOpStat) {
+        if (!ue_wrap::profile::AddStat(text, p.level)) {
+            ++g_counts.lost;
+            UE_LOGW("desk_verb: the host's %ls %+d for press #%u did not apply here", text.c_str(), p.level,
+                    p.seq);
+            return;
+        }
+        ++g_counts.statsMade;
+        UE_LOGI("desk_verb: CLIENT added %+d to this profile's %ls (press #%u)", p.level, text.c_str(), p.seq);
+        return;
+    }
+    // A gloss and a sound are made through this machine's player; a stat needs none.
+    void* local = coop::players::Registry::Get().Local();
+    if (!local) {
+        ++g_counts.lost;
+        UE_LOGW("desk_verb: the host's %s '%ls' for press #%u came with no player here -- dropped",
+                p.op == DV::kOpGloss ? "gloss" : "sound", text.c_str(), p.seq);
+        return;
+    }
     if (p.op == DV::kOpGloss) {
         if (!ue_wrap::votv_lib::AddGloss(text, p.level, local)) {
             ++g_counts.lost;
@@ -229,13 +286,17 @@ void OnEffect(const DeskVerbPayload& p) {
 
 void OnDisconnect() {
     const Counts& c = g_counts;
-    if (c.glossesSent || c.soundsSent || c.glossesMade || c.soundsMade || c.lost)
-        UE_LOGI("desk_verb: session end -- glosses sent=%llu made=%llu, sounds sent=%llu played=%llu, lost=%llu",
-                c.glossesSent, c.glossesMade, c.soundsSent, c.soundsMade, c.lost);
+    if (c.glossesSent || c.soundsSent || c.glossesMade || c.soundsMade || c.statsSent || c.statsMade || c.lost)
+        UE_LOGI("desk_verb: session end -- glosses sent=%llu made=%llu, sounds sent=%llu played=%llu, stats "
+                "sent=%llu made=%llu, lost=%llu", c.glossesSent, c.glossesMade, c.soundsSent, c.soundsMade,
+                c.statsSent, c.statsMade, c.lost);
     g_counts = Counts{};
     g_open = false;
     g_slot = 0;
     g_seq = 0;
+    g_bodyFn = nullptr;
+    g_bodySlot = 0xFF;
+    g_bodySeq = 0;
     if (g_soundHooked) UH::SetArmed(g_soundFn, &OnSound2DPre, false);
 }
 

@@ -540,7 +540,7 @@ bool HandleSignalEvent(net::Session& /*session*/,
         break;
     }
     case net::ReliableKind::CompState: {
-        // The decode-pane scalar stream (simulator-authoritative).
+        // The refiner's scalar stream, the host's.
         if (msg.payloadLen < sizeof(net::CompStatePayload)) {
             UE_LOGW("event_feed: CompState payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::CompStatePayload));
@@ -556,7 +556,7 @@ bool HandleSignalEvent(net::Session& /*session*/,
         break;
     }
     case net::ReliableKind::CompData: {
-        // Chunked comp_data_0 (change edges + host adopt).
+        // Chunked comp_data_0, the host's (change edges + a joiner's seed).
         if (msg.payloadLen < sizeof(net::BlobChunkPayload)) {
             UE_LOGW("event_feed: CompData payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::BlobChunkPayload));

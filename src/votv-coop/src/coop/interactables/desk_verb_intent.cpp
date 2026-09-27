@@ -43,11 +43,13 @@ constexpr int kTagPress = 0x44565001;  // 'DVP' 1
 constexpr const wchar_t* kDeskClass = L"analogDScreenTest_C";
 constexpr const wchar_t* kPressName = L"actionOptionIndex";  // one pointer: the gate knows a watch by its literals
 
-// The five buttons by the desk's component variables (analogDScreenTest.cpp :2860, :3048, :2606, :2691, :3128).
+// The seven buttons by the desk's component variables (analogDScreenTest.cpp :2860, :3048, :2606, :2691, :3128,
+// :3173, :3203).
 constexpr const wchar_t* kButtonMember[DV::kButtons] = {
     L"button_downl_saveSig1", L"button_downl_delSig", L"button_play_left", L"button_play_saveSig",
-    L"button_comp_upload"};
-const char* const kButtonName[DV::kButtons] = {"save", "delete", "deck drive", "send", "upload"};
+    L"button_comp_upload",    L"button_comp_start",   L"button_comp_stop"};
+const char* const kButtonName[DV::kButtons] = {"save", "delete", "deck drive", "send", "upload", "refiner start",
+                                               "refiner stop"};
 
 // The console lanes' reach, an arm's length, measured to the desk's colliding bounds.
 constexpr float kDeskReachUU = 400.0f;
@@ -96,6 +98,15 @@ uint64_t HashOf(const SD::Row& r) {
     return r.size > 0 ? coop::signal_wire::ContentHash(coop::signal_wire::Serialize(r, false)) : 0;
 }
 
+// The decode a start or stop acts on: the refiner's row less what a completion rewrites, its level, id and isCopy
+// (analogDScreenTest.cpp :6232-6240), so a press that crossed a level-up still names the same decode.
+uint64_t DecodeOf(SD::Row r) {
+    r.level = 0;
+    r.id.clear();
+    r.isCopy = false;
+    return HashOf(r);
+}
+
 uint64_t RowAt(int32_t index) {
     SD::Row r;
     if (index < 0 || index >= ue_wrap::saved_signals::Count() || !ue_wrap::saved_signals::ReadRow(index, r)) return 0;
@@ -110,13 +121,14 @@ int32_t FindRow(uint64_t hash) {
     return -1;
 }
 
-void DriveIn(int role, Seen& out) {
+// The slot's drive, and its row when the button reads the drive's data.
+void DriveIn(int role, bool withRow, Seen& out) {
     void* slot = DC::SlotActor(role);
     void* drive = slot ? DC::SlotDrive(slot) : nullptr;
     if (!drive) return;
     out.driveEid = static_cast<uint32_t>(EL::Registry::Get().EidForActor(drive));
     SD::Row r;
-    if (DC::ReadDriveRow(drive, r)) out.driveRow = HashOf(r);
+    if (withRow && DC::ReadDriveRow(drive, r)) out.driveRow = HashOf(r);
 }
 
 Seen Look(void* desk, uint8_t button) {
@@ -131,13 +143,14 @@ Seen Look(void* desk, uint8_t button) {
             s.signalArmed = !sig.objectName.empty() && sig.objectName != L"None";
         }
     } else if (button == DV::kDeckDrive || button == DV::kDeckSend) {
-        if (button == DV::kDeckDrive) DriveIn(DC::kRoleDeskPlay, s);
+        if (button == DV::kDeckDrive) DriveIn(DC::kRoleDeskPlay, true, s);
         s.selectedRow = RowAt(DP::SelectedRow(desk));
-    } else if (button == DV::kUpload) {
-        DriveIn(DC::kRoleDeskComp, s);
+    } else if (button == DV::kUpload || button == DV::kCompStart || button == DV::kCompStop) {
+        // The start asks only that a drive sits in the slot (analogDScreenTest.cpp :3180); the upload moves its data.
+        if (button != DV::kCompStop) DriveIn(DC::kRoleDeskComp, button == DV::kUpload, s);
         SD::Row r;
         void* base = ue_wrap::comp_pane::CompDataPtr();
-        if (base && SD::ReadStruct(base, r)) s.compRow = HashOf(r);
+        if (base && SD::ReadStruct(base, r)) s.compRow = button == DV::kUpload ? HashOf(r) : DecodeOf(r);
     }
     return s;
 }
@@ -159,6 +172,11 @@ const char* Differs(const DeskVerbPayload& p, const Seen& here) {
         if (p.driveEid != here.driveEid) return "the refiner's drive";
         if (p.driveRow != here.driveRow) return "the refiner drive's data";
         return p.compRow != here.compRow ? "the refiner's data" : nullptr;
+    case DV::kCompStart:
+        if (p.driveEid != here.driveEid) return "the refiner's drive";
+        return p.compRow != here.compRow ? "the refiner's decode" : nullptr;
+    case DV::kCompStop:
+        return p.compRow != here.compRow ? "the refiner's decode" : nullptr;
     default:
         return nullptr;
     }
@@ -333,7 +351,8 @@ void Tick(coop::net::Session& session) {
             }
         } else {
             g_saidLive = true;
-            UE_LOGI("desk_verb: the desk's press is watched (save, delete, deck drive, send, upload)");
+            UE_LOGI("desk_verb: the desk's press is watched (save, delete, deck drive, send, upload, refiner start "
+                    "and stop)");
         }
     }
     if (!session.running() || session.role() != coop::net::Role::Host) return;
@@ -371,7 +390,7 @@ void OnMessage(coop::net::Session& session, const DeskVerbPayload& p, int sender
     }
     // A client hears DeskVerb from the host alone: the kind is never relayed.
     if (p.op == DV::kOpVerdict) OnVerdict(p);
-    else if (p.op == DV::kOpGloss || p.op == DV::kOpSound) desk_verb_effects::OnEffect(p);
+    else if (p.op == DV::kOpGloss || p.op == DV::kOpSound || p.op == DV::kOpStat) desk_verb_effects::OnEffect(p);
 }
 
 void OnPeerLeft(uint8_t slot) {

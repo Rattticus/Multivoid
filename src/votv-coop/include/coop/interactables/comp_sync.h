@@ -1,17 +1,17 @@
-// coop/interactables/comp_sync.h -- the desk REFINER (decode pane) mirror.
+// coop/interactables/comp_sync.h -- the desk's refiner (the decode pane): the host decodes, every client mirrors.
 //
-// SINGLE-SIMULATOR DOCTRINE. The decode ticker -- the desk's ReceiveTick reaching calculate_comp --
-// is gated on nothing but the dream state, active_comp and comp_isDecodeActive. There is no
-// occupancy or player condition, and completion fires world triggers (the theEvil spawn, the deer,
-// the rozship) plus profile writes, so exactly ONE machine may hold the latch.
+// The decode's step -- the desk's tick reaching calculate_comp -- advances on the dream state, active_comp and
+// comp_isDecodeActive alone, and its completion fires world triggers (theEvil_C, the deer, the rozship) and writes
+// the running machine's profile, so one machine holds the latch: the host's. A client's start and stop are presses
+// the host replays (desk_verb_intent), and every comp_start a client's machine reaches -- the join's restore resumes
+// a saved decode -- is refused at the script gate with `succ` false.
 //
-// THE SIMULATOR is the peer whose comp_isDecodeActive latched NATIVELY: the claim-owner who pressed
-// start, or the host whose save-load setData auto-resumed. It streams CompState while decoding and
-// on edges, and completion and level-up ride the CompData edge. Every other peer is a PASSIVE
-// MIRROR: it writes progress and downloading, paints the two texts nothing native repaints, drives
-// the cues off WIRE edges, never the latch.
-//
-// Game thread throughout.
+// The decode's OWNER is the slot whose start latched the host's machine: a replayed start's presser, else the host;
+// unchanged across the completion's continue, and the host's once its owner leaves. A client's completion gloss is
+// forwarded to it (desk_verb_effects), and its signals_processed point put back on the host and sent. The host
+// streams CompState while decoding, on its edges and on a completion, the level-up riding the CompData edge; a
+// client applies the host's alone, writing progress and downloading, painting the texts the mirror's own calls
+// leave wrong and driving the cues off the wire's edges, never the latch. Game thread throughout.
 
 #pragma once
 
@@ -23,35 +23,29 @@ namespace coop::net { class Session; }
 
 namespace coop::comp_sync {
 
+// The session, and the refiner's two watches registered: from the session's first tick
+// (subsystems::InstallLoadWatchers), since a joiner's restore of a saved decode runs inside its world load.
+// Idempotent. Game thread.
 void Install(coop::net::Session* session);
 
-// Per-tick: throttled resolve, then a 1 Hz poll -- the simulator's stream, the data edges, and the
-// client's world-up unlatch. That unlatch exists because the save transfer ships analogPanelsData,
-// so the joiner's loadObjects -> setData -> comp_start resumes the decode NATIVELY; without it both
-// peers decode, drift apart on per-tick RNG and both complete. A client clears the latch once per
-// world-up, and the host keeps its natural latch because it owns the world.
+// Per tick in a world, polled at 1 Hz: the host's stream and data edges. The world's up edge primes the host's edge
+// detectors and clears a client's latch from before its session; its down edge resets the mirror's trackers.
 void Tick();
 
-// Wire ingest: the simulator's scalar state (mirror apply: writes + paints +
-// cue edges).
+// CLIENT: the host's scalar state, applied as a mirror (writes, paints, cue edges). Any other sender's is dropped.
 void OnState(const coop::net::CompStatePayload& p, uint8_t senderSlot);
 
-// Wire ingest: one chunk of the comp_data_0 blob -- the loaded signal, mirrored on CHANGE edges
-// (drive upload, eject, completion level-up) as a signal_wire blob, plus the host adopt at
-// connect-replay. Accepted divergences: the image PNG, drive CONTENT, and a seated peer swapping
-// drives mid-decode, which single-player cannot express -- the swap wins and re-mirrors.
+// CLIENT: one chunk of the host's comp_data_0 blob, the refiner's row, sent on its change edges (an upload, an
+// eject, a completion's level) and to a joiner. The row crosses without its photo. Any other sender's is dropped.
 void OnDataChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot);
 
-// Host: queue the adopt snapshot (CompState + CompData) for a joiner.
+// HOST: queue a joiner's seed (CompState + CompData), once its world is up.
 void QueueConnectBroadcastForSlot(int peerSlot);
 
-// A peer left: if it was the streaming simulator, wind the mirror down (cue stop, idle paint). The
-// decode PAUSES there -- mirrors hold the last wire state, and any claim-owner pressing start later
-// resumes natively from the mirrored comp_progress. Manual resume is the native path; there is no
-// auto-adopt.
-void OnPeerDisconnect(uint8_t slot);
+// HOST: a peer left; a decode it owned is the host's from here.
+void OnPeerLeft(uint8_t slot);
 
-// Aggregate teardown.
+// Session end: the mirror winds down, the owner is the host again, the counts are said.
 void OnDisconnect();
 
 // CLIENT: the host's decode runs as this mirror last heard it (the wire's active state). For the drills.

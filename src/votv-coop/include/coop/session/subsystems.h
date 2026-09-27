@@ -72,6 +72,12 @@ DisconnectStats DisconnectAll();
 void HoldSessionGate();
 void ReleaseSessionGateHold();
 
+// The lanes whose watches must see a world load, installed with the gate hold from the session's first tick: a
+// client connects at the menu and then loads the host's save, and a lane installed with the world (Install, once
+// the local body exists) would arm after the load it has to see. The refiner's is one: a joiner's restore of a
+// saved decode is refused inside it. Idempotent. Game thread.
+void InstallLoadWatchers(coop::net::Session& session);
+
 // Per-tick gameplay-world subsystem chain: the connect-broadcast retry drains,
 // every module's poll/apply Tick, the NPC pose stream/mirror, the trash
 // death-watches, and the dev probes. The caller gates this on worldUp (all of

@@ -19,8 +19,8 @@
 
 namespace ue_wrap::comp_pane {
 
-// The names a watch on the refiner knows its functions by. A class-scoped watch is matched by the pointers it was
-// registered with, so every watcher registers and asks with these.
+// The names a watch on the refiner knows its functions by. A class-scoped watch is known by the pointers it was
+// registered with, so a watcher registers and asks with the same ones.
 inline constexpr const wchar_t* kDeskClass = L"analogDScreenTest_C";
 inline constexpr const wchar_t* kCompStart = L"comp_start";          // the decode's latch: press, continue, restore
 inline constexpr const wchar_t* kCalculateComp = L"calculate_comp";  // the desk's per-tick decode step and completion
@@ -42,10 +42,8 @@ bool WriteCompScalars(float progress, float downloading);
 void* CompDataPtr();
 void* CompDataPtr(void* desk);
 
-// CLIENT world-up unlatch: clears comp_isDecodeActive + native wind-down cue
-// + "idle" text. Kills the save-transfer's setData->comp_start auto-resume,
-// without which a joiner simulates the decode in parallel with the host.
-// No-op if not latched.
+// Clears a latched decode as comp_stop does: comp_isDecodeActive false, the wind-down cue, "idle". For a client's
+// latch from before its session. No-op if not latched.
 bool UnlatchDecode();
 
 // comp_start's `succ` out parameter lives in the caller's storage: a start refused at the gate writes it false
@@ -65,9 +63,9 @@ bool UpdComp(bool hasData);
 // with no press or drive around it. False when it did not dispatch; `succ` its answer.
 bool CallStart(float from, bool& succ);
 
-// Direct paints for the two texts nothing repaints on a passive mirror
+// Direct paints for the two texts a passive mirror leaves wrong
 // (text_comp_progress only repaints inside the decode-active tick chain;
-// text_comp_process only inside comp_start/comp_stop/completion).
+// text_comp_process inside comp_start, comp_stop and the completion, and updComp paints it "idle").
 bool PaintCompProgress(float progress);
 bool PaintCompProcess(const wchar_t* text);
 

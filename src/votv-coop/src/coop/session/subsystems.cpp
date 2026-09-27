@@ -176,6 +176,10 @@ void ReleaseSessionGateHold() {
     g_sessionHoldsGate = false;
 }
 
+void InstallLoadWatchers(coop::net::Session& session) {
+    coop::comp_sync::Install(&session);  // the refiner's decode: the host's machine alone, a joiner's restore refused
+}
+
 void Install(coop::net::Session& session) {
     coop::grab_observer::Install();
     coop::prop_lifecycle::InstallInventory(&session);
@@ -249,7 +253,6 @@ void Install(coop::net::Session& session) {
     coop::email_sync::Install(&session);  // meadow-PC email mirror (watermark -> chunked rows -> addEmail)
     coop::signal_sync::Install(&session);  // desk signal-library mirror (savedSignals_0 shadow/diff)
     coop::meadow_db_sync::Install(&session);  // meadow-DB mirror (content-hash multiset + id-preserving replay)
-    coop::comp_sync::Install(&session);  // refiner decode pane (single-simulator stream + passive mirrors)
     coop::voice_chat::Install(&session);  // proximity voice chat (opus over the session; PTT X)
     coop::window_sync::Install(&session);  // base-window dirt scalar (the "main huge window")
     coop::window_stroke_sync::Install(&session);  // the bay window's render-target dabs
@@ -354,7 +357,7 @@ void ConnectReplayForSlot(int slot) {
     coop::download_arm_sync::QueueConnectArmForSlot(slot);  // an armed machine's ARM row, after the catch's seed and the dish snapshot
     coop::dish_calib_sync::QueueConnectBroadcastForSlot(slot);  // every dish's precision, the joiner's seed
     coop::sleep_sync::QueueConnectBroadcastForSlot(slot);  // a joiner arrives awake -- end a running accelerate + re-tally
-    coop::comp_sync::QueueConnectBroadcastForSlot(slot);  // decode-pane adopt (CompState + CompData)
+    coop::comp_sync::QueueConnectBroadcastForSlot(slot);  // the refiner's seed (CompState + CompData)
     coop::voice_chat::ReplayPeerStatesToSlot(slot);  // voice mute/disabled states -> joiner
     coop::window_sync::QueueConnectBroadcastForSlot(slot);  // base-window clean (adopt=1)
     coop::grime_sync::QueueConnectBroadcastForSlot(slot);  // surface grime process (adopt=1)
@@ -447,7 +450,7 @@ void DisconnectSlot(coop::net::Session& session, int slot) {
     coop::signal_catch_sync::OnPeerLeft(static_cast<uint8_t>(slot));  // and the catch marked as its
     coop::desk_snd_fx::OnPeerLeft(slot);  // host-owned teardown of the leaver's loop sounds (broadcast OFF)
     coop::upgrade_sync::OnPeerLeft(static_cast<uint8_t>(slot));  // and its queued purchases
-    coop::comp_sync::OnPeerDisconnect(static_cast<uint8_t>(slot));  // pause the mirror if the decode simulator left
+    coop::comp_sync::OnPeerLeft(static_cast<uint8_t>(slot));  // and the refiner's decode it began is the host's
     coop::served_player::OnPeerLeft(static_cast<uint8_t>(slot));  // robots serving the leaver read the host
     coop::kerfur_command::OnPeerLeft(static_cast<uint8_t>(slot));  // and its waiting kerfur commands go
     coop::power_panel::OnPeerLeft(static_cast<uint8_t>(slot));  // and its presses that wait for its body
@@ -669,7 +672,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:email"}; coop::email_sync::Tick(); }  // email shadow poll (1 Hz; appends -> chunked broadcast, shrinks -> content-keyed deletes)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:signal"}; coop::signal_sync::Tick(); }  // saved-signals shadow poll (same shape on gamemode.savedSignals_0)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:meadow"}; coop::meadow_db_sync::Tick(); }  // meadow-DB: the writers' watches until settled, the pen's drain once the database is back, then retries (1 Hz) while a line, a tombstone or an owed order waits
-    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:comp"}; coop::comp_sync::Tick(); }  // decode-pane simulator stream + comp_data edges + client world-up unlatch
+    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:comp"}; coop::comp_sync::Tick(); }  // the refiner: the host's stream and comp_data edges, the mirror's world edges
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:voice"}; coop::voice_chat::Tick(); }  // voice frame pump (mic drain -> send; inbox -> jitter; positions; state edges)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:order"}; coop::order_sync::Tick(); }  // drone economy: host commits assembled client orders; the queue mirror's retry
     // The barrier for coingun_sync: the client's own coins are captured inside the gun's verb

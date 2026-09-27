@@ -19,8 +19,8 @@ namespace ue_wrap::signal_dynamic { struct Row; }
 namespace ue_wrap::console_desk {
 
 // The live-visible scalar set, the DeskState payload's typed twin. The decode scalars are not
-// here; they ride the CompState stream from the simulating peer. compMaxLevel stays, a
-// claim-owner button edit rather than simulator state. canDL is not here: it is canSaveSignal's
+// here; they ride the host's CompState stream, its machine the refiner's one simulator. compMaxLevel
+// stays, a claim-owner button edit rather than simulator state. canDL is not here: it is canSaveSignal's
 // latch, which the desk's tick runs only on the tick whose own increment carries `decoded` to
 // its size, so a mirrored input never converges it; desk_sim_sync carries the host's canDL and
 // runs canSaveSignal on a change.
