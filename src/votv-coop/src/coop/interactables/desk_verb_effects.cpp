@@ -28,6 +28,9 @@ namespace DV = coop::net::desk_verb;
 using coop::net::DeskVerbPayload;
 
 constexpr int kTagGloss = 0x44564701;  // 'DVG' 1
+// One pointer per name: the gate knows a watch by the literals it was registered with.
+constexpr const wchar_t* kGlossClass = L"lib_C";
+constexpr const wchar_t* kGlossName = L"addGloss";
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 
@@ -155,7 +158,7 @@ void InstallSound() {
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
     if (!g_glossWatched && !g_glossRefused) {
-        g_glossWatched = sg::WatchClassName(L"lib_C", L"addGloss", kTagGloss, &OnGlossPre, nullptr);
+        g_glossWatched = sg::WatchClassName(kGlossClass, kGlossName, kTagGloss, &OnGlossPre, nullptr);
         if (!g_glossWatched) {
             g_glossRefused = true;  // a full watch table or no gate: said by the gate, and final
             UE_LOGE("desk_verb: the gate took no watch on lib_C::addGloss -- a client's desk press will not run on "
@@ -164,8 +167,8 @@ void Install(coop::net::Session* session) {
     }
     if (g_glossWatched && !g_glossLive && !g_glossRefused) {
         sg::ResolvePendingNames();
-        g_glossLive = sg::ClassNameWatchLive(L"lib_C", L"addGloss", kTagGloss);
-        if (!g_glossLive && sg::ClassNameWatchSettled(L"lib_C", L"addGloss", kTagGloss)) {
+        g_glossLive = sg::ClassNameWatchLive(kGlossClass, kGlossName, kTagGloss);
+        if (!g_glossLive && sg::ClassNameWatchSettled(kGlossClass, kGlossName, kTagGloss)) {
             g_glossRefused = true;
             UE_LOGE("desk_verb: the watch on lib_C::addGloss settled dead -- a client's desk press will not run on "
                     "the host");
