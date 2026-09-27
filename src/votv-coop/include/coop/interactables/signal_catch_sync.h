@@ -34,7 +34,7 @@ void Install(coop::net::Session* session);
 // identity tuple (x, y, z, frequency, objectName) to a non-None state, with no
 // claim check in front of it. That is sound because the field has three native
 // writers -- ping-success, which assigns the row, the delete chain, which assigns
-// None, and the desk's setData, a save's restore on every world load -- and the
+// None, and the desk's setData, a save's restore on every load of a save -- and the
 // restore and our own wire appliers prime these baselines, so an unprimed local
 // change IS a catch. It is also necessary: a claim-anchored gate
 // loses by construction, because the ping's own completion releases the desk hold

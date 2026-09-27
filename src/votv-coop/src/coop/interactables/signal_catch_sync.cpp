@@ -95,9 +95,9 @@ bool CheckDeskInstance() {
     return true;
 }
 
-// The desk's setData is a save's restore, which the gamemode's load runs on every world load, a joiner's included.
+// The desk's setData is a save's restore, which the gamemode's load runs whenever it loads a save, as every join does.
 // It writes the signal data the save holds, which is no one's catch, so the detector takes it as its baseline, as it
-// takes our wire appliers' writes. Unprimed, a joiner's restore of the host's caught signal reads as the joiner's own
+// takes our wire appliers' writes. Unprimed, a joiner's restore of the save's caught signal reads as the joiner's own
 // catch, and the host's replay of that catch resets the host's download and slews every dish.
 constexpr const wchar_t* kDeskClass = L"analogDScreenTest_C";
 constexpr const wchar_t* kRestoreName = L"setData";  // one pointer: the gate knows a watch by its literals
