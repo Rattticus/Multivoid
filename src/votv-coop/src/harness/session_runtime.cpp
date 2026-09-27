@@ -4,6 +4,7 @@
 
 #include "harness/session_runtime.h"
 
+#include "harness/join_leave.h"
 #include "harness/pump.h"
 #include "harness/world_boot.h"
 
@@ -319,6 +320,30 @@ void FailRefusedMenuJoin_(const coop::net::Refusal& why) {
     ue_wrap::log::Flush();
 }
 
+// A client join whose world could not be left: the notice for the dialog and the cover dropped, as a refused start
+// leaves it, and the browser back only at the menu -- never over the world the player still stands in.
+void FailLeaveForJoin_() {
+    coop::join_progress::Fail(coop::net::EndReason::CouldNotStart, "this world could not be left for the join");
+    coop::join_progress::Reset();
+    if (!coop::shutdown::IsShuttingDown() &&
+        ue_wrap::world_identity::CurrentWorldKind() == ue_wrap::world_identity::WorldKind::Other)
+        ui::server_browser_surface::Open();
+    ue_wrap::log::Flush();
+}
+
+// The menu-mode client join, from the menu: the transfer armed, the session started, the host's world loaded. A
+// synchronous Start failure means no connect edge will ever clear the cover, so its refusal is settled here.
+// Blocks the TimelineThread through the load, the abort drained inside.
+void StartMenuModeJoin_(const coop::net::Config& cfg) {
+    UE_LOGI("harness: menu-mode client join -- save-transfer bootstrap");
+    coop::save_transfer::ClientArm();
+    coop::net::Refusal why{coop::net::EndReason::CouldNotStart, {}};
+    if (!StartCoopSession(cfg, &why))
+        FailRefusedMenuJoin_(why);
+    else
+        harness::world_boot::DriveMenuModeJoinWorldBoot();
+}
+
 }  // namespace
 
 void InstallLobbyHeartbeatSources() {
@@ -345,6 +370,11 @@ void RunPlayLoop(bool bootedIntoGameplay) {
                 coop::join_progress::Reset();  // the cover first, as in the transfer loop's drain
                 g_session.Stop();
                 ui::server_browser_surface::Open();
+            } else if (harness::join_leave::Active()) {
+                // A join cancelled while it leaves this world for the menu: the cover goes, and the
+                // leave's next step ends it (reopening the browser once the travel had dispatched).
+                UE_LOGI("harness: join cancelled while leaving this world for the menu -- clearing the cover");
+                coop::join_progress::Reset();
             } else {
                 // A host running, or nothing: a stale client abort; clear the cover only, never
                 // Stop the host or pop the browser over gameplay.
@@ -357,12 +387,24 @@ void RunPlayLoop(bool bootedIntoGameplay) {
         }
         if (!g_session.running() && !coop::shutdown::IsShuttingDown()) {
             // The save picker: load the chosen world (or create the save), then host; blocks until
-            // done, a no-op if nothing is queued.
-            harness::world_boot::DriveHostBootIfPending();
-            // Browser Join / Direct connect: start immediately on the current world.
+            // done, a no-op if nothing is queued. It waits while a client join leaves this world.
+            if (!harness::join_leave::Active()) harness::world_boot::DriveHostBootIfPending();
+            // Browser Join / Direct connect: start immediately on the current world, or, for a client join
+            // that starts inside a world, once join_leave has left it for the menu.
             if (!g_session.running()) {
+                coop::net::Config left;
+                const harness::join_leave::Outcome leave = harness::join_leave::Step(left);
+                if (leave == harness::join_leave::Outcome::AtMenu) {
+                    StartMenuModeJoin_(left);
+                } else if (leave == harness::join_leave::Outcome::Failed) {
+                    FailLeaveForJoin_();
+                } else if (leave == harness::join_leave::Outcome::CancelledLeft &&
+                           !coop::shutdown::IsShuttingDown()) {
+                    ui::server_browser_surface::Open();  // at the menu, as a cancelled menu join leaves it
+                }
                 coop::net::Config pending;
-                if (coop::session_manager::TakePendingStart(pending)) {
+                if (leave != harness::join_leave::Outcome::Waiting && !g_session.running() &&
+                    coop::session_manager::TakePendingStart(pending)) {
                     // The stale-start guard: a browser client join raises join_progress at the
                     // click, and the master round trip can QueueStart after the player cancelled; a
                     // start whose join is no longer Active is discarded rather than ghost-started.
@@ -384,19 +426,13 @@ void RunPlayLoop(bool bootedIntoGameplay) {
                         // given the same save -- AND that is still standing in it. The boot fact
                         // alone is this split's own defect one consumer later: a rig that quit to
                         // the menu, or whose host session ended and fled there, still answers yes
-                        // and would connect with no world to connect in. A player who reaches a
-                        // solo world through the game's own menu answers no to the boot half and
-                        // downloads the host's, which is right -- their world is not the join's.
+                        // and would connect with no world to connect in. A client in any other
+                        // world answers no to the boot half and downloads the host's, which is
+                        // right -- that world is not the join's -- and leaves it for the menu
+                        // first, since the menu join assumes the menu (join_leave).
                         if (pending.role == coop::net::Role::Client &&
                             !(bootedIntoGameplay && InGameplayWorld())) {
-                            UE_LOGI("harness: menu-mode client join -- save-transfer bootstrap");
-                            coop::save_transfer::ClientArm();
-                            // A synchronous Start failure means no connect edge will ever clear the
-                            // cover, so the refusal is settled here.
-                            if (!StartCoopSession(pending, &why))
-                                FailRefusedMenuJoin_(why);
-                            else
-                                harness::world_boot::DriveMenuModeJoinWorldBoot();
+                            if (!harness::join_leave::Begin(pending)) StartMenuModeJoin_(pending);
                         } else if (!StartCoopSession(pending, &why)) {
                             // A client standing in its own world (the rigs) gets the notice,
                             // and the abort drain clears the cover: never a browser over
