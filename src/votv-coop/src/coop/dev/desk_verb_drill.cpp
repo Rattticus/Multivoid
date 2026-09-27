@@ -7,6 +7,7 @@
 #include "coop/config/config_registry.h"
 #include "coop/dev/desk_verb_drill_internal.h"
 #include "coop/dev/director/director.h"
+#include "coop/dev/director/standpoints.h"
 #include "coop/element/element.h"
 #include "coop/element/registry.h"
 #include "coop/interactables/desk_verb_effects.h"  // CountsNow: the glosses and sounds sent and made
@@ -24,16 +25,13 @@
 #include "ue_wrap/desk/drive_chain.h"
 #include "ue_wrap/desk/meadow_store.h"
 #include "ue_wrap/desk/saved_signals.h"
-#include "ue_wrap/engine/engine.h"            // TryGetActorLocation
 #include "ue_wrap/engine/engine_component.h"  // GetComponentLocation
 #include "ue_wrap/engine/engine_mainplayer.h"
-#include "ue_wrap/engine/engine_nav.h"        // FindNavPath
 #include "ue_wrap/engine/engine_pawn.h"
 
 #include <windows.h>
 
 #include <algorithm>
-#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <memory>
@@ -405,36 +403,12 @@ void ClientJoinCheck() {
     g_client = CStep::Done;
 }
 
-float Flat(const ue_wrap::FVector& a, const ue_wrap::FVector& b) { return std::hypot(a.X - b.X, a.Y - b.Y); }
-
-// The ring's points about `button` that a NavMesh route from `player` reaches, shortest route first: the
-// director's own test for a reachable pile (PickReachablePile), a route whose last point lies within reach.
-std::vector<ue_wrap::FVector> ReachableRing(void* player, void* button) {
-    ue_wrap::FVector from;
-    if (!E::TryGetActorLocation(player, from)) return {};
-    const ue_wrap::FVector at = E::GetComponentLocation(button);
-    std::vector<std::pair<float, ue_wrap::FVector>> found;
-    for (int i = 0; i < kStandpoints; ++i) {
-        const float a = 6.2831853f * static_cast<float>(i) / static_cast<float>(kStandpoints);
-        ue_wrap::FVector p = from;  // at the height the player stands at
-        p.X = at.X + kStandRingCm * std::cos(a);
-        p.Y = at.Y + kStandRingCm * std::sin(a);
-        std::vector<ue_wrap::FVector> route;
-        if (!E::FindNavPath(player, from, p, route) || Flat(route.back(), p) > kStandReachCm) continue;
-        float len = 0.f;
-        for (size_t k = 1; k < route.size(); ++k) len += Flat(route[k - 1], route[k]);
-        found.emplace_back(len, p);
-    }
-    std::stable_sort(found.begin(), found.end(), [](const auto& x, const auto& y) { return x.first < y.first; });
-    std::vector<ue_wrap::FVector> out;
-    for (const auto& f : found) out.push_back(f.second);
-    return out;
-}
-
 void NextStandpoint(void* player, const char* why) {
     if (g_stand == 0) {
         void* button = Button(g_leg);
-        g_ring = button ? ReachableRing(player, button) : std::vector<ue_wrap::FVector>{};
+        g_ring = button ? coop::director::ReachableStandpoints(player, E::GetComponentLocation(button), kStandRingCm,
+                                                               kStandpoints, kStandReachCm)
+                        : std::vector<ue_wrap::FVector>{};
         UE_LOGI("[DESK-VERB-DRILL] client: a route reaches %zu of the %d standpoints about %s", g_ring.size(),
                 kStandpoints, kLegName[g_leg]);
     }
