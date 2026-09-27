@@ -26,6 +26,7 @@ struct Stat {
 };
 Stat g_daysTotal{L"days_total_", L"the days lived"};
 Stat g_signalsFound{L"signals_found_", L"the signals found"};
+Stat g_signalsProcessed{L"signals_processed_", L"the signals processed"};
 int32_t g_keybindNamesOff = -1;  // save_main_C::keybindsNames, a TArray<FName>
 int32_t g_keybindKeysOff = -1;   // save_main_C::keybinds_keys, a TArray<FString> in the same order
 bool    g_keybindsMissing = false;
@@ -99,6 +100,24 @@ bool ReadSignalsFound(int32_t& out) {
 
 bool AddSignalsFound(int32_t n) {
     int32_t* v = StatOf(Profile(), g_signalsFound);
+    if (!v) return false;
+    *v += n;
+    return true;
+}
+
+bool ReadSignalsProcessed(int32_t& out) {
+    const int32_t* v = StatOf(Profile(), g_signalsProcessed);
+    if (!v) return false;
+    out = *v;
+    return true;
+}
+
+bool AddStat(std::wstring_view name, int32_t n) {
+    Stat* stat = name == L"days_total"          ? &g_daysTotal
+                 : name == L"signals_found"     ? &g_signalsFound
+                 : name == L"signals_processed" ? &g_signalsProcessed
+                                                : nullptr;
+    int32_t* v = stat ? StatOf(Profile(), *stat) : nullptr;
     if (!v) return false;
     *v += n;
     return true;

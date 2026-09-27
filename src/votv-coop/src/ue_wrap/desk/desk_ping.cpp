@@ -53,24 +53,10 @@ T* Field(void* desk, R::InstanceOffset& member) {
     return off < 0 ? nullptr : reinterpret_cast<T*>(static_cast<uint8_t*>(desk) + off);
 }
 
-// A parameter's offset in one UFunction, kept for the function it was read from.
-struct ParamOffset {
-    const wchar_t* name;
-    void* fn = nullptr;
-    int32_t off = -1;
-
-    int32_t Of(void* function) {
-        if (function != fn) {
-            fn = function;
-            off = function ? R::FindParamOffset(function, name) : -1;
-        }
-        return off;
-    }
-};
-ParamOffset g_return{L"return"};
-ParamOffset g_caughtAny{L"caughtAtLeastOne"};
-ParamOffset g_data{L"data"};
-ParamOffset g_newSound{L"NewSound"};
+R::ParamOffset g_return{L"return"};
+R::ParamOffset g_caughtAny{L"caughtAtLeastOne"};
+R::ParamOffset g_data{L"data"};
+R::ParamOffset g_newSound{L"NewSound"};
 
 bool WriteMachine(void* desk, bool pinging, int32_t stage, float accumulators) {
     uint8_t mask = 0;

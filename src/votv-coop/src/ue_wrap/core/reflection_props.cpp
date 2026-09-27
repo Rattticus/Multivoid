@@ -117,6 +117,17 @@ int32_t InstanceOffset::Of(void* obj) {
     return off_;
 }
 
+int32_t ParamOffset::Of(void* function) {
+    if (!function) return -1;
+    if (function != fn_ || !IsLiveByIndex(fn_, fnIdx_) || SlotSerial(fnIdx_) != fnSerial_) {
+        fn_ = function;
+        fnIdx_ = InternalIndexOf(function);
+        fnSerial_ = AllocateSlotSerial(fnIdx_);
+        off_ = FindParamOffset(function, param_);
+    }
+    return off_;
+}
+
 int32_t FindParamOffset(void* function, const wchar_t* paramName) {
     if (!function || !paramName) return -1;
     for (const ParamInfo& p : FunctionParams(function)) {

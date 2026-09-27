@@ -63,6 +63,22 @@ private:
     int32_t off_ = -1;
 };
 
+// A parameter's offset in the frame of the function it is asked with (FindParamOffset), for a watch handed its
+// UFunction with each call: kept per function object, held by its slot and serial as InstanceOffset holds a class,
+// and asked again when another function comes. -1 when that function has no such parameter. Game thread.
+class ParamOffset {
+public:
+    explicit constexpr ParamOffset(const wchar_t* paramName) : param_(paramName) {}
+    int32_t Of(void* function);
+
+private:
+    const wchar_t* param_;
+    void* fn_ = nullptr;
+    int32_t fnIdx_ = -1;
+    int32_t fnSerial_ = 0;
+    int32_t off_ = -1;
+};
+
 // The prefix-matched variant for GUID-mangled BP struct members: a UserDefinedStruct member
 // renders as "decoded_5_A9CAC26F480C342A406FFFB77DD0AB68", where the human prefix is stable
 // across recooks and the GUID suffix is not. Takes a UScriptStruct* (see PropertyInnerStruct) or

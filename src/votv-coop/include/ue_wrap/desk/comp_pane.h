@@ -15,7 +15,15 @@
 
 #pragma once
 
+#include "ue_wrap/core/script_gate.h"
+
 namespace ue_wrap::comp_pane {
+
+// The names a watch on the refiner knows its functions by. A class-scoped watch is matched by the pointers it was
+// registered with, so every watcher registers and asks with these.
+inline constexpr const wchar_t* kDeskClass = L"analogDScreenTest_C";
+inline constexpr const wchar_t* kCompStart = L"comp_start";          // the decode's latch: press, continue, restore
+inline constexpr const wchar_t* kCalculateComp = L"calculate_comp";  // the desk's per-tick decode step and completion
 
 struct CompScalars {
     float progress = 0;          // comp_progress      (0..100)
@@ -23,13 +31,16 @@ struct CompScalars {
     bool  decodeActive = false;  // comp_isDecodeActive (read side)
 };
 bool ReadCompScalars(CompScalars& out);
+// The same, off the desk in hand: a watch on the desk's own body reads the desk that body runs on.
+bool ReadCompScalars(void* desk, CompScalars& out);
 
 // Mirror-side write: progress + downloading ONLY (never the flag).
 bool WriteCompScalars(float progress, float downloading);
 
 // The live comp_data_0 struct base (signal_dynamic I/O target). Null when
-// unresolved / no world.
+// unresolved / no world. The second is off the desk in hand.
 void* CompDataPtr();
+void* CompDataPtr(void* desk);
 
 // CLIENT world-up unlatch: clears comp_isDecodeActive + native wind-down cue
 // + "idle" text. Kills the save-transfer's setData->comp_start auto-resume,
@@ -37,10 +48,22 @@ void* CompDataPtr();
 // No-op if not latched.
 bool UnlatchDecode();
 
+// comp_start's `succ` out parameter lives in the caller's storage: a start refused at the gate writes it false
+// there, as comp_start's own refusals do.
+bool WriteStartFailed(const script_gate::Call& c);
+
+// The progress a comp_start begins from: 0 for a press and the completion's continue, the saved progress for
+// setData's restore. False when the parameter is not found.
+bool ReadStartFrom(const script_gate::Call& c, float& out);
+
 // updComp(bool hasData): the comp pane repaint. Condition semantics are
 // "has data" (comp_data_0.size > 0), which is what the native callers mean by
 // it -- not whether the pane is active.
 bool UpdComp(bool hasData);
+
+// A reflected comp_start(from, succ) on the desk: its native refusals and its latch, as a press's start runs it, but
+// with no press or drive around it. False when it did not dispatch; `succ` its answer.
+bool CallStart(float from, bool& succ);
 
 // Direct paints for the two texts nothing repaints on a passive mirror
 // (text_comp_progress only repaints inside the decode-active tick chain;

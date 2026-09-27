@@ -33,6 +33,7 @@ int32_t g_offCueWorking = -1;          // desk.computerWorking_Cue (UAudioCompon
 int32_t g_offCueProg = -1;             // desk.prog
 int32_t g_offCueDone = -1;             // desk.Done
 void* g_updCompFn = nullptr;           // updComp(bool Condition)
+void* g_compStartFn = nullptr;         // comp_start(float startPorgressFrom, bool& succ)
 void* g_sndWorking = nullptr;          // SoundCue 'computerWorking_Cue' (the loop)
 void* g_sndWorkingEnd = nullptr;       // SoundCue 'computerWorking_end' (the wind-down)
 
@@ -44,7 +45,7 @@ void ResolvePass() {
     if (now < g_nextResolve) return;
     g_nextResolve = now + std::chrono::seconds(2);
 
-    if (!g_deskCls) g_deskCls = R::FindClass(L"analogDScreenTest_C");
+    if (!g_deskCls) g_deskCls = R::FindClass(kDeskClass);
     if (!g_deskCls) return;
     if (g_offCompProgress < 0)
         g_offCompProgress = R::FindPropertyOffset(g_deskCls, L"comp_progress");
@@ -59,6 +60,7 @@ void ResolvePass() {
     if (g_offCueProg < 0) g_offCueProg = R::FindPropertyOffset(g_deskCls, L"prog");
     if (g_offCueDone < 0) g_offCueDone = R::FindPropertyOffset(g_deskCls, L"Done");
     if (!g_updCompFn) g_updCompFn = R::FindFunction(g_deskCls, L"updComp");
+    if (!g_compStartFn) g_compStartFn = R::FindFunction(g_deskCls, kCompStart);
     // The cue ASSETS share the component property's leaf name -- class-filter
     // the lookup so we never grab the component instance by mistake.
     if (!g_sndWorking) {
@@ -120,8 +122,10 @@ void* DeskAudioComponent(int32_t off) {
 
 }  // namespace
 
-bool ReadCompScalars(CompScalars& out) {
-    void* d = Desk();
+bool ReadCompScalars(CompScalars& out) { return ReadCompScalars(Desk(), out); }
+
+bool ReadCompScalars(void* d, CompScalars& out) {
+    if (!g_required) ResolvePass();
     if (!d || !g_required) return false;
     out.progress = *OffPtr<float>(d, g_offCompProgress);
     out.downloading = *OffPtr<float>(d, g_offCompDownloading);
@@ -137,8 +141,10 @@ bool WriteCompScalars(float progress, float downloading) {
     return true;
 }
 
-void* CompDataPtr() {
-    void* d = Desk();
+void* CompDataPtr() { return CompDataPtr(Desk()); }
+
+void* CompDataPtr(void* d) {
+    if (!g_required) ResolvePass();
     if (!d || g_offCompData0 < 0) return nullptr;
     return reinterpret_cast<uint8_t*>(d) + g_offCompData0;
 }
@@ -151,6 +157,32 @@ bool UnlatchDecode() {
     *flag = false;
     CompCueStop();
     PaintCompProcess(L"idle");
+    return true;
+}
+
+bool WriteStartFailed(const script_gate::Call& c) {
+    static R::ParamOffset s_succ{L"succ"};
+    const int32_t off = s_succ.Of(c.function);
+    uint8_t* succ = off >= 0 ? script_gate::OutParamPtr(c, off) : nullptr;
+    if (!succ) return false;
+    *succ = 0;
+    return true;
+}
+
+bool ReadStartFrom(const script_gate::Call& c, float& out) {
+    static R::ParamOffset s_from{L"startPorgressFrom"};  // the game's spelling
+    const int32_t off = s_from.Of(c.function);
+    if (off < 0 || !c.locals) return false;
+    out = *reinterpret_cast<const float*>(c.locals + off);
+    return true;
+}
+
+bool CallStart(float from, bool& succ) {
+    void* d = Desk();
+    if (!d || !g_compStartFn) return false;
+    ue_wrap::ParamFrame f(g_compStartFn);
+    if (!f.valid() || !f.Set<float>(L"startPorgressFrom", from) || !ue_wrap::Call(d, f)) return false;
+    succ = f.Get<bool>(L"succ");
     return true;
 }
 

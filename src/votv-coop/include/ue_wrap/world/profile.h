@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <string>
+#include <string_view>
 
 namespace ue_wrap::profile {
 
@@ -23,6 +24,15 @@ bool ReadSignalsFound(int32_t& out);
 
 // signals_found += n. Game thread.
 bool AddSignalsFound(int32_t n);
+
+// save_main.stats' signals_processed, the signals this machine's player has refined to the last level, which the
+// refiner's completion adds to on the machine that decoded it (analogDScreenTest ubergraph @71094). False as
+// ReadDaysTotal is. Game thread.
+bool ReadSignalsProcessed(int32_t& out);
+
+// The stat named as its stats member begins (days_total, signals_found, signals_processed) += n. False for any
+// other name, or as ReadDaysTotal is. Game thread.
+bool AddStat(std::wstring_view name, int32_t n);
 
 // The key this machine's player bound to the input setting `name` (as "coord_ping"), as the game displays it:
 // save_main.keybinds_keys at the index `name` has in keybindsNames, the pair the game fills together
