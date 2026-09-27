@@ -1,5 +1,5 @@
-// ue_wrap/core/component_calls.cpp -- see component_calls.h. Each helper keeps its own
-// lazy per-function cache.
+// ue_wrap/core/component_calls.cpp -- see component_calls.h. A function the component's own class declares keeps a
+// lazy cache; one a parent declares resolves through the dispatch cache, which climbs to it.
 
 #include "ue_wrap/core/component_calls.h"
 
@@ -15,8 +15,6 @@ namespace R = ue_wrap::reflection;
 void* g_setTextFn = nullptr;             // UTextBlock::SetText(FText)
 const wchar_t* g_setTextParam = nullptr;
 void* g_setSoundFn = nullptr;            // UAudioComponent::SetSound(USoundBase*)
-void* g_activateFn = nullptr;            // UActorComponent::Activate(bool bReset)
-void* g_setVisibilityFn = nullptr;       // USceneComponent::SetVisibility(bNewVisibility, bPropagate)
 
 }  // namespace
 
@@ -51,13 +49,10 @@ bool SetSound(void* comp, void* sound) {
 }
 
 bool Activate(void* comp) {
-    if (!comp) return false;
-    if (!g_activateFn) {
-        if (void* cls = R::ClassOf(comp))
-            g_activateFn = R::FindFunction(cls, L"Activate");
-    }
-    if (!g_activateFn) return false;
-    ue_wrap::ParamFrame f(g_activateFn);
+    // Declared on UActorComponent, which no component class a caller holds is.
+    void* fn = comp ? R::FindDispatchFunctionCached(R::ClassOf(comp), L"Activate") : nullptr;
+    if (!fn) return false;
+    ue_wrap::ParamFrame f(fn);
     if (!f.valid()) return false;
     f.Set<bool>(L"bReset", true);
     return ue_wrap::Call(comp, f);
@@ -70,22 +65,6 @@ bool SetActive(void* comp, bool value, bool reset) {
     if (!f.valid()) return false;
     f.Set<bool>(L"bNewActive", value);
     f.Set<bool>(L"bReset", reset);
-    return ue_wrap::Call(comp, f);
-}
-
-// USceneComponent::SetVisibility(bNewVisibility, bPropagateToChildren) -- the
-// unit lamps (uber [1115/1126/1149/1154] use SetVisibility(value, false)).
-bool SetVisibility(void* comp, bool value) {
-    if (!comp) return false;
-    if (!g_setVisibilityFn) {
-        if (void* cls = R::ClassOf(comp))
-            g_setVisibilityFn = R::FindFunction(cls, L"SetVisibility");
-    }
-    if (!g_setVisibilityFn) return false;
-    ue_wrap::ParamFrame f(g_setVisibilityFn);
-    if (!f.valid()) return false;
-    f.Set<bool>(L"bNewVisibility", value);
-    f.Set<bool>(L"bPropagateToChildren", false);
     return ue_wrap::Call(comp, f);
 }
 

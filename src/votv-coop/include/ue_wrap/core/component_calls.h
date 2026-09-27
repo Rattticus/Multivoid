@@ -22,9 +22,6 @@ bool Activate(void* comp);
 // which climbs to UActorComponent, where the function is declared.
 bool SetActive(void* comp, bool value, bool reset);
 
-// USceneComponent::SetVisibility(bNewVisibility, bPropagateToChildren=false).
-bool SetVisibility(void* comp, bool value);
-
 // UAudioComponent::SetVolumeMultiplier(float). The caller owns any clamping
 // semantics (e.g. the desk's FClamp(v/10, 0.1, 5)).
 bool SetVolumeMultiplier(void* comp, float mult);
