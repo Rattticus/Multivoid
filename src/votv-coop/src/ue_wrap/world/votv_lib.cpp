@@ -19,6 +19,7 @@ namespace R = ue_wrap::reflection;
 ue_wrap::CachedObjRef g_libCdo;
 void* g_stepFn  = nullptr;
 void* g_glossFn = nullptr;
+void* g_buoyantFn = nullptr;  // found on its own call, so step and addGloss never wait on it
 
 bool Resolve() {
     if (g_libCdo.Alive() && g_stepFn && g_glossFn) return true;
@@ -26,7 +27,7 @@ bool Resolve() {
     if (!cls) return false;  // not loaded yet (menu) -- retry on a later call
     if (!g_libCdo.Alive()) {
         g_libCdo.Set(R::FindClassDefaultObject(L"lib_C"));
-        g_stepFn = g_glossFn = nullptr;  // found again on the class the new default object is of
+        g_stepFn = g_glossFn = g_buoyantFn = nullptr;  // found again on the class the new default object is of
     }
     if (!g_stepFn) g_stepFn = R::FindFunction(cls, L"step");
     if (!g_glossFn) g_glossFn = R::FindFunction(cls, L"addGloss");
@@ -67,6 +68,18 @@ bool AddGloss(const std::wstring& name, int32_t level, void* worldContext) {
     ue_wrap::ParamFrame f(g_glossFn);
     return f.valid() && f.Set<R::FName>(L"name", fname) && f.Set<int32_t>(L"level", level) &&
            f.Set<void*>(L"__WorldContext", worldContext) && ue_wrap::Call(g_libCdo.Raw(), f);
+}
+
+bool CheatsAllowed(void* worldContext, bool& allowed) {
+    if (!worldContext || !Resolve()) return false;
+    if (!g_buoyantFn) g_buoyantFn = R::FindFunction(R::ClassOf(g_libCdo.Raw()), L"isBuoyant");
+    if (!g_buoyantFn) return false;
+    ue_wrap::ParamFrame f(g_buoyantFn);
+    if (!f.valid() || !f.Set<void*>(L"actor", nullptr) || !f.Set<void*>(L"__WorldContext", worldContext) ||
+        !ue_wrap::Call(g_libCdo.Raw(), f))
+        return false;
+    allowed = f.Get<bool>(L"buoyant");
+    return true;
 }
 
 }  // namespace ue_wrap::votv_lib

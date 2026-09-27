@@ -106,6 +106,7 @@ set(VOTVCOOP_SOURCES
     src/ue_wrap/desk/phys_mods.cpp
     src/ue_wrap/desk/desk_press.cpp
     src/ue_wrap/desk/desk_detector.cpp
+    src/ue_wrap/desk/desk_ping.cpp
     src/ue_wrap/desk/drive_chain.cpp
     src/ue_wrap/desk/drive_eraser.cpp
     src/ue_wrap/desk/daily_task.cpp

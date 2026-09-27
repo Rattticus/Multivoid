@@ -10,6 +10,7 @@
 #include "ue_wrap/desk/console_desk.h"
 
 #include <chrono>
+#include <cmath>
 #include <cstring>
 
 namespace ue_wrap::coords_panel {
@@ -28,6 +29,8 @@ int32_t g_offCoordinate1 = -1;     // FVector2D
 int32_t g_offCoordinate2 = -1;     // FVector2D
 int32_t g_offSelected = -1;
 int32_t g_offDirection = -1;       // bool -- the catch-gate toggle
+int32_t g_offCanPing = -1;         // canPing's byte, with g_maskCanPing its bit
+uint8_t g_maskCanPing = 0;
 void* g_updCursorLocationsFn = nullptr;
 
 // The REQUIRED set (cls + the five aim offsets + the repaint verb) resolved --
@@ -55,6 +58,8 @@ void ResolvePass() {
             g_offSelected = R::FindPropertyOffset(g_uiCoordsCls, L"selected");
         if (g_offDirection < 0)
             g_offDirection = R::FindPropertyOffset(g_uiCoordsCls, L"Direction");
+        if (g_offCanPing < 0 && !R::FindBoolProperty(g_uiCoordsCls, L"canPing", g_offCanPing, g_maskCanPing))
+            g_offCanPing = -1;
         if (!g_updCursorLocationsFn)
             g_updCursorLocationsFn = R::FindFunction(g_uiCoordsCls, L"updCursorLocations");
     }
@@ -115,6 +120,39 @@ bool ReadDishAim(DishAim& out) {
     std::memcpy(&out.selected, p + g_offSelected, sizeof(int32_t));
     out.direction = (g_offDirection >= 0 && *(p + g_offDirection)) ? 1 : 0;
     return true;
+}
+
+bool ReadCanPing(bool& out) {
+    if (!g_required) ResolvePass();
+    void* w = Instance();
+    if (!w || g_offCanPing < 0) return false;
+    out = (*(reinterpret_cast<const uint8_t*>(w) + g_offCanPing) & g_maskCanPing) != 0;
+    return true;
+}
+
+bool AimCanPing(const DishAim& aim) {
+    const float side0 = std::hypot(aim.c0X - aim.c1X, aim.c0Y - aim.c1Y);
+    const float side1 = std::hypot(aim.c1X - aim.c2X, aim.c1Y - aim.c2Y);
+    const float side2 = std::hypot(aim.c2X - aim.c0X, aim.c2Y - aim.c0Y);
+    // Heron's area over the half perimeter, the widget's `perim`; its Sqrt and Divide answer 0 where they cannot.
+    const float half = (side0 + side1 + side2) / 2.f;
+    const float square = half * (half - side0) * (half - side1) * (half - side2);
+    const float inradius = half > 0.f && square > 0.f ? std::sqrt(square) / half : 0.f;
+    return side0 <= 740.f && side1 <= 740.f && side2 <= 740.f && inradius > 1.f;
+}
+
+bool ReadAreaSize(float& width, float& height) {
+    if (!g_required) ResolvePass();
+    void* w = Instance();
+    void* fn = (w && g_uiCoordsCls) ? R::FindDispatchFunctionCached(g_uiCoordsCls, L"getAreaSize") : nullptr;
+    if (!fn) return false;
+    ue_wrap::ParamFrame f(fn);
+    if (!f.valid() || !ue_wrap::Call(w, f)) return false;
+    float size[2] = {0.f, 0.f};
+    if (!f.GetRaw(L"size", size, static_cast<int32_t>(sizeof(size)))) return false;
+    width = size[0];
+    height = size[1];
+    return width > 0.f && height > 0.f;
 }
 
 // The LIVE cursor apply (the DeskCursorPose stream, ~60 Hz interpolated).

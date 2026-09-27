@@ -17,8 +17,18 @@ namespace R = reflection;
 // update renamed it -- lacks it for the process, so the lookup never repeats and the miss is said once.
 int32_t g_saveMainOff = -1;      // mainGamemode_C::save_main
 bool    g_saveMainMissing = false;
-int32_t g_daysTotalOff = -1;     // save_main_C::stats plus the struct's days_total_<GUID>
-bool    g_daysTotalMissing = false;
+// A member of save_main_C's `stats` struct, which a Blueprint-mangled name reaches only by its prefix.
+struct Stat {
+    const wchar_t* prefix;     // with its trailing underscore, so "days_" cannot match "days_total_"
+    const wchar_t* what;       // for the one line said on a miss
+    int32_t off = -1;          // stats' offset plus the member's
+    bool    missing = false;
+};
+Stat g_daysTotal{L"days_total_", L"the days lived"};
+Stat g_signalsFound{L"signals_found_", L"the signals found"};
+int32_t g_keybindNamesOff = -1;  // save_main_C::keybindsNames, a TArray<FName>
+int32_t g_keybindKeysOff = -1;   // save_main_C::keybinds_keys, a TArray<FString> in the same order
+bool    g_keybindsMissing = false;
 void*   g_progressFn = nullptr;  // save_main_C::progressAchievement
 bool    g_progressMissing = false;
 
@@ -38,40 +48,88 @@ void* Profile() {
     return (p && R::IsLive(p)) ? p : nullptr;
 }
 
-// The address of `profile`'s days_total, or null. The member sits in the `stats` struct under a
-// Blueprint-mangled name, so it is found by its prefix.
-int32_t* DaysTotalOf(void* profile) {
-    if (!profile || g_daysTotalMissing) return nullptr;
-    if (g_daysTotalOff < 0) {
+// The address of `profile`'s `stat`, or null.
+int32_t* StatOf(void* profile, Stat& stat) {
+    if (!profile || stat.missing) return nullptr;
+    if (stat.off < 0) {
         void* cls = R::ClassOf(profile);
         const int32_t statsOff = R::FindPropertyOffset(cls, L"stats");
         void* stats = statsOff >= 0 ? R::PropertyInnerStruct(cls, L"stats") : nullptr;
-        const int32_t inner = stats ? R::FindPropertyOffsetByPrefix(stats, L"days_total_") : -1;
+        const int32_t inner = stats ? R::FindPropertyOffsetByPrefix(stats, stat.prefix) : -1;
         if (inner < 0) {
-            g_daysTotalMissing = true;
-            UE_LOGW("profile: save_main_C has no stats.days_total (stats@%d) -- the days lived are out of reach",
-                    statsOff);
+            stat.missing = true;
+            UE_LOGW("profile: save_main_C has no stats.%ls (stats@%d) -- %ls are out of reach", stat.prefix,
+                    statsOff, stat.what);
             return nullptr;
         }
-        g_daysTotalOff = statsOff + inner;
+        stat.off = statsOff + inner;
     }
-    return reinterpret_cast<int32_t*>(reinterpret_cast<uint8_t*>(profile) + g_daysTotalOff);
+    return reinterpret_cast<int32_t*>(reinterpret_cast<uint8_t*>(profile) + stat.off);
 }
+
+// The engine's TArray header: the data, then its count and capacity.
+struct ArrayHeader {
+    void*   data;
+    int32_t num;
+    int32_t max;
+};
 
 }  // namespace
 
 bool ReadDaysTotal(int32_t& out) {
-    const int32_t* v = DaysTotalOf(Profile());
+    const int32_t* v = StatOf(Profile(), g_daysTotal);
     if (!v) return false;
     out = *v;
     return true;
 }
 
 bool AddDaysTotal(int32_t n) {
-    int32_t* v = DaysTotalOf(Profile());
+    int32_t* v = StatOf(Profile(), g_daysTotal);
     if (!v) return false;
     *v += n;
     return true;
+}
+
+bool ReadSignalsFound(int32_t& out) {
+    const int32_t* v = StatOf(Profile(), g_signalsFound);
+    if (!v) return false;
+    out = *v;
+    return true;
+}
+
+bool AddSignalsFound(int32_t n) {
+    int32_t* v = StatOf(Profile(), g_signalsFound);
+    if (!v) return false;
+    *v += n;
+    return true;
+}
+
+bool KeybindDisplayName(const wchar_t* name, std::wstring& out) {
+    void* p = Profile();
+    if (!p || !name || g_keybindsMissing) return false;
+    if (g_keybindNamesOff < 0 || g_keybindKeysOff < 0) {
+        void* cls = R::ClassOf(p);
+        g_keybindNamesOff = R::FindPropertyOffset(cls, L"keybindsNames");
+        g_keybindKeysOff = R::FindPropertyOffset(cls, L"keybinds_keys");
+        if (g_keybindNamesOff < 0 || g_keybindKeysOff < 0) {
+            g_keybindsMissing = true;
+            UE_LOGW("profile: save_main_C has no keybindsNames or keybinds_keys (%d/%d) -- a binding is out of reach",
+                    g_keybindNamesOff, g_keybindKeysOff);
+            return false;
+        }
+    }
+    const auto* names = reinterpret_cast<const ArrayHeader*>(static_cast<uint8_t*>(p) + g_keybindNamesOff);
+    const auto* keys = reinterpret_cast<const ArrayHeader*>(static_cast<uint8_t*>(p) + g_keybindKeysOff);
+    if (!names->data || !keys->data || names->num <= 0 || names->num != keys->num) return false;
+    const auto* nameAt = static_cast<const R::FName*>(names->data);
+    for (int32_t i = 0; i < names->num; ++i) {
+        if (!R::NameEquals(nameAt[i], name)) continue;
+        const ArrayHeader& key = static_cast<const ArrayHeader*>(keys->data)[i];
+        if (!key.data || key.num <= 1) return false;
+        out.assign(static_cast<const wchar_t*>(key.data), static_cast<size_t>(key.num - 1));
+        return true;
+    }
+    return false;
 }
 
 bool ProgressAchievement(const wchar_t* name) {

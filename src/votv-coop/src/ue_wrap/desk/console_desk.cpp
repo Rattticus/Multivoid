@@ -455,8 +455,10 @@ void SigWrite(uint8_t* base, int32_t off, const T& v) {
 
 }  // namespace
 
-bool ReadCoordSignal(CoordSignal& out) {
-    uint8_t* p = CoordSignalPtr();
+bool ReadCoordSignal(CoordSignal& out) { return ReadSignalAt(CoordSignalPtr(), out); }
+
+bool ReadSignalAt(const void* data, CoordSignal& out) {
+    const uint8_t* p = static_cast<const uint8_t*>(data);
     if (!p) return false;
     out.x = SigRead<float>(p, kSig_coordinates + 0);
     out.y = SigRead<float>(p, kSig_coordinates + 4);

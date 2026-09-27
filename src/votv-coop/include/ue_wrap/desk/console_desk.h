@@ -142,6 +142,9 @@ struct CoordSignal {
   std::wstring objectName;  // FName rendered; 'None' when unarmed
 };
 bool ReadCoordSignal(CoordSignal& out);
+// Any signal-spawn struct at `data`, the desk's or the `data` a gatherSignal call gathered into, read as
+// ReadCoordSignal reads the desk's.
+bool ReadSignalAt(const void* data, CoordSignal& out);
 // Raw member writes, plain data plus a string-to-FName.
 bool WriteCoordSignal(const CoordSignal& in);
 // The native reset values: zero vector, type, strength and frequency, a frequency spread of
