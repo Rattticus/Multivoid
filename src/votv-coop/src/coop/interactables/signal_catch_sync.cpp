@@ -360,8 +360,8 @@ void OnReliable(const coop::net::SkySignalCatchPayload& p, uint8_t senderSlot) {
 
     const Identity id{ p.row.x, p.row.y, p.row.z, p.row.frequency };
     if (s->role() == coop::net::Role::Host) {
-        // Both kinds are the host's to author: kind 2 is its connect seed, and a client rolls no verdict
-        // (desk_ping_sync), so it never catches. A reset rides coop/interactables/download_arm_sync.
+        // Both kinds are the host's to author: kind 2 is its connect seed or a catch whose pinger left, and a
+        // client rolls no verdict (desk_ping_sync), so it never catches. A reset rides download_arm_sync.
         SayDropped(senderSlot, p.kind);
         return;
     }
@@ -369,7 +369,7 @@ void OnReliable(const coop::net::SkySignalCatchPayload& p, uint8_t senderSlot) {
     // logical catcher via the relay stamp).
     RegisterRecent(id);
     ApplyReplay(p);
-    // kind 2 (the connect seed) is state adoption, not a live action: no feed line.
+    // kind 2, a connect seed or a catch whose pinger left, is announced by nobody: no feed line.
     if (p.kind == 0)
         coop::peer_action_feed::Announce(senderSlot, L"caught signal '" + WireName(p.row) + L"'");
 }

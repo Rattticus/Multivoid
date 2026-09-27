@@ -42,10 +42,10 @@ void Install(coop::net::Session* session);
 // the catch permanently.
 void Tick();
 
-// Wire ingest (both roles). HOST: takes kind=1 and rebroadcasts it to everyone but
-// its sender; drops kind=0 and kind=2, which are host-authored only. CLIENT: replays
-// the identity half only (transport-trusted -- clients only ever receive from the
-// host; senderSlot is the stamped logical catcher).
+// Wire ingest (both roles). HOST: drops every kind a client sends -- 0 and 2 are the
+// host's to author (SayDropped). CLIENT: applies both, replaying the identity half
+// (transport-trusted -- clients only ever receive from the host; senderSlot is the
+// stamped logical catcher), and announces kind 0 only.
 //
 // kind=0 is a catch and lands one activity-feed line per peer, phrased for the
 // catcher or for a watcher from the stamped origin. A clear is not this lane's: the

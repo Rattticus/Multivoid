@@ -1663,7 +1663,7 @@ static_assert(sizeof(SkySignalStatePayload) <= 256 - 20 - 8,
 // catch, 2 a connect seed (applied like 0, never announced); the download's reset rides DishArm.
 struct SkySignalCatchPayload {
     WireSkySignal row;          // 64 -- the caught signal's full row content
-    uint8_t kind;               // 1  -- 0 = catch, 2 = connect seed
+    uint8_t kind;               // 1  -- 0 = catch, 2 = a connect seed or a catch whose pinger left
     uint8_t _pad[3];            // 3
 };
 static_assert(sizeof(SkySignalCatchPayload) == 68, "SkySignalCatchPayload must be 68 bytes");
