@@ -76,8 +76,11 @@ CFG_ENUM(subject_drill, "subject_drill", "dev", "off", "off|insert|own|carry|car
     "client's world is ready the host spawns two drives; the joined client walks to the nearer, grabs it "
     "with the use key's chain and holds it, and once the host has seated the other in the desk's play "
     "slot the client's grab must still hold. own: the client grabs the host's one drive the same way and "
-    "seats it in its own play slot, and its grab must end there, as single player's does. Run it on a "
-    "fresh host world; the client's '[subject_drill] client DONE' line ends it.")
+    "seats it in its own play slot, and its grab must end there, as single player's does. carry, on the saved "
+    "world: the host empties the desk's play slot, the client carries its nearest drive to the play port by "
+    "hand, latches its own slot and holds the drive in its port, and the host's port must refuse the carried "
+    "mirror, which the host's '[subject_drill] host DONE' line judges; carryred is its control. Run insert and "
+    "own on a fresh host world; the client's '[subject_drill] client DONE' line ends them.")
 CFG_FLAG(deck_selftest, "deck_selftest", "dev", false, nullptr,
     "Autonomous selftest: tape deck playback sync.")
 CFG_FLAG(drive_selftest, "drive_selftest", "dev", false, "VOTVCOOP_DRIVE_SELFTEST",
