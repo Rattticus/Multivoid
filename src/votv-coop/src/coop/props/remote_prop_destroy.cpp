@@ -30,7 +30,9 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"              // P::name::ActorClassName / DestroyActorFn
 
+#include <algorithm>
 #include <string>
+#include <vector>
 
 namespace coop::remote_prop {
 
@@ -46,6 +48,9 @@ bool IsTrashMirrorEid_(uint32_t eid) {
     void* a = ResolveLiveActorByEid(eid);
     return a && (ue_wrap::prop::IsChipPile(a) || ue_wrap::prop::IsGarbageClump(a));
 }
+
+// The lanes that hear a peer's destroy applied here; registered at their install, read on the game thread.
+std::vector<DestroyHeardFn> g_destroyHeard;
 
 // The cached destroy UFunction for receiver-side destroys.
 void* g_destroyActorFn = nullptr;
@@ -112,7 +117,8 @@ void DestroyResolvedLocalActor_(void* actor, const std::wstring& keyW,
 // the prop to load unopposed, a duplicate. Without it, the deferred re-apply: a still-missing
 // actor returns false to stay queued. True iff a local actor was destroyed or a mirror
 // retired. Game thread.
-bool OnDestroyImpl_(const coop::net::PropDestroyPayload& payload, void* localPlayer, bool allowDefer) {
+bool OnDestroyImpl_(const coop::net::PropDestroyPayload& payload, void* localPlayer, int senderSlot,
+                    bool allowDefer) {
     // Dispatched from the event drain on the game thread.
     UE_ASSERT_GAME_THREAD("g_drives (remote_prop::OnDestroy)");
     // A trash mirror is retired through its own teardown, which releases the GC pin it owns;
@@ -193,14 +199,21 @@ bool OnDestroyImpl_(const coop::net::PropDestroyPayload& payload, void* localPla
         }
         return false;
     }
+    if (senderSlot >= 0)
+        for (DestroyHeardFn fn : g_destroyHeard) fn(senderSlot, actor);
     DestroyResolvedLocalActor_(actor, keyW, payload, localPlayer);
     return true;
 }
 
 }  // namespace
 
-void OnDestroy(const coop::net::PropDestroyPayload& payload, void* localPlayer) {
-    OnDestroyImpl_(payload, localPlayer, /*allowDefer=*/true);
+void OnDestroy(const coop::net::PropDestroyPayload& payload, void* localPlayer, int senderSlot) {
+    OnDestroyImpl_(payload, localPlayer, senderSlot, /*allowDefer=*/true);
+}
+
+void AddDestroyListener(DestroyHeardFn fn) {
+    if (fn && std::find(g_destroyHeard.begin(), g_destroyHeard.end(), fn) == g_destroyHeard.end())
+        g_destroyHeard.push_back(fn);
 }
 
 // The deferred re-apply, called by the drain-edge order owner at the quiescence sweep.
@@ -209,7 +222,7 @@ void OnDestroy(const coop::net::PropDestroyPayload& payload, void* localPlayer) 
 // false keeps it queued. Never re-arms.
 bool TryApplyDestroy(const coop::net::PropDestroyPayload& payload) {
     void* localPlayer = coop::players::Registry::Get().Local();
-    return OnDestroyImpl_(payload, localPlayer, /*allowDefer=*/false);
+    return OnDestroyImpl_(payload, localPlayer, /*senderSlot=*/-1, /*allowDefer=*/false);
 }
 
 void ConsumeLocalActor(void* actor) {

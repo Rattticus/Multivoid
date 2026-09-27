@@ -114,8 +114,15 @@ void OnDisconnectForSlot(int peerSlot);
 // is holding, the host must release its physics handle before the destroy, or the handle's
 // tick reads the grabbed component as a dangling pointer next frame and physics dereferences
 // a freed body; the release is gated on the player's grabbing actor being this actor, so it
-// no-ops in the common case.
-void OnDestroy(const coop::net::PropDestroyPayload& payload, void* localPlayer);
+// no-ops in the common case. `senderSlot` is the peer whose destroy it is.
+void OnDestroy(const coop::net::PropDestroyPayload& payload, void* localPlayer, int senderSlot);
+
+// A lane that must know what a peer's destroy took hears it here, as this peer applies it: the
+// sender's slot and the local actor, after the actor resolves and before it is destroyed. The
+// deferred re-apply below carries no sender, and is not heard (coop/world/power_upgrade: a
+// client's spent upgrade). Registered once; game thread.
+using DestroyHeardFn = void (*)(int senderSlot, void* actor);
+void AddDestroyListener(DestroyHeardFn fn);
 
 // The deferred re-apply of a destroy that arrived before its target loaded, the
 // destroy-before-load race. Called only by the drain-edge order owner at the quiescence sweep,

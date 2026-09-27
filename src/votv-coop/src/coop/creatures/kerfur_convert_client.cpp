@@ -98,7 +98,7 @@ void OnKerfurConvert(const coop::net::KerfurConvertBroadcastPayload& p, void* lo
         coop::net::PropDestroyPayload dp{};
         dp.key.len = 0;
         dp.elementId = static_cast<uint32_t>(oldEid);
-        coop::remote_prop::OnDestroy(dp, localPlayer);
+        coop::remote_prop::OnDestroy(dp, localPlayer, /*senderSlot=*/0);  // the host's conversion
     }
     MaterializeKerfurMirror(toNpc, newEid, classW, p.locX, p.locY, p.locZ, p.rotPitch, p.rotYaw, p.rotRoll,
                             localPlayer);

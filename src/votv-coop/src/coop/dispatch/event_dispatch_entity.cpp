@@ -274,7 +274,7 @@ bool HandleEntityEvent(net::Session& session,
                 dkey.push_back(static_cast<wchar_t>(static_cast<unsigned char>(p.key.data[i])));
             coop::trash_pile_sync::NotifyWireDestroy(dkey);
         }
-        remote_prop::OnDestroy(p, localPlayer);
+        remote_prop::OnDestroy(p, localPlayer, msg.senderPeerSlot);
         break;
     }
     case net::ReliableKind::PropConvert: {
