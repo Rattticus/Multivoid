@@ -90,7 +90,8 @@ const std::string& Mode() {
     return s;
 }
 bool Join() { return Mode() == "join"; }
-bool Enabled() { return Mode() == "run" || Join(); }
+bool Obs() { return Mode() == "obs"; }  // run's steps, begun once a second client, the watcher, stands too
+bool Enabled() { return Mode() == "run" || Join() || Obs(); }
 bool Expired(uint64_t bound) { return ::GetTickCount64() - g_stepMs > bound; }
 void Next(Step s) { g_step = s; g_stepMs = ::GetTickCount64(); }
 
@@ -203,10 +204,22 @@ bool PocketAWorldDrive(void* player) {
     return false;
 }
 
+// The first client runs the steps; a second, the rig's observer, only watches: the lanes it hears the first client's
+// edits through are the host's relays, which its own drive lane's log names by their source slot.
+bool g_observerSaid = false;
+
 void ClientTick() {
     const uint64_t now = ::GetTickCount64();
     if (g_step == Step::Done || now < g_nextCheckMs) return;
     g_nextCheckMs = now + kCheckEveryMs;
+    const uint8_t mine = coop::players::Registry::Get().LocalPeerId();
+    if (mine > 1) {
+        if (!g_observerSaid) {
+            g_observerSaid = true;
+            UE_LOGI("[DRIVE-DRILL] client in slot %u: an observer, it runs no step and watches the drive lane", mine);
+        }
+        return;
+    }
     void* player = coop::players::Registry::Get().Local();
     switch (g_step) {
     case Step::Arm: {
@@ -443,7 +456,9 @@ void HostTick(coop::net::Session* s) {
                 return;
             }
         } else {
-            if (!s->AnyWorldReadyPeer()) return;
+            int ready = 0;
+            for (int i = 1; i < coop::net::kMaxPeers; ++i) ready += s->IsSlotWorldReady(i) ? 1 : 0;
+            if (ready < (Obs() ? 2 : 1)) return;
             g_fixture = SpawnDrive(60.f, kFixture, 7.f);
         }
         if (!g_fixture) {
@@ -516,6 +531,7 @@ void OnDisconnect() {
     g_stand = 0;
     g_progressMs = 0;
     g_progressCount = 0;
+    g_observerSaid = false;
 }
 
 }  // namespace coop::dev::drive_drill

@@ -415,7 +415,8 @@ CFG_STRING(drive_drill, "drive_drill", "dev", "", "VOTVCOOP_DRIVE_DRILL", false,
     "its eraser press must wipe the drive on the host and show here, a drive it spawns, takes out or throws must "
     "reach the host with its row, and its forged row on a drive it did not bring must be refused. "
     "run -- a drive the host spawns once a client is in its world; join -- a drive of the host's world, written "
-    "while a joiner loads it. Lines tagged [DRIVE-DRILL]; the host's DONE line ends it.")
+    "while a joiner loads it; obs -- run's steps, begun once two clients stand in the world, the second (the rig's "
+    "observer) only watching the drive lane. Lines tagged [DRIVE-DRILL]; the host's DONE line ends it.")
 CFG_STRING(tower_drill, "tower_drill", "dev", "", "VOTVCOOP_TOWER_DRILL", false,
     "Drill (BOTH peers): the coordinate towers. run: once the client stands in its world, the host breaks the "
     "drill's tower (the one nearest the alpha base) on its own dice and opens its panel; the client presses a "
