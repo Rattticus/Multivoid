@@ -105,6 +105,7 @@ set(VOTVCOOP_SOURCES
     src/ue_wrap/desk/desk_audio.cpp
     src/ue_wrap/desk/phys_mods.cpp
     src/ue_wrap/desk/desk_press.cpp
+    src/ue_wrap/desk/desk_detector.cpp
     src/ue_wrap/desk/drive_chain.cpp
     src/ue_wrap/desk/daily_task.cpp
     src/ue_wrap/actors/sleep.cpp

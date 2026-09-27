@@ -274,6 +274,7 @@ inline constexpr size_t FOutParmRec_Next     = 0x10;      // FOutParmRec*
 // before it runs the body; the gate reads it only to warn about a watch on an empty function.
 inline constexpr size_t   UFunction_FunctionFlags = 0xB0;   // uint32 EFunctionFlags
 inline constexpr uint32_t FUNC_Native             = 0x400;
+inline constexpr size_t   UStruct_Script          = 0x60;   // uint8*, TArray<uint8> Script's data, its count after it
 inline constexpr size_t   UStruct_ScriptNum       = 0x68;   // int32, TArray<uint8> Script's count
 
 // The UWorld spawn-refusal window (ue_wrap/spawn_gate). UWorld::SpawnActor (0x142C12D20) returns
