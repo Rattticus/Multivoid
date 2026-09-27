@@ -171,16 +171,44 @@ sg::Verdict OnVerbEntry(const sg::Call& b) {
 // --------------------------------------------------------------------------
 // slot lane
 
-void AnnounceSlot(int role, bool occupied, uint32_t eid) {
-    auto* s = g_session.load(std::memory_order_acquire);
-    if (!s || !s->connected()) return;
+coop::net::DriveSlotStatePayload Line(int role, bool occupied, uint32_t eid) {
     coop::net::DriveSlotStatePayload p{};
     p.role = static_cast<uint8_t>(role);
     p.occupied = occupied ? 1 : 0;
     p.censusIdx = 0;
     p.driveEid = eid;
+    return p;
+}
+
+// This peer's own edge: a client's to the host, the host's to every client.
+void AnnounceSlot(int role, bool occupied, uint32_t eid) {
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s || !s->connected()) return;
+    const coop::net::DriveSlotStatePayload p = Line(role, occupied, eid);
     s->SendReliable(coop::net::ReliableKind::DriveSlotState, &p, sizeof(p));
     ++g_cSlotSent;
+}
+
+// HOST: a client's line it accepted, to every other client whose world is ready; a joiner still loading gets the slot
+// in its seed. A client's line is never relayed as it arrives, since the host judges it first: MTA relays an accepted
+// element-data change to all but its source (CGame.cpp:2761-2768).
+void RelaySlot(int role, bool occupied, uint32_t eid, uint8_t sourceSlot) {
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s || !s->connected()) return;
+    const coop::net::DriveSlotStatePayload p = Line(role, occupied, eid);
+    for (int slot = 1; slot < coop::net::kMaxPeers; ++slot) {
+        if (slot == sourceSlot || !s->IsSlotWorldReady(slot)) continue;
+        s->SendReliableToSlot(slot, coop::net::ReliableKind::DriveSlotState, &p, sizeof(p));
+    }
+}
+
+// HOST: the slot as it stands, to the source of a line it refused, whom no other client heard: MTA answers a refused
+// element-data change to its source alone (CGame.cpp:2779-2793).
+void AnswerSlot(int role, uint8_t sourceSlot, bool occupied, uint32_t eid) {
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s || !s->connected()) return;
+    const coop::net::DriveSlotStatePayload p = Line(role, occupied, eid);
+    s->SendReliableToSlot(sourceSlot, coop::net::ReliableKind::DriveSlotState, &p, sizeof(p));
 }
 
 // Read a slot's live state; diff vs baseline; announce the edge. `announce`
@@ -247,10 +275,10 @@ void OnSlotLine(const coop::net::DriveSlotStatePayload& p, uint8_t senderSlot, b
         }
         if (cur && curEid != p.driveEid) {
             // Conflict: locally captured a DIFFERENT drive. The HOST is
-            // canonical: host re-announces its state; a client converges to
+            // canonical: it answers its source with its state; a client converges to
             // the incoming line (eject ours, insert theirs).
             if (IsHost()) {
-                AnnounceSlot(p.role, true, curEid);
+                AnswerSlot(p.role, senderSlot, true, curEid);
                 return;
             }
             coop::desk_snd_fx::ScopedWireApply guard;
@@ -273,6 +301,7 @@ void OnSlotLine(const coop::net::DriveSlotStatePayload& p, uint8_t senderSlot, b
             g_slotBase[p.role] = {true, true, p.driveEid};
         }
         ++g_cSlotApplied;
+        if (IsHost()) RelaySlot(p.role, true, p.driveEid, senderSlot);
         UE_LOGI("drive_sync: slot role=%u INSERT eid=%u applied (from slot %u)",
                 p.role, p.driveEid, senderSlot);
     } else {
@@ -305,6 +334,7 @@ void OnSlotLine(const coop::net::DriveSlotStatePayload& p, uint8_t senderSlot, b
         }
         ++g_cSlotApplied;
         ++g_cLatchCompleted;
+        if (IsHost()) RelaySlot(p.role, false, curEid, senderSlot);
         UE_LOGI("drive_sync: slot role=%u EJECT applied (was eid=%u, from slot %u, frozen=%d)",
                 p.role, curEid, senderSlot, frozen ? 1 : 0);
     }

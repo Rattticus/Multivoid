@@ -211,7 +211,8 @@ not built. The ATV's physical modules are on [vehicles.md](vehicles.md).
 | `DishCalibIntent` | a client to the host | the dishes whose precision the client's player just set with the toolgun's calibration tool or the uncalibrator |
 | `SavedSignalAppend`, `SavedSignalDelete`, `MeadowAppend`, `MeadowDelete`, `MeadowOrder` | any peer, relayed; order from the host | list rows by content hash; the database's order |
 | `PlayDeckEvent`, `CompState`, `CompData` | the presser; the simulator | playback edges; the refiner's state and its loaded signal |
-| `DriveSlotState`, `RackState`, `PhysModsState`, `FloppyBoxState` | any peer to the host; the host canonical | slot lines; rack operations and arrays; the module set; the crate stack |
+| `DriveSlotState` | any peer to the host; the host to every other client, a line it accepted; the host to the source, answering a line it refused | a slot's occupant, inserted or ejected |
+| `RackState`, `PhysModsState`, `FloppyBoxState` | any peer to the host; the host canonical | rack operations and arrays; the module set; the crate stack |
 | `DrivePayload` | the host to all and to a joiner; a client to the host; the host to that client | a drive's row; a client's own new drive's row; the host's own row, answering a client row it refused |
 | `EraserPressIntent` | a client to the host; the host to all, or to a presser | the eraser's delete, with the drive the presser saw seated; what the host's eraser did, for each client's eraser to show; a press the host refused |
 | `ReelSlot`, `ReelPose` (stream), `ReelEjectIntent` | the presser; the host; a client | slot edges; the corrector; a reel birth |

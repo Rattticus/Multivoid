@@ -251,11 +251,10 @@ inline bool IsClientRelayableReliableKind(ReliableKind k) {
     case ReliableKind::DeskScanEvent:     // presser-authored; every mirror replays the visual
     case ReliableKind::DeskSndFx:         // presser-authored
     case ReliableKind::PlayDeckEvent:     // presser-authored; any peer may stop
-    case ReliableKind::DriveSlotState:    // any-peer idempotent state; the host is canonical on conflict
     case ReliableKind::DishAimState:      // claim-owner-authoritative
     // KeypadState is not relayable: the host authors it, and a client's own keypad entries reach the
-    // host as KeypadIntent. DrivePayload is not relayable either: the host authors a drive's row, and a
-    // client's rows are its own drives' and go to the host alone.
+    // host as KeypadIntent. Nor are DrivePayload (the host authors a drive's row; a client's own rows go
+    // to it alone) and DriveSlotState (the host relays only the slot lines it accepted).
     case ReliableKind::WindowCleanState:  // symmetric
     case ReliableKind::WindowStroke:      // presser-authored
     case ReliableKind::GrimeState:        // symmetric

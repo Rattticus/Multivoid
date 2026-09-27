@@ -29,7 +29,8 @@ void Tick();
 // actors have no eids, so a line is keyed by role. ANY peer announces its organic transitions; a
 // receiver-side overlap SELF-SIMULATES inserts and never ejects, then pre-checks and applies --
 // reflected putDriveIn or drivePulledOut, plus the deterministic eject-latch completion. The HOST
-// is canonical on conflict and on the connect seed.
+// is canonical on conflict and on the connect seed: a client's line reaches the host alone, which
+// relays a line it accepted to every other client and answers a conflict to its source.
 void OnDriveSlotState(const coop::net::DriveSlotStatePayload& p, uint8_t senderSlot);
 
 // HOST: whether a slot line for `role` naming `driveEid` waits here for its drive to bind. Game thread.

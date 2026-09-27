@@ -30,7 +30,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 203;
+inline constexpr uint16_t kProtocolVersion = 204;
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -566,8 +566,9 @@ enum class ReliableKind : uint8_t {
     // host to one peer: a denial, followed by the canonical array. PhysModsStatePayload.
     PhysModsState = 108,
 
-    // Any peer, relayed: a drive slot's occupancy line, idempotent; the host re-announces
-    // canonically on conflict. DriveSlotStatePayload.
+    // Any peer to the host: a drive slot's occupancy line, idempotent. The host relays a line it
+    // accepted to every other client, and answers one it refused, a conflict included, to its source
+    // alone with the slot as it stands. DriveSlotStatePayload.
     DriveSlotState = 109,
 
     // Host to all, or to a joiner at its world-ready: one drive's data row as a chunked blob. Client to host: the
