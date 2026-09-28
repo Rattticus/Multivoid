@@ -120,6 +120,25 @@ Set-Content -LiteralPath (Join-Path $stage 'manifest.json') `
             -Encoding utf8 -NoNewline
 Copy-Item $iconPath   (Join-Path $stage 'icon.png')
 Copy-Item $readmePath (Join-Path $stage 'README.md')
+# The store page's changelog tab: a changelog file at the zip root, built from the notes the release
+# pages carry -- this build's, then every build the ledger records as published, newest first, each
+# under the version_number the store shows for it. A build with no notes file is left out, so a CI zip
+# of a build whose notes are not written yet still packs; a release cannot lack its own (the judge
+# refuses the tag).
+$ledgerRows = @((Read-Ledger -Path (Join-Path $PSScriptRoot 'LEDGER.tsv')).Rows)
+$logBuilds  = @([pscustomobject]@{ N = $proto; Game = $gameTarget })
+foreach ($row in @($ledgerRows | Where-Object { $_.Kind -eq 'published' } | Sort-Object N -Descending)) {
+    if (@($logBuilds | Where-Object { $_.N -eq $row.N }).Count -eq 0) { $logBuilds += $row }
+}
+$logSections = @(foreach ($b in $logBuilds) {
+    $notesFile = Get-ReleaseNotesPath -N $b.N
+    if (-not (Test-Path -LiteralPath $notesFile)) { continue }
+    $notes = ((Get-Content -LiteralPath $notesFile -Raw) -replace "`r`n", "`n").Trim()
+    "## $(ConvertTo-PackageVersion -GameTarget $b.Game -Proto $b.N)`n`n$notes`n"
+})
+if ($logSections.Count -gt 0) {
+    Set-Content -LiteralPath (Join-Path $stage 'CHANGELOG.md') -Value ($logSections -join "`n") -Encoding utf8 -NoNewline
+}
 # LICENSE (bare MIT since 2026-08-30 -- the scope notes moved out so GitHub's
 # license detection reads it) + THIRD-PARTY-NOTICES.md (the statically-linked/
 # embedded components' verbatim license texts, the pak-assets carve-out, and
@@ -209,5 +228,5 @@ Write-Host "PACKAGE OK  $zipName" -ForegroundColor Green
 Write-Host "  path   : $zipPath"
 Write-Host "  sha256 : $sha"
 Write-Host "  payload: $PayloadDll"
-Write-Host "  tree   : manifest.json, icon.png, README.md, LICENSE, THIRD-PARTY-NOTICES.md, mod/enabled.txt, mod/dlls/main.dll"
+Write-Host "  tree   : manifest.json, icon.png, README.md$(if ($logSections.Count -gt 0) { ", CHANGELOG.md ($($logSections.Count) build(s))" }), LICENSE, THIRD-PARTY-NOTICES.md, mod/enabled.txt, mod/dlls/main.dll"
 if ($Pak.Count -gt 0) { Write-Host "           + pak/ ($($Pak.Count) file(s))" }
