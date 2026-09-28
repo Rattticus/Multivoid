@@ -1,10 +1,10 @@
 {
   "wire-a": {
-    "verdict": "QUIET",
-    "date": "2026-09-11"
+    "verdict": "FIRED",
+    "date": "2026-09-28"
   },
   "wire-b": {
     "verdict": "QUIET",
-    "date": "2026-09-11"
+    "date": "2026-09-28"
   }
 }
